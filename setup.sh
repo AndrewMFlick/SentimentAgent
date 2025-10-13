@@ -44,7 +44,7 @@ source venv/bin/activate
 
 # Install dependencies
 echo "Installing Python dependencies..."
-pip install -r requirements.txt > /dev/null 2>&1
+pip install -r requirements.txt || { echo "❌ Failed to install Python dependencies"; exit 1; }
 
 # Create .env if it doesn't exist
 if [ ! -f ".env" ]; then
@@ -62,7 +62,7 @@ cd frontend
 # Install dependencies
 if [ ! -d "node_modules" ]; then
     echo "Installing Node.js dependencies..."
-    npm install > /dev/null 2>&1
+    npm install || { echo "❌ Failed to install Node.js dependencies"; exit 1; }
 else
     echo "Dependencies already installed"
 fi
