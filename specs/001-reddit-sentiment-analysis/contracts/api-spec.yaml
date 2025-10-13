@@ -1,0 +1,910 @@
+openapi: 3.0.3
+info:
+  title: Reddit Sentiment Analysis API
+  description: |
+    REST API for monitoring sentiment analysis of AI developer tools on Reddit.
+    
+    This API provides access to:
+    - Real-time sentiment dashboards for 14 AI tools
+    - Trending topics detection and analysis
+    - AI agent for querying sentiment data
+    
+    All timestamps are in ISO 8601 format (UTC).
+  version: 1.0.0
+  contact:
+    name: SentimentAgent Development Team
+
+servers:
+  - url: http://localhost:8000/api/v1
+    description: Local development server
+  - url: https://{environment}.sentimentagent.azurecontainerapps.io/api/v1
+    description: Azure Container Apps deployment
+    variables:
+      environment:
+        default: prod
+        enum:
+          - dev
+          - staging
+          - prod
+
+tags:
+  - name: dashboard
+    description: Sentiment dashboard endpoints
+  - name: trending
+    description: Trending topics endpoints
+  - name: agent
+    description: AI agent query endpoints
+  - name: tools
+    description: AI tools metadata endpoints
+  - name: health
+    description: Service health endpoints
+
+paths:
+  /health:
+    get:
+      summary: Health check
+      description: Returns service health status and database connectivity
+      operationId: getHealth
+      tags:
+        - health
+      responses:
+        '200':
+          description: Service is healthy
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    enum: [healthy, degraded, unhealthy]
+                  version:
+                    type: string
+                    example: "1.0.0"
+                  database:
+                    type: object
+                    properties:
+                      connected:
+                        type: boolean
+                      latency_ms:
+                        type: integer
+                  last_collection_cycle:
+                    type: string
+                    format: date-time
+                  timestamp:
+                    type: string
+                    format: date-time
+
+  /dashboard:
+    get:
+      summary: Get sentiment dashboard data
+      description: |
+        Retrieves aggregated sentiment data for all monitored AI tools.
+        
+        Returns sentiment scores over time (hourly aggregation), current trends,
+        and engagement metrics. Results are cached for 5 minutes.
+      operationId: getDashboard
+      tags:
+        - dashboard
+      parameters:
+        - name: timeRange
+          in: query
+          description: Time range for historical data
+          required: false
+          schema:
+            type: string
+            enum: [1h, 6h, 24h, 7d, 30d]
+            default: 7d
+        - name: tools
+          in: query
+          description: Filter by specific AI tools (comma-separated)
+          required: false
+          schema:
+            type: string
+            example: "Cursor,claude,GithubCopilot"
+      responses:
+        '200':
+          description: Dashboard data retrieved successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DashboardResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /dashboard/tools/{toolName}:
+    get:
+      summary: Get sentiment data for a specific AI tool
+      description: Detailed sentiment analysis for a single AI tool
+      operationId: getToolDashboard
+      tags:
+        - dashboard
+      parameters:
+        - name: toolName
+          in: path
+          description: AI tool identifier
+          required: true
+          schema:
+            type: string
+            example: "Cursor"
+        - name: timeRange
+          in: query
+          description: Time range for historical data
+          required: false
+          schema:
+            type: string
+            enum: [1h, 6h, 24h, 7d, 30d]
+            default: 7d
+        - name: granularity
+          in: query
+          description: Data aggregation granularity
+          required: false
+          schema:
+            type: string
+            enum: [hourly, daily]
+            default: hourly
+      responses:
+        '200':
+          description: Tool dashboard data retrieved
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ToolDashboardResponse'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /dashboard/compare:
+    post:
+      summary: Compare sentiment across multiple AI tools
+      description: Side-by-side sentiment comparison for selected tools
+      operationId: compareTools
+      tags:
+        - dashboard
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - tools
+              properties:
+                tools:
+                  type: array
+                  items:
+                    type: string
+                  minItems: 2
+                  maxItems: 5
+                  example: ["Cursor", "GithubCopilot", "claude"]
+                timeRange:
+                  type: string
+                  enum: [1h, 6h, 24h, 7d, 30d]
+                  default: 7d
+                metrics:
+                  type: array
+                  items:
+                    type: string
+                    enum: [sentiment_score, engagement, volume]
+                  default: [sentiment_score]
+      responses:
+        '200':
+          description: Comparison data retrieved
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ComparisonResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+
+  /trending:
+    get:
+      summary: Get trending topics
+      description: |
+        Retrieves currently trending discussions ranked by engagement velocity.
+        
+        Topics are detected using engagement metrics (upvotes/hour, comments/hour)
+        and are updated every 30 minutes during data collection cycles.
+      operationId: getTrendingTopics
+      tags:
+        - trending
+      parameters:
+        - name: limit
+          in: query
+          description: Maximum number of trending topics to return
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 50
+            default: 20
+        - name: tool
+          in: query
+          description: Filter by AI tool
+          required: false
+          schema:
+            type: string
+            example: "Cursor"
+        - name: minVelocity
+          in: query
+          description: Minimum engagement velocity score
+          required: false
+          schema:
+            type: number
+            format: float
+            minimum: 0.0
+            default: 5.0
+      responses:
+        '200':
+          description: Trending topics retrieved
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TrendingTopicsResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+
+  /trending/{topicId}:
+    get:
+      summary: Get detailed trending topic information
+      description: Full details about a specific trending topic
+      operationId: getTrendingTopicDetails
+      tags:
+        - trending
+      parameters:
+        - name: topicId
+          in: path
+          description: Trending topic identifier
+          required: true
+          schema:
+            type: string
+            example: "trend_20251013_001"
+      responses:
+        '200':
+          description: Topic details retrieved
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TrendingTopicDetail'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /agent/query:
+    post:
+      summary: Query the AI agent
+      description: |
+        Submit a natural language query to the AI agent for sentiment analysis insights.
+        
+        The agent uses RAG (Retrieval-Augmented Generation) with Azure OpenAI GPT-4
+        to provide contextual answers based on historical sentiment data.
+        
+        Rate limit: 10 requests per minute per user.
+      operationId: queryAgent
+      tags:
+        - agent
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - query
+              properties:
+                query:
+                  type: string
+                  minLength: 10
+                  maxLength: 500
+                  example: "What is driving negative sentiment for Cursor this week?"
+                context:
+                  type: object
+                  description: Optional context to guide the agent
+                  properties:
+                    tools:
+                      type: array
+                      items:
+                        type: string
+                      example: ["Cursor"]
+                    timeRange:
+                      type: string
+                      enum: [24h, 7d, 30d]
+                      default: 7d
+                userId:
+                  type: string
+                  description: Optional user identifier for tracking
+                  example: "user_123"
+      responses:
+        '200':
+          description: Query processed successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AgentQueryResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '429':
+          $ref: '#/components/responses/RateLimitExceeded'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /agent/history:
+    get:
+      summary: Get query history
+      description: Retrieve past AI agent queries and responses
+      operationId: getQueryHistory
+      tags:
+        - agent
+      parameters:
+        - name: userId
+          in: query
+          description: Filter by user ID
+          required: false
+          schema:
+            type: string
+        - name: limit
+          in: query
+          description: Maximum number of queries to return
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 20
+        - name: offset
+          in: query
+          description: Pagination offset
+          required: false
+          schema:
+            type: integer
+            minimum: 0
+            default: 0
+      responses:
+        '200':
+          description: Query history retrieved
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  queries:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/QueryHistoryItem'
+                  pagination:
+                    $ref: '#/components/schemas/Pagination'
+
+  /tools:
+    get:
+      summary: List all monitored AI tools
+      description: Retrieve metadata for all 14 monitored AI developer tools
+      operationId: listTools
+      tags:
+        - tools
+      responses:
+        '200':
+          description: Tools list retrieved
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  tools:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/AITool'
+                  total:
+                    type: integer
+                    example: 14
+
+  /tools/{toolName}:
+    get:
+      summary: Get AI tool details
+      description: Retrieve detailed information about a specific AI tool
+      operationId: getToolDetails
+      tags:
+        - tools
+      parameters:
+        - name: toolName
+          in: path
+          required: true
+          schema:
+            type: string
+            example: "Cursor"
+      responses:
+        '200':
+          description: Tool details retrieved
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AIToolDetail'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+components:
+  schemas:
+    DashboardResponse:
+      type: object
+      properties:
+        timeRange:
+          type: string
+          example: "7d"
+        generatedAt:
+          type: string
+          format: date-time
+        tools:
+          type: array
+          items:
+            type: object
+            properties:
+              toolName:
+                type: string
+                example: "Cursor"
+              currentSentiment:
+                $ref: '#/components/schemas/SentimentScore'
+              sentimentTrend:
+                type: string
+                enum: [up, down, stable]
+              trendChangePercent:
+                type: number
+                format: float
+                example: 5.2
+              totalPosts:
+                type: integer
+              totalComments:
+                type: integer
+              lastUpdated:
+                type: string
+                format: date-time
+        timeSeries:
+          type: array
+          items:
+            type: object
+            properties:
+              timestamp:
+                type: string
+                format: date-time
+              toolName:
+                type: string
+              sentiment:
+                $ref: '#/components/schemas/SentimentScore'
+              volume:
+                type: integer
+
+    ToolDashboardResponse:
+      type: object
+      properties:
+        toolName:
+          type: string
+          example: "Cursor"
+        currentSentiment:
+          $ref: '#/components/schemas/SentimentScore'
+        sentimentTrend:
+          type: string
+          enum: [up, down, stable]
+        timeSeries:
+          type: array
+          items:
+            type: object
+            properties:
+              timestamp:
+                type: string
+                format: date-time
+              sentiment:
+                $ref: '#/components/schemas/SentimentScore'
+              postsAnalyzed:
+                type: integer
+              commentsAnalyzed:
+                type: integer
+        topPosts:
+          type: array
+          description: Most upvoted posts in time range
+          items:
+            $ref: '#/components/schemas/PostSummary'
+        topicBreakdown:
+          type: array
+          description: Sentiment by detected topics
+          items:
+            type: object
+            properties:
+              topic:
+                type: string
+              sentiment:
+                $ref: '#/components/schemas/SentimentScore'
+              count:
+                type: integer
+
+    ComparisonResponse:
+      type: object
+      properties:
+        tools:
+          type: array
+          items:
+            type: string
+        timeRange:
+          type: string
+        comparisonData:
+          type: array
+          items:
+            type: object
+            properties:
+              timestamp:
+                type: string
+                format: date-time
+              toolSentiments:
+                type: object
+                additionalProperties:
+                  $ref: '#/components/schemas/SentimentScore'
+
+    TrendingTopicsResponse:
+      type: object
+      properties:
+        topics:
+          type: array
+          items:
+            $ref: '#/components/schemas/TrendingTopic'
+        generatedAt:
+          type: string
+          format: date-time
+        nextUpdateAt:
+          type: string
+          format: date-time
+          description: When trending topics will be recalculated
+
+    TrendingTopic:
+      type: object
+      properties:
+        topicId:
+          type: string
+          example: "trend_20251013_001"
+        theme:
+          type: string
+          example: "New AI feature release"
+        keywords:
+          type: array
+          items:
+            type: string
+        aiTool:
+          type: string
+          example: "Cursor"
+          nullable: true
+        engagementVelocityScore:
+          type: number
+          format: float
+          example: 8.7
+        totalUpvotes:
+          type: integer
+        totalComments:
+          type: integer
+        sentimentDistribution:
+          $ref: '#/components/schemas/SentimentDistribution'
+        summary:
+          type: string
+          maxLength: 500
+        firstDetectedAt:
+          type: string
+          format: date-time
+        lastUpdatedAt:
+          type: string
+          format: date-time
+
+    TrendingTopicDetail:
+      allOf:
+        - $ref: '#/components/schemas/TrendingTopic'
+        - type: object
+          properties:
+            primaryPost:
+              $ref: '#/components/schemas/PostDetail'
+            relatedPosts:
+              type: array
+              items:
+                $ref: '#/components/schemas/PostSummary'
+            topComments:
+              type: array
+              items:
+                $ref: '#/components/schemas/CommentSummary'
+
+    AgentQueryResponse:
+      type: object
+      properties:
+        queryId:
+          type: string
+          example: "query_1697205000_abc"
+        query:
+          type: string
+        response:
+          type: string
+        dataSources:
+          type: array
+          items:
+            type: object
+            properties:
+              type:
+                type: string
+                enum: [sentiment_score, trending_topic, post, comment]
+              count:
+                type: integer
+              dateRange:
+                type: object
+                properties:
+                  start:
+                    type: string
+                    format: date
+                  end:
+                    type: string
+                    format: date
+        processingTimeMs:
+          type: integer
+        timestamp:
+          type: string
+          format: date-time
+
+    QueryHistoryItem:
+      type: object
+      properties:
+        queryId:
+          type: string
+        queryText:
+          type: string
+        responsePreview:
+          type: string
+          maxLength: 200
+        timestamp:
+          type: string
+          format: date-time
+        mentionedTools:
+          type: array
+          items:
+            type: string
+
+    AITool:
+      type: object
+      properties:
+        toolName:
+          type: string
+          example: "Cursor"
+        displayName:
+          type: string
+          example: "Cursor"
+        associatedSubreddits:
+          type: array
+          items:
+            type: string
+        currentSentimentScore:
+          type: number
+          format: float
+          minimum: 0.0
+          maximum: 1.0
+        sentimentTrend:
+          type: string
+          enum: [up, down, stable]
+        totalPostsAnalyzed:
+          type: integer
+        totalCommentsAnalyzed:
+          type: integer
+        lastUpdated:
+          type: string
+          format: date-time
+        isActive:
+          type: boolean
+
+    AIToolDetail:
+      allOf:
+        - $ref: '#/components/schemas/AITool'
+        - type: object
+          properties:
+            description:
+              type: string
+            websiteUrl:
+              type: string
+              format: uri
+            recentPosts:
+              type: array
+              items:
+                $ref: '#/components/schemas/PostSummary'
+
+    SentimentScore:
+      type: object
+      properties:
+        positive:
+          type: number
+          format: float
+          minimum: 0.0
+          maximum: 1.0
+        negative:
+          type: number
+          format: float
+          minimum: 0.0
+          maximum: 1.0
+        neutral:
+          type: number
+          format: float
+          minimum: 0.0
+          maximum: 1.0
+        overall:
+          type: number
+          format: float
+          minimum: 0.0
+          maximum: 1.0
+          description: Weighted average (positive * 1.0 + neutral * 0.5 + negative * 0.0)
+
+    SentimentDistribution:
+      type: object
+      properties:
+        positive:
+          type: number
+          format: float
+          minimum: 0.0
+          maximum: 1.0
+        negative:
+          type: number
+          format: float
+          minimum: 0.0
+          maximum: 1.0
+        neutral:
+          type: number
+          format: float
+          minimum: 0.0
+          maximum: 1.0
+
+    PostSummary:
+      type: object
+      properties:
+        postId:
+          type: string
+        subreddit:
+          type: string
+        title:
+          type: string
+        author:
+          type: string
+        url:
+          type: string
+          format: uri
+        upvotes:
+          type: integer
+        commentCount:
+          type: integer
+        sentiment:
+          $ref: '#/components/schemas/SentimentScore'
+        timestamp:
+          type: string
+          format: date-time
+
+    PostDetail:
+      allOf:
+        - $ref: '#/components/schemas/PostSummary'
+        - type: object
+          properties:
+            content:
+              type: string
+            postType:
+              type: string
+              enum: [text, link, image, video]
+            linkUrl:
+              type: string
+              format: uri
+              nullable: true
+            upvoteRatio:
+              type: number
+              format: float
+            flairText:
+              type: string
+              nullable: true
+
+    CommentSummary:
+      type: object
+      properties:
+        commentId:
+          type: string
+        postId:
+          type: string
+        author:
+          type: string
+        content:
+          type: string
+          maxLength: 500
+        upvotes:
+          type: integer
+        sentiment:
+          $ref: '#/components/schemas/SentimentScore'
+        timestamp:
+          type: string
+          format: date-time
+
+    Pagination:
+      type: object
+      properties:
+        limit:
+          type: integer
+        offset:
+          type: integer
+        total:
+          type: integer
+        hasMore:
+          type: boolean
+
+    Error:
+      type: object
+      properties:
+        error:
+          type: string
+        message:
+          type: string
+        timestamp:
+          type: string
+          format: date-time
+        path:
+          type: string
+
+  responses:
+    BadRequest:
+      description: Bad request - invalid parameters
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          example:
+            error: "BadRequest"
+            message: "Invalid time range parameter"
+            timestamp: "2025-10-13T10:30:00Z"
+            path: "/api/v1/dashboard"
+
+    NotFound:
+      description: Resource not found
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          example:
+            error: "NotFound"
+            message: "AI tool 'InvalidTool' not found"
+            timestamp: "2025-10-13T10:30:00Z"
+            path: "/api/v1/tools/InvalidTool"
+
+    RateLimitExceeded:
+      description: Rate limit exceeded
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          example:
+            error: "RateLimitExceeded"
+            message: "Maximum 10 queries per minute exceeded"
+            timestamp: "2025-10-13T10:30:00Z"
+            path: "/api/v1/agent/query"
+      headers:
+        X-RateLimit-Limit:
+          schema:
+            type: integer
+          description: Request limit per minute
+        X-RateLimit-Remaining:
+          schema:
+            type: integer
+          description: Remaining requests in current window
+        X-RateLimit-Reset:
+          schema:
+            type: integer
+          description: Unix timestamp when rate limit resets
+
+    InternalError:
+      description: Internal server error
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          example:
+            error: "InternalServerError"
+            message: "An unexpected error occurred"
+            timestamp: "2025-10-13T10:30:00Z"
+            path: "/api/v1/dashboard"
+
+  securitySchemes:
+    ApiKeyAuth:
+      type: apiKey
+      in: header
+      name: X-API-Key
+      description: API key for production deployments (optional for local development)
+
+security:
+  - ApiKeyAuth: []
