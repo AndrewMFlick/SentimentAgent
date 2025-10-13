@@ -9,6 +9,7 @@ from ..models import DataCollectionCycle
 from .reddit_collector import RedditCollector
 from .sentiment_analyzer import SentimentAnalyzer
 from .database import db
+from .trending_analyzer import trending_analyzer
 
 logger = logging.getLogger(__name__)
 
@@ -46,6 +47,15 @@ class CollectionScheduler:
             trigger=IntervalTrigger(hours=24),
             id='data_cleanup',
             name='Clean up old data',
+            replace_existing=True
+        )
+        
+        # Schedule trending analysis (every hour)
+        self.scheduler.add_job(
+            self.analyze_trending_topics,
+            trigger=IntervalTrigger(hours=1),
+            id='trending_analysis',
+            name='Analyze trending topics',
             replace_existing=True
         )
         
@@ -153,6 +163,15 @@ class CollectionScheduler:
             logger.info("Data cleanup completed")
         except Exception as e:
             logger.error(f"Data cleanup failed: {e}")
+    
+    async def analyze_trending_topics(self):
+        """Analyze and identify trending topics."""
+        logger.info("Starting trending analysis")
+        try:
+            topics = trending_analyzer.analyze_trending(hours=24)
+            logger.info(f"Trending analysis completed: {len(topics)} topics identified")
+        except Exception as e:
+            logger.error(f"Trending analysis failed: {e}")
 
 
 # Global scheduler instance
