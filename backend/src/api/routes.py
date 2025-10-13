@@ -1,12 +1,18 @@
 """API endpoints."""
 from typing import List, Optional
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, HTTPException, Query, Body
 from datetime import datetime
+from pydantic import BaseModel
 
-from ..services import db
+from ..services import db, ai_agent
 from ..models import RedditPost, SentimentScore, TrendingTopic
 
 router = APIRouter()
+
+
+class QueryRequest(BaseModel):
+    """AI agent query request."""
+    question: str
 
 
 @router.get("/health")
@@ -132,3 +138,23 @@ async def get_monitored_subreddits():
         "subreddits": settings.subreddit_list,
         "count": len(settings.subreddit_list)
     }
+
+
+@router.post("/ai/query")
+async def ai_query(request: QueryRequest = Body(...)):
+    """
+    Query the AI agent with natural language questions.
+    
+    Example questions:
+    - "What is driving sentiment change in Cursor?"
+    - "Compare sentiment between GitHub Copilot and Claude"
+    - "What are the trending topics in programming subreddits?"
+    """
+    try:
+        if not request.question or not request.question.strip():
+            raise HTTPException(status_code=400, detail="Question cannot be empty")
+        
+        result = await ai_agent.query(request.question)
+        return result
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))

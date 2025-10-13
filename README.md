@@ -8,7 +8,8 @@ A scalable sentiment analysis application that monitors AI developer tool discus
 - **Dual Analysis Methods**: Supports both VADER (fast, rule-based) and LLM-based (nuanced) sentiment analysis
 - **Interactive Dashboard**: Visualize sentiment trends, distributions, and statistics
 - **Hot Topics Page**: Discover trending discussions with high engagement
-- **Azure Cloud Hosting**: Designed for scalability on Azure infrastructure
+- **AI Agent**: Query sentiment data with natural language (e.g., "What's driving negative sentiment for Cursor?")
+- **Azure Cloud Hosting**: Designed for scalability on Azure infrastructure with multiple deployment options
 - **Data Retention**: 90-day historical data for trend analysis
 
 ## Monitored Subreddits
@@ -103,6 +104,9 @@ AZURE_OPENAI_API_KEY=your_key
 ### Trending
 - `GET /api/v1/trending` - Get trending topics
 
+### AI Agent
+- `POST /api/v1/ai/query` - Query AI agent with natural language questions
+
 ### System
 - `GET /api/v1/health` - Health check
 - `GET /api/v1/subreddits` - List monitored subreddits
@@ -126,17 +130,19 @@ npm run build
 
 ## Deployment
 
-### Azure App Service (Backend)
+See [deployment/AZURE_DEPLOYMENT.md](deployment/AZURE_DEPLOYMENT.md) for comprehensive deployment guides covering:
 
-1. Create an Azure App Service for Python
-2. Configure environment variables
-3. Deploy using Azure CLI or GitHub Actions
+- Azure Container Apps (Recommended)
+- Azure Kubernetes Service (AKS)
+- Azure App Service
+- Docker Compose for local deployment
 
-### Azure Static Web Apps (Frontend)
+Quick deploy with Docker Compose:
 
-1. Build the frontend: `npm run build`
-2. Deploy to Azure Static Web Apps
-3. Configure API backend URL
+```bash
+cd deployment/docker
+docker-compose up -d
+```
 
 ## Project Structure
 
