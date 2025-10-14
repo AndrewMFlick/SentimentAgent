@@ -1,0 +1,71 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: sentiment-backend
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: sentiment-backend
+  template:
+    metadata:
+      labels:
+        app: sentiment-backend
+    spec:
+      containers:
+      - name: backend
+        image: ${CONTAINER_REGISTRY}/sentiment-backend:latest
+        ports:
+        - containerPort: 8000
+        env:
+        - name: REDDIT_CLIENT_ID
+          valueFrom:
+            secretKeyRef:
+              name: sentiment-secrets
+              key: reddit-client-id
+        - name: REDDIT_CLIENT_SECRET
+          valueFrom:
+            secretKeyRef:
+              name: sentiment-secrets
+              key: reddit-client-secret
+        - name: COSMOS_ENDPOINT
+          valueFrom:
+            secretKeyRef:
+              name: sentiment-secrets
+              key: cosmos-endpoint
+        - name: COSMOS_KEY
+          valueFrom:
+            secretKeyRef:
+              name: sentiment-secrets
+              key: cosmos-key
+        - name: AZURE_OPENAI_ENDPOINT
+          valueFrom:
+            secretKeyRef:
+              name: sentiment-secrets
+              key: openai-endpoint
+              optional: true
+        - name: AZURE_OPENAI_API_KEY
+          valueFrom:
+            secretKeyRef:
+              name: sentiment-secrets
+              key: openai-key
+              optional: true
+        resources:
+          requests:
+            memory: "512Mi"
+            cpu: "500m"
+          limits:
+            memory: "1Gi"
+            cpu: "1000m"
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: sentiment-backend
+spec:
+  selector:
+    app: sentiment-backend
+  ports:
+  - port: 80
+    targetPort: 8000
+  type: LoadBalancer
