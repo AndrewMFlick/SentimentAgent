@@ -1,6 +1,8 @@
 """Data collection scheduler."""
 import logging
+import asyncio
 from datetime import datetime
+from concurrent.futures import ThreadPoolExecutor
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.interval import IntervalTrigger
 
@@ -23,6 +25,7 @@ class CollectionScheduler:
         self.collector = RedditCollector()
         self.analyzer = SentimentAnalyzer()
         self.is_running = False
+        self.executor = ThreadPoolExecutor(max_workers=1)
         
         logger.info("Collection scheduler initialized")
     
@@ -62,11 +65,17 @@ class CollectionScheduler:
         self.scheduler.start()
         self.is_running = True
         
-        logger.info(f"Scheduler started - collecting data every {settings.collection_interval_minutes} minutes")
+        logger.info(
+            f"Scheduler started - collecting data every "
+            f"{settings.collection_interval_minutes} minutes"
+        )
         
-        # Run initial collection
+        # Run initial collection after 5 seconds to allow app to start
+        from datetime import datetime, timedelta
         self.scheduler.add_job(
             self.collect_and_analyze,
+            trigger='date',
+            run_date=datetime.now() + timedelta(seconds=5),
             id='initial_collection',
             name='Initial data collection',
             replace_existing=True
@@ -83,6 +92,14 @@ class CollectionScheduler:
     
     async def collect_and_analyze(self):
         """Collect data from Reddit and analyze sentiment."""
+        # Run the blocking collection in a thread pool
+        loop = asyncio.get_event_loop()
+        await loop.run_in_executor(
+            self.executor, self._collect_and_analyze_sync
+        )
+    
+    def _collect_and_analyze_sync(self):
+        """Synchronous data collection (runs in thread pool)."""
         cycle_id = f"cycle_{datetime.utcnow().strftime('%Y%m%d_%H%M%S')}"
         
         cycle = DataCollectionCycle(
@@ -159,7 +176,8 @@ class CollectionScheduler:
         """Clean up data older than retention period."""
         logger.info("Starting data cleanup")
         try:
-            db.cleanup_old_data()
+            loop = asyncio.get_event_loop()
+            await loop.run_in_executor(self.executor, db.cleanup_old_data)
             logger.info("Data cleanup completed")
         except Exception as e:
             logger.error(f"Data cleanup failed: {e}")
@@ -168,8 +186,14 @@ class CollectionScheduler:
         """Analyze and identify trending topics."""
         logger.info("Starting trending analysis")
         try:
-            topics = trending_analyzer.analyze_trending(hours=24)
-            logger.info(f"Trending analysis completed: {len(topics)} topics identified")
+            loop = asyncio.get_event_loop()
+            topics = await loop.run_in_executor(
+                self.executor,
+                trending_analyzer.analyze_trending,
+                24
+            )
+            msg = f"Trending analysis completed: {len(topics)} topics"
+            logger.info(msg)
         except Exception as e:
             logger.error(f"Trending analysis failed: {e}")
 

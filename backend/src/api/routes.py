@@ -140,6 +140,32 @@ async def get_monitored_subreddits():
     }
 
 
+@router.post("/admin/collect")
+async def trigger_collection():
+    """
+    Manually trigger data collection.
+    
+    This endpoint triggers an immediate data collection cycle.
+    Useful for testing or forcing a data refresh.
+    """
+    try:
+        from ..services import scheduler
+        # Trigger collection asynchronously
+        scheduler.scheduler.add_job(
+            scheduler.collect_and_analyze,
+            id='manual_collection',
+            name='Manual data collection',
+            replace_existing=True
+        )
+        return {
+            "status": "triggered",
+            "message": "Data collection started",
+            "timestamp": datetime.utcnow().isoformat()
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @router.post("/ai/query")
 async def ai_query(request: QueryRequest = Body(...)):
     """
