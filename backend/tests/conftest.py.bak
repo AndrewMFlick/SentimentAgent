@@ -1,0 +1,42 @@
+"""Shared test fixtures and configuration."""
+import os
+import sys
+from unittest.mock import Mock, MagicMock
+
+# Set test environment variables before any imports
+os.environ['REDDIT_CLIENT_ID'] = 'test_id'
+os.environ['REDDIT_CLIENT_SECRET'] = 'test_secret'
+os.environ['COSMOS_ENDPOINT'] = 'https://localhost:8081/'
+os.environ['COSMOS_KEY'] = 'C2y6yDjf5/R+ob0N8A7Cgv30VRDJIWEHLM+4QDU5DE2nQ9nDuVTqobD4b8mGGyPMbIZnqyMsEcaGQy67XIw/Jw=='
+os.environ['SUBREDDITS'] = 'test'
+
+# Mock CosmosClient before it's imported
+mock_cosmos_client = MagicMock()
+mock_database = MagicMock()
+mock_container = MagicMock()
+
+mock_cosmos_client.return_value.create_database_if_not_exists.return_value = mock_database
+mock_database.create_container_if_not_exists.return_value = mock_container
+
+sys.modules['azure.cosmos'].CosmosClient = mock_cosmos_client
+
+import pytest
+
+
+@pytest.fixture
+def mock_db_operations():
+    """Mock database operations for each test."""
+    from src.services import db
+    
+    # Create mock functions
+    db.save_post = Mock(return_value=None)
+    db.save_comment = Mock(return_value=None)
+    db.save_sentiment = Mock(return_value=None)
+    db.cleanup_old_data = Mock(return_value=None)
+    
+    yield {
+        'save_post': db.save_post,
+        'save_comment': db.save_comment,
+        'save_sentiment': db.save_sentiment,
+        'cleanup': db.cleanup_old_data
+    }

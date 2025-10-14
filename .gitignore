@@ -60,6 +60,8 @@ Thumbs.db
 htmlcov/
 .pytest_cache/
 .tox/
+.env.test
+*.log
 
 # Azure
 .azure/
