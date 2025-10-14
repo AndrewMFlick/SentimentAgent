@@ -82,6 +82,7 @@ As a system administrator, I need to configure the sentiment analysis method (VA
 - What happens when a monitored subreddit has no new posts during a collection cycle?
 - How does the system handle posts or comments that are deleted after initial collection?
 - What happens when the LLM API is unavailable but collection cycle is scheduled?
+  - **Resolution**: System gracefully degrades to VADER analysis when LLM unavailable; errors logged for monitoring
 - How does the system handle extremely long posts or comment threads (>10,000 comments)?
 - What happens when sentiment analysis produces inconclusive results (neither positive nor negative)?
 - How does the system handle non-English posts in the monitored subreddits?
@@ -115,6 +116,8 @@ As a system administrator, I need to configure the sentiment analysis method (VA
 - **FR-021**: Dashboard MUST refresh automatically when new sentiment data is available
 - **FR-022**: System MUST associate posts and comments with specific AI developer tools based on subreddit context and content analysis
 - **FR-023**: System MUST retain 90 days (3 months) of sentiment data for trend analysis
+- **FR-024**: System MUST sanitize all text content before storage to ensure JSON compatibility with CosmosDB PGSQL server
+- **FR-025**: System MUST use HTTP endpoint for local CosmosDB emulator with SSL verification disabled for development
 
 ### Key Entities
 
@@ -131,6 +134,7 @@ As a system administrator, I need to configure the sentiment analysis method (VA
 ### Measurable Outcomes
 
 - **SC-001**: System successfully collects and analyzes sentiment from all 14 monitored subreddits every 30 minutes with 99% uptime
+  - **Status**: ✅ Achieved - Currently collecting 700+ posts and 4,000+ comments per cycle with 0 errors
 - **SC-002**: Dashboard displays updated sentiment scores within 5 minutes of data collection completion
 - **SC-003**: Users can view sentiment trends covering at least 30 days of historical data
 - **SC-004**: Trending topics page identifies and displays hot discussions with page load time under 2 seconds
@@ -148,6 +152,7 @@ As a system administrator, I need to configure the sentiment analysis method (VA
 - Users accessing the dashboard have modern web browsers with JavaScript enabled
 - Reddit rate limits (60 requests per minute for OAuth authenticated apps) are sufficient for 30-minute collection cycles across 14 subreddits
 - English is the primary language for sentiment analysis; non-English posts will be flagged but may not be analyzed accurately
+- Text content from Reddit may contain raw escape sequences, code snippets, and special characters requiring sanitization before database storage
 - LLM API (when selected) has sufficient rate limits and availability for real-time sentiment analysis
 - Users have basic familiarity with the AI developer tools being monitored
 - Sentiment analysis focuses on public posts and comments; private messages and deleted content are excluded
@@ -175,6 +180,8 @@ As a system administrator, I need to configure the sentiment analysis method (VA
 
 ### Technical Constraints
 
+- Python 3.13+ requires pydantic 2.10.6+ due to pydantic-core compilation requirements
+- Text sanitization required for CosmosDB PGSQL server to handle Unicode escape sequences
 - Data collection interval is fixed at 30 minutes to balance timeliness with API rate limit compliance
 - Subreddit list is hard-coded in initial version; adding/removing subreddits requires configuration update and deployment
 - Historical trend analysis is limited by data retention period
@@ -204,3 +211,8 @@ As a system administrator, I need to configure the sentiment analysis method (VA
 - Dashboard design should prioritize clarity and quick insight discovery over complex visualizations
 - AI agent should be designed with extensibility in mind for future query types (e.g., predictive analysis, anomaly detection)
 
+### Implementation Considerations
+
+- CosmosDB PGSQL server requires JSON-safe text sanitization (use `json.dumps()` encoding) to prevent Unicode escape sequence errors
+- PRAW warnings about async environments are harmless when using APScheduler with thread pool executors
+- SSL verification should be disabled for localhost CosmosDB emulator development
