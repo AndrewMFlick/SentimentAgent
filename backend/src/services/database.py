@@ -1,13 +1,39 @@
 """CosmosDB database service."""
 import logging
+import os
+import json
 from typing import List, Optional, Dict, Any
 from datetime import datetime, timedelta
 from azure.cosmos import CosmosClient, PartitionKey, exceptions
+import urllib3
+import warnings
 
 from ..config import settings
-from ..models import RedditPost, RedditComment, SentimentScore, TrendingTopic, DataCollectionCycle
+from ..models import (
+    RedditPost, RedditComment, SentimentScore, 
+    TrendingTopic, DataCollectionCycle
+)
+
+# Disable SSL warnings for local emulator
+urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+warnings.filterwarnings('ignore', message='Unverified HTTPS request')
 
 logger = logging.getLogger(__name__)
+
+
+def sanitize_text(text: str) -> str:
+    """Sanitize text to avoid Unicode escape sequence issues."""
+    if not text:
+        return text
+    try:
+        # Use JSON encoding to properly escape all special characters
+        # Encode to JSON string (adds quotes and escapes),
+        # then remove the quotes
+        sanitized = json.dumps(text)[1:-1]
+        return sanitized
+    except Exception as e:
+        logger.debug(f"Error sanitizing text: {e}")
+        return ""
 
 
 class DatabaseService:
@@ -15,8 +41,22 @@ class DatabaseService:
     
     def __init__(self):
         """Initialize CosmosDB client and containers."""
-        self.client = CosmosClient(settings.cosmos_endpoint, settings.cosmos_key)
-        self.database = self.client.get_database_client(settings.cosmos_database)
+        # For local emulator, disable SSL verification
+        if "localhost" in settings.cosmos_endpoint:
+            os.environ['AZURE_COSMOS_DISABLE_SSL_VERIFICATION'] = 'true'
+            self.client = CosmosClient(
+                settings.cosmos_endpoint, 
+                settings.cosmos_key,
+                connection_verify=False
+            )
+        else:
+            self.client = CosmosClient(
+                settings.cosmos_endpoint,
+                settings.cosmos_key
+            )
+        self.database = self.client.get_database_client(
+            settings.cosmos_database
+        )
         
         # Container references
         self.posts_container = None
@@ -74,6 +114,18 @@ class DatabaseService:
             item['created_utc'] = post.created_utc.isoformat()
             item['collected_at'] = post.collected_at.isoformat()
             
+            # Sanitize text fields to avoid Unicode issues
+            if item.get('title'):
+                item['title'] = sanitize_text(item['title'])
+            if item.get('content'):
+                item['content'] = sanitize_text(item['content'])
+            if item.get('url'):
+                item['url'] = sanitize_text(item['url'])
+            if item.get('author'):
+                item['author'] = sanitize_text(item['author'])
+            if item.get('subreddit'):
+                item['subreddit'] = sanitize_text(item['subreddit'])
+            
             self.posts_container.upsert_item(item)
             logger.debug(f"Saved post: {post.id}")
         except Exception as e:
@@ -123,6 +175,16 @@ class DatabaseService:
             item['id'] = comment.id
             item['created_utc'] = comment.created_utc.isoformat()
             item['collected_at'] = comment.collected_at.isoformat()
+            
+            # Sanitize text fields to avoid Unicode issues
+            if item.get('content'):
+                item['content'] = sanitize_text(item['content'])
+            if item.get('author'):
+                item['author'] = sanitize_text(item['author'])
+            if item.get('post_id'):
+                item['post_id'] = sanitize_text(item['post_id'])
+            if item.get('parent_id'):
+                item['parent_id'] = sanitize_text(item['parent_id'])
             
             self.comments_container.upsert_item(item)
             logger.debug(f"Saved comment: {comment.id}")
