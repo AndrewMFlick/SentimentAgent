@@ -284,7 +284,8 @@ Add to cron for periodic health checks:
 
 ```bash
 # Check every 5 minutes
-*/5 * * * * curl -f http://localhost:8000/api/v1/health > /dev/null 2>&1 || echo "Backend unhealthy" | mail -s "SentimentAgent Alert" admin@example.com
+# TODO: Replace ADMIN_EMAIL with your actual email address
+*/5 * * * * curl -f http://localhost:8000/api/v1/health > /dev/null 2>&1 || echo "Backend unhealthy" | mail -s "SentimentAgent Alert" ${ADMIN_EMAIL}
 ```
 
 ### Log Rotation
@@ -402,9 +403,11 @@ If database is unavailable but backend must stay running:
 
 ## Contact Information
 
-- **On-call Engineer**: [Contact info]
-- **Azure Support**: [Support number]
-- **CosmosDB Team**: [Team contact]
+**TODO: Update these placeholders with actual contact information before production deployment**
+
+- **On-call Engineer**: [Contact info - Update before deployment]
+- **Azure Support**: [Support number - Update before deployment]
+- **CosmosDB Team**: [Team contact - Update before deployment]
 - **Documentation**: `/docs` directory
 
 ## Change Log

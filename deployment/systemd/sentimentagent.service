@@ -23,7 +23,7 @@ StartLimitInterval=200
 StartLimitBurst=5
 
 # Resource limits
-MemoryMax=512M
+MemoryMax=600M
 CPUQuota=200%
 
 # Logging
@@ -36,7 +36,7 @@ NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=strict
 ProtectHome=true
-ReadWritePaths=/opt/sentimentagent/backend
+ReadWritePaths=/opt/sentimentagent/backend/logs
 
 # Graceful shutdown
 TimeoutStopSec=30

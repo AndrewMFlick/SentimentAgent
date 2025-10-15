@@ -141,6 +141,11 @@ The `/api/v1/health` endpoint provides comprehensive backend monitoring:
 - `200`: Healthy (all systems operational)
 - `503`: Unhealthy (database disconnected or critical failure)
 
+**Health Status Thresholds**:
+- Healthy: Database connected, memory < 512MB
+- Degraded: Memory > 512MB or data > 60 minutes old
+- Unhealthy: Database disconnected
+
 ## Development
 
 ### Backend Testing
