@@ -29,6 +29,9 @@ structlog==24.1.0
 # Scheduling
 apscheduler==3.10.4
 
+# Process Monitoring
+psutil==5.9.8
+
 # Testing
 pytest==8.0.0
 pytest-asyncio==0.23.5

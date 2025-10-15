@@ -53,6 +53,12 @@ class Settings(BaseSettings):
     # Logging
     log_level: str = "INFO"
     
+    # Health Monitoring
+    health_check_enabled: bool = True
+    db_retry_max_attempts: int = 3
+    db_retry_base_delay: float = 1.0
+    startup_load_hours: int = 24
+    
     @property
     def subreddit_list(self) -> List[str]:
         """Get list of subreddits to monitor."""

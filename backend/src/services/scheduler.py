@@ -12,6 +12,7 @@ from .reddit_collector import RedditCollector
 from .sentiment_analyzer import SentimentAnalyzer
 from .database import db
 from .trending_analyzer import trending_analyzer
+from .health import app_state
 
 logger = logging.getLogger(__name__)
 
@@ -82,13 +83,20 @@ class CollectionScheduler:
         )
     
     def stop(self):
-        """Stop the scheduler."""
+        """Stop the scheduler gracefully."""
         if not self.is_running:
             return
         
-        self.scheduler.shutdown()
+        logger.info("Stopping scheduler gracefully...")
+        
+        # Shutdown with wait=True to allow running jobs to complete
+        self.scheduler.shutdown(wait=True)
+        
+        # Shutdown thread pool executor
+        self.executor.shutdown(wait=True)
+        
         self.is_running = False
-        logger.info("Scheduler stopped")
+        logger.info("Scheduler stopped gracefully")
     
     async def collect_and_analyze(self):
         """Collect data from Reddit and analyze sentiment."""
@@ -99,8 +107,15 @@ class CollectionScheduler:
         )
     
     def _collect_and_analyze_sync(self):
-        """Synchronous data collection (runs in thread pool)."""
+        """Synchronous data collection (runs in thread pool) with catch-log-continue error handling."""
+        import psutil
+        import os
+        
         cycle_id = f"cycle_{datetime.utcnow().strftime('%Y%m%d_%H%M%S')}"
+        process = psutil.Process(os.getpid())
+        
+        # Log memory usage at start
+        memory_start_mb = process.memory_info().rss / 1024 / 1024
         
         cycle = DataCollectionCycle(
             id=cycle_id,
@@ -108,69 +123,175 @@ class CollectionScheduler:
             status="running"
         )
         
-        logger.info(f"Starting collection cycle: {cycle_id}")
+        logger.info(
+            f"Starting collection cycle: {cycle_id}, "
+            f"memory_start={memory_start_mb:.2f}MB"
+        )
         
         try:
+            # Catch-log-continue: Process each subreddit independently
             for subreddit in settings.subreddit_list:
                 try:
-                    logger.info(f"Collecting from r/{subreddit}")
+                    logger.info(
+                        f"Collection started for r/{subreddit}",
+                        extra={
+                            "cycle_id": cycle_id,
+                            "subreddit": subreddit,
+                            "timestamp": datetime.utcnow().isoformat()
+                        }
+                    )
                     
                     # Collect posts
                     posts = self.collector.collect_posts(subreddit, limit=50)
                     cycle.posts_collected += len(posts)
                     
                     for post in posts:
-                        # Save post
-                        db.save_post(post)
+                        # Save post with retry logic
+                        try:
+                            db.save_post(post)
+                        except Exception as e:
+                            logger.error(
+                                f"Failed to save post {post.id}",
+                                extra={
+                                    "cycle_id": cycle_id,
+                                    "subreddit": subreddit,
+                                    "post_id": post.id,
+                                    "error": str(e),
+                                    "error_type": type(e).__name__
+                                },
+                                exc_info=True
+                            )
+                            continue  # Continue with next post
                         
                         # Analyze post sentiment
-                        post_text = f"{post.title} {post.content}"
-                        sentiment = self.analyzer.analyze(
-                            content_id=post.id,
-                            content_type="post",
-                            subreddit=subreddit,
-                            text=post_text
-                        )
-                        db.save_sentiment(sentiment)
+                        try:
+                            post_text = f"{post.title} {post.content}"
+                            sentiment = self.analyzer.analyze(
+                                content_id=post.id,
+                                content_type="post",
+                                subreddit=subreddit,
+                                text=post_text
+                            )
+                            db.save_sentiment(sentiment)
+                        except Exception as e:
+                            logger.error(
+                                f"Failed to analyze post sentiment {post.id}",
+                                extra={
+                                    "cycle_id": cycle_id,
+                                    "subreddit": subreddit,
+                                    "post_id": post.id,
+                                    "error": str(e),
+                                    "error_type": type(e).__name__
+                                },
+                                exc_info=True
+                            )
                         
                         # Collect and analyze top comments
-                        comments = self.collector.collect_comments(post.id, limit=20)
-                        cycle.comments_collected += len(comments)
-                        
-                        for comment in comments:
-                            db.save_comment(comment)
+                        try:
+                            comments = self.collector.collect_comments(post.id, limit=20)
+                            cycle.comments_collected += len(comments)
                             
-                            # Analyze comment sentiment
-                            comment_sentiment = self.analyzer.analyze(
-                                content_id=comment.id,
-                                content_type="comment",
-                                subreddit=subreddit,
-                                text=comment.content
+                            for comment in comments:
+                                try:
+                                    db.save_comment(comment)
+                                    
+                                    # Analyze comment sentiment
+                                    comment_sentiment = self.analyzer.analyze(
+                                        content_id=comment.id,
+                                        content_type="comment",
+                                        subreddit=subreddit,
+                                        text=comment.content
+                                    )
+                                    db.save_sentiment(comment_sentiment)
+                                except Exception as e:
+                                    logger.error(
+                                        f"Failed to process comment {comment.id}",
+                                        extra={
+                                            "cycle_id": cycle_id,
+                                            "subreddit": subreddit,
+                                            "comment_id": comment.id,
+                                            "error": str(e),
+                                            "error_type": type(e).__name__
+                                        },
+                                        exc_info=True
+                                    )
+                                    continue  # Continue with next comment
+                        except Exception as e:
+                            logger.error(
+                                f"Failed to collect comments for post {post.id}",
+                                extra={
+                                    "cycle_id": cycle_id,
+                                    "subreddit": subreddit,
+                                    "post_id": post.id,
+                                    "error": str(e),
+                                    "error_type": type(e).__name__
+                                },
+                                exc_info=True
                             )
-                            db.save_sentiment(comment_sentiment)
                     
                     cycle.subreddits_processed.append(subreddit)
+                    logger.info(
+                        f"Collection completed for r/{subreddit}",
+                        extra={
+                            "cycle_id": cycle_id,
+                            "subreddit": subreddit,
+                            "posts_collected": len(posts)
+                        }
+                    )
                     
                 except Exception as e:
+                    # Catch-log-continue: Log error but continue with next subreddit
                     error_msg = f"Error processing r/{subreddit}: {str(e)}"
-                    logger.error(error_msg)
+                    logger.error(
+                        error_msg,
+                        extra={
+                            "cycle_id": cycle_id,
+                            "subreddit": subreddit,
+                            "error": str(e),
+                            "error_type": type(e).__name__,
+                            "stack_trace": True
+                        },
+                        exc_info=True
+                    )
                     cycle.errors.append(error_msg)
+                    app_state.collections_failed += 1
             
+            # Collection cycle completed successfully
             cycle.status = "completed"
             cycle.end_time = datetime.utcnow()
+            
+            # Update application state
+            app_state.last_collection_time = datetime.utcnow()
+            app_state.collections_succeeded += 1
+            
+            # Log memory usage at end to detect leaks
+            memory_end_mb = process.memory_info().rss / 1024 / 1024
+            memory_delta_mb = memory_end_mb - memory_start_mb
             
             logger.info(
                 f"Collection cycle {cycle_id} completed: "
                 f"{cycle.posts_collected} posts, {cycle.comments_collected} comments, "
-                f"{len(cycle.errors)} errors"
+                f"{len(cycle.errors)} errors, "
+                f"memory_start={memory_start_mb:.2f}MB, memory_end={memory_end_mb:.2f}MB, "
+                f"memory_delta={memory_delta_mb:.2f}MB"
             )
             
         except Exception as e:
+            # Unexpected error during collection cycle
             cycle.status = "failed"
             cycle.end_time = datetime.utcnow()
             error_msg = f"Collection cycle failed: {str(e)}"
-            logger.error(error_msg)
+            logger.error(
+                error_msg,
+                extra={
+                    "cycle_id": cycle_id,
+                    "error": str(e),
+                    "error_type": type(e).__name__
+                },
+                exc_info=True
+            )
             cycle.errors.append(error_msg)
+            app_state.collections_failed += 1
     
     async def cleanup_old_data(self):
         """Clean up data older than retention period."""
