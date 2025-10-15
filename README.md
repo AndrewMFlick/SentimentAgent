@@ -108,8 +108,38 @@ AZURE_OPENAI_API_KEY=your_key
 - `POST /api/v1/ai/query` - Query AI agent with natural language questions
 
 ### System
-- `GET /api/v1/health` - Health check
+- `GET /api/v1/health` - Comprehensive health check with metrics
 - `GET /api/v1/subreddits` - List monitored subreddits
+
+### Health Check Response
+
+The `/api/v1/health` endpoint provides comprehensive backend monitoring:
+
+```json
+{
+  "status": "healthy",  // or "degraded", "unhealthy"
+  "timestamp": "2025-10-15T16:57:33.168Z",
+  "process": {
+    "uptime_seconds": 3600.5,
+    "memory_mb": 245.32,
+    "cpu_percent": 2.5,
+    "pid": 12345
+  },
+  "application": {
+    "last_collection_at": "2025-10-15T16:45:00.000Z",
+    "collections_succeeded": 10,
+    "collections_failed": 0,
+    "data_freshness_minutes": 12.5
+  },
+  "database": {
+    "connected": true
+  }
+}
+```
+
+**Status Codes**:
+- `200`: Healthy (all systems operational)
+- `503`: Unhealthy (database disconnected or critical failure)
 
 ## Development
 
@@ -197,10 +227,37 @@ DATA_RETENTION_DAYS=90
 
 ## Monitoring
 
-The application includes:
-- Structured logging for all operations
-- Health check endpoint for monitoring
-- Error handling with retry logic for Reddit API rate limits
+The application includes comprehensive health monitoring and stability features:
+
+### Health Monitoring
+- **Health Endpoint**: `/api/v1/health` provides real-time metrics
+  - Process uptime, memory, and CPU usage
+  - Collection success/failure counters
+  - Data freshness (time since last collection)
+  - Database connection status
+- **Status Codes**: Returns 200 (healthy), 503 (unhealthy) for automated monitoring
+
+### Backend Stability Features
+- **Graceful Shutdown**: Waits for running jobs to complete before shutdown
+- **Error Recovery**: Catch-log-continue pattern for collection errors
+- **Database Retry Logic**: Exponential backoff for transient failures
+- **Memory Monitoring**: Tracks memory usage per collection cycle
+- **Structured Logging**: JSON-formatted logs with full context
+- **Data Loading**: Recent data loads on startup (non-blocking)
+
+### External Process Monitor
+
+Monitor backend health from a separate process:
+
+```bash
+cd backend
+python3 monitoring/process_monitor.py --interval 60
+```
+
+**Options**:
+- `--api-url`: Backend URL (default: http://localhost:8000)
+- `--interval`: Check interval in seconds (default: 60)
+- `--quiet`: Only print errors and warnings
 
 ## License
 

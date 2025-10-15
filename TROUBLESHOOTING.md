@@ -2,26 +2,106 @@
 
 ## Current Status
 
-✅ **Data Collection Working**: 700 posts and 4,000+ comments are being collected successfully
-✅ **Database Saving Working**: All data is being saved to CosmosDB (confirmed by 200 status codes)
-❌ **Backend Process Unstable**: Server keeps stopping after collection
-❌ **No Data in UI**: Frontend shows zeros
+✅ **Backend Stability**: Improved with graceful shutdown and error recovery
+✅ **Data Loading**: Existing data loads on startup
+✅ **Health Monitoring**: Comprehensive health endpoint available
+✅ **Data Collection Working**: Posts and comments are being collected successfully
+✅ **Database Saving Working**: All data is being saved to CosmosDB
+❓ **UI Data Display**: Verify frontend connection and data flow
 
-## Issues Identified
+## New Features (Backend Stability Release)
 
-### 1. Backend Process Management
-**Problem**: The backend process stops unexpectedly, especially after data collection completes.
+### Health Monitoring Endpoint
 
-**Solution**: Run backend in a proper terminal session, not in background:
-
+Check backend health and metrics:
 ```bash
-# Terminal 1: Backend (keep this open)
-cd /Users/andrewflick/Documents/SentimentAgent/backend
-export PYTHONPATH=/Users/andrewflick/Documents/SentimentAgent/backend
-python3 -m src.main
+curl http://localhost:8000/api/v1/health
 ```
 
-### 2. Configuration File Path
+**Response includes**:
+- Process uptime, memory usage, CPU percentage
+- Collections succeeded/failed counters
+- Last collection timestamp
+- Data freshness (minutes since last collection)
+- Database connection status
+
+**Status codes**:
+- `200`: Healthy (all systems operational)
+- `503`: Unhealthy (database disconnected or critical failure)
+
+### Backend Stability Features
+
+1. **Graceful Shutdown**: Scheduler waits for running jobs to complete
+2. **Catch-Log-Continue**: Collection errors don't crash the backend
+3. **Memory Monitoring**: Tracks memory usage per collection cycle
+4. **Error Logging**: Full context including stack traces
+5. **Retry Logic**: Database operations retry with exponential backoff
+6. **Data Loading**: Recent data loads on startup (non-blocking)
+
+## Issues and Solutions
+
+### 1. Backend Process Management
+
+**Problem**: The backend process stops unexpectedly after data collection.
+
+**Solution Implemented**:
+- Graceful shutdown handling (scheduler.shutdown(wait=True))
+- Error recovery with catch-log-continue pattern
+- Process cleanup in start.sh script
+- Fail-fast startup (crashes if database unavailable)
+
+**Start backend**:
+```bash
+cd backend
+./start.sh
+```
+
+**Monitor backend**:
+```bash
+# Watch health status
+watch -n 5 'curl -s http://localhost:8000/api/v1/health | jq'
+
+# Or use the monitoring script
+python3 monitoring/process_monitor.py
+```
+
+### 2. Backend Crashes During Collection
+
+**Symptoms**:
+- Backend stops responding
+- Process terminates unexpectedly
+- Orphaned processes
+
+**Debug steps**:
+1. Check health endpoint: `curl http://localhost:8000/api/v1/health`
+2. Check backend logs for error patterns
+3. Verify memory usage: Look for `memory_mb` in health response
+4. Check collections_failed counter
+
+**Solutions**:
+- Backend now logs all errors with full context
+- Collection errors for individual subreddits don't crash entire process
+- Memory usage logged at start/end of each cycle
+
+### 3. No Data Showing After Backend Restart
+
+**Problem**: Data exists in database but doesn't show immediately after restart.
+
+**Solution Implemented**:
+- `load_recent_data()` runs on startup (background, non-blocking)
+- Loads last 24 hours of posts/comments
+- Logs loading progress: "Data loading complete: X posts, Y comments loaded in Z seconds"
+
+**Verify**:
+```bash
+# Check if data loaded
+curl "http://localhost:8000/api/v1/sentiment/stats?hours=24"
+
+# Check recent posts
+curl "http://localhost:8000/api/v1/posts/recent?limit=10"
+```
+
+### 4. Configuration File Path
 **Fixed**: Updated `backend/src/config.py` to use absolute path for .env file:
 ```python
 env_file=str(Path(__file__).parent.parent / ".env")
