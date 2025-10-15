@@ -1,5 +1,7 @@
 """FastAPI application."""
 import logging
+import asyncio
+import structlog
 from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -7,40 +9,84 @@ from fastapi.middleware.cors import CORSMiddleware
 from .config import settings
 from .api import router
 from .services import db, scheduler
+from .services.health import app_state
 
-# Configure logging
+# Configure structured logging
+structlog.configure(
+    processors=[
+        structlog.stdlib.filter_by_level,
+        structlog.stdlib.add_logger_name,
+        structlog.stdlib.add_log_level,
+        structlog.stdlib.PositionalArgumentsFormatter(),
+        structlog.processors.TimeStamper(fmt="iso"),
+        structlog.processors.StackInfoRenderer(),
+        structlog.processors.format_exc_info,
+        structlog.processors.UnicodeDecoder(),
+        structlog.processors.JSONRenderer()
+    ],
+    context_class=dict,
+    logger_factory=structlog.stdlib.LoggerFactory(),
+    cache_logger_on_first_use=True,
+)
+
+# Configure standard logging
 logging.basicConfig(
     level=getattr(logging, settings.log_level),
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
 )
 
-logger = logging.getLogger(__name__)
+logger = structlog.get_logger(__name__)
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """Application lifespan manager."""
+    """Application lifespan manager with proper startup and shutdown handling."""
     # Startup
-    logger.info("Starting application...")
+    logger.info("application_startup", event="starting")
     
     try:
-        # Initialize database
+        # Initialize database (fail-fast on connection failure)
+        logger.info("database_initialization", event="starting")
         await db.initialize()
+        app_state.database_connected = True
+        logger.info("database_initialization", event="completed")
         
         # Start scheduler
+        logger.info("scheduler_startup", event="starting")
         scheduler.start()
+        logger.info("scheduler_startup", event="completed")
         
-        logger.info("Application started successfully")
+        # Load recent data in background (non-blocking)
+        logger.info("data_loading", event="starting_background_task")
+        asyncio.create_task(db.load_recent_data())
+        
+        logger.info("application_startup", event="completed", uptime_seconds=app_state.get_uptime_seconds())
+        
     except Exception as e:
-        logger.error(f"Failed to start application: {e}")
-        raise
+        logger.critical("application_startup", event="failed", error=str(e), exc_info=True)
+        app_state.database_connected = False
+        raise  # Fail-fast: crash the application if startup fails
     
     yield
     
     # Shutdown
-    logger.info("Shutting down application...")
-    scheduler.stop()
-    logger.info("Application stopped")
+    logger.info("application_shutdown", event="starting")
+    
+    try:
+        # Stop scheduler gracefully (wait for running jobs to complete)
+        logger.info("scheduler_shutdown", event="starting")
+        scheduler.stop()
+        logger.info("scheduler_shutdown", event="completed")
+        
+        # Disconnect database
+        logger.info("database_shutdown", event="starting")
+        app_state.database_connected = False
+        logger.info("database_shutdown", event="completed")
+        
+        logger.info("application_shutdown", event="completed", uptime_seconds=app_state.get_uptime_seconds())
+        
+    except Exception as e:
+        logger.error("application_shutdown", event="error", error=str(e), exc_info=True)
 
 
 # Create FastAPI app

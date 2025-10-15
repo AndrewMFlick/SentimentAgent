@@ -3,8 +3,11 @@ from typing import List, Optional
 from fastapi import APIRouter, HTTPException, Query, Body
 from datetime import datetime
 from pydantic import BaseModel
+import psutil
+import os
 
 from ..services import db, ai_agent
+from ..services.health import app_state
 from ..models import RedditPost, SentimentScore, TrendingTopic
 
 router = APIRouter()
@@ -17,8 +20,80 @@ class QueryRequest(BaseModel):
 
 @router.get("/health")
 async def health_check():
-    """Health check endpoint."""
-    return {"status": "healthy", "timestamp": datetime.utcnow().isoformat()}
+    """
+    Comprehensive health check endpoint.
+    
+    Returns process metrics, application state, and database health.
+    Returns 503 status code when the application is unhealthy.
+    """
+    try:
+        # Get process metrics using psutil
+        process = psutil.Process(os.getpid())
+        
+        # Calculate uptime
+        uptime_seconds = app_state.get_uptime_seconds()
+        
+        # Calculate memory usage in MB
+        memory_info = process.memory_info()
+        memory_mb = memory_info.rss / 1024 / 1024
+        
+        # Calculate CPU percentage
+        cpu_percent = process.cpu_percent(interval=0.1)
+        
+        # Check database connection
+        db_connected = await db.is_connected()
+        
+        # Calculate data freshness
+        data_freshness_minutes = app_state.get_data_freshness_minutes()
+        
+        # Determine overall health status
+        status = "healthy"
+        
+        if not db_connected:
+            status = "unhealthy"
+        elif memory_mb > 512:  # Memory threshold: 512MB
+            status = "degraded"
+        elif data_freshness_minutes and data_freshness_minutes > 60:  # Data older than 1 hour
+            status = "degraded"
+        
+        health_data = {
+            "status": status,
+            "timestamp": datetime.utcnow().isoformat(),
+            "process": {
+                "uptime_seconds": uptime_seconds,
+                "memory_mb": round(memory_mb, 2),
+                "cpu_percent": round(cpu_percent, 2),
+                "pid": process.pid
+            },
+            "application": {
+                "last_collection_at": app_state.last_collection_time.isoformat() if app_state.last_collection_time else None,
+                "collections_succeeded": app_state.collections_succeeded,
+                "collections_failed": app_state.collections_failed,
+                "data_freshness_minutes": round(data_freshness_minutes, 2) if data_freshness_minutes else None
+            },
+            "database": {
+                "connected": db_connected
+            }
+        }
+        
+        # Return 503 if unhealthy
+        if status == "unhealthy":
+            raise HTTPException(status_code=503, detail=health_data)
+        
+        return health_data
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        # If health check itself fails, return unhealthy status
+        raise HTTPException(
+            status_code=503,
+            detail={
+                "status": "unhealthy",
+                "error": str(e),
+                "timestamp": datetime.utcnow().isoformat()
+            }
+        )
 
 
 @router.get("/sentiment/stats")

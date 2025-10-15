@@ -2,7 +2,10 @@
 import logging
 import os
 import json
+import time
+import asyncio
 from typing import List, Optional, Dict, Any
+from functools import wraps
 from datetime import datetime, timedelta
 from azure.cosmos import CosmosClient, PartitionKey, exceptions
 import urllib3
@@ -19,6 +22,52 @@ urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 warnings.filterwarnings('ignore', message='Unverified HTTPS request')
 
 logger = logging.getLogger(__name__)
+
+
+def retry_db_operation(func):
+    """
+    Retry decorator for database operations with exponential backoff.
+    
+    Retries transient CosmosDB errors with exponential backoff.
+    Configured via settings: db_retry_max_attempts, db_retry_base_delay
+    """
+    @wraps(func)
+    def wrapper(*args, **kwargs):
+        max_attempts = settings.db_retry_max_attempts
+        base_delay = settings.db_retry_base_delay
+        
+        for attempt in range(max_attempts):
+            try:
+                return func(*args, **kwargs)
+            except (
+                exceptions.CosmosHttpResponseError,
+                exceptions.CosmosClientTimeoutError,
+                ConnectionError,
+            ) as e:
+                if attempt == max_attempts - 1:
+                    # Last attempt failed, re-raise
+                    logger.error(
+                        f"Database operation {func.__name__} failed after {max_attempts} attempts: {e}",
+                        exc_info=True
+                    )
+                    raise
+                
+                # Calculate exponential backoff delay
+                delay = base_delay * (2 ** attempt)
+                logger.warning(
+                    f"Database operation {func.__name__} failed (attempt {attempt + 1}/{max_attempts}), "
+                    f"retrying in {delay}s: {e}"
+                )
+                time.sleep(delay)
+            except Exception as e:
+                # Non-transient errors should not be retried
+                logger.error(f"Non-retryable error in {func.__name__}: {e}", exc_info=True)
+                raise
+        
+        # Should not reach here, but for safety
+        raise RuntimeError(f"Unexpected retry logic failure in {func.__name__}")
+    
+    return wrapper
 
 
 def sanitize_text(text: str) -> str:
@@ -93,6 +142,20 @@ class DatabaseService:
         except Exception as e:
             logger.error(f"Database initialization error: {e}")
             raise
+    
+    async def is_connected(self) -> bool:
+        """Check if database connection is healthy."""
+        try:
+            # Try a simple operation to verify connection
+            if self.database is None:
+                return False
+            
+            # List containers to verify connection
+            list(self.database.list_containers())
+            return True
+        except Exception as e:
+            logger.error(f"Database connection check failed: {e}")
+            return False
     
     def _create_container(self, container_name: str, partition_key: str):
         """Create a container if it doesn't exist."""
@@ -312,6 +375,48 @@ class DatabaseService:
             
         except Exception as e:
             logger.error(f"Error cleaning up old data: {e}")
+    
+    async def load_recent_data(self):
+        """
+        Load recent data from database on startup.
+        
+        Queries the last N hours of posts and comments to populate caches
+        and ensure data is available immediately.
+        """
+        start_time = time.time()
+        hours = settings.startup_load_hours
+        
+        try:
+            logger.info(f"Loading recent data from last {hours} hours...")
+            
+            # Load recent posts
+            posts = self.get_recent_posts(hours=hours, limit=1000)
+            posts_count = len(posts)
+            
+            # Load recent comments count (query only for count, not all data)
+            cutoff = datetime.utcnow() - timedelta(hours=hours)
+            query = "SELECT VALUE COUNT(1) FROM c WHERE c.collected_at >= @cutoff"
+            parameters = [{"name": "@cutoff", "value": cutoff.isoformat()}]
+            
+            comments_result = list(self.comments_container.query_items(
+                query=query,
+                parameters=parameters,
+                enable_cross_partition_query=True
+            ))
+            comments_count = comments_result[0] if comments_result else 0
+            
+            # Load sentiment stats
+            stats = self.get_sentiment_stats(hours=hours)
+            
+            elapsed = time.time() - start_time
+            logger.info(
+                f"Data loading complete: {posts_count} posts, {comments_count} comments, "
+                f"{stats.get('total', 0)} sentiment scores loaded in {elapsed:.2f}s"
+            )
+            
+        except Exception as e:
+            logger.error(f"Error loading recent data: {e}", exc_info=True)
+            # Don't raise - startup should continue even if data loading fails
 
 
 # Global database instance

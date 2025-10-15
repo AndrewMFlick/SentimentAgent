@@ -1,14 +1,35 @@
 #!/bin/bash
 
-# Kill any existing backend processes
-pkill -f "python3 -m src.main" 2>/dev/null || true
+# Process cleanup function
+cleanup_processes() {
+    echo "Cleaning up existing backend processes..."
+    
+    # Kill processes by pattern (uvicorn and python running main.py)
+    pkill -f "uvicorn.*src.main:app" 2>/dev/null || true
+    pkill -f "python.*src.main" 2>/dev/null || true
+    
+    # Wait for processes to terminate
+    sleep 2
+    
+    # Force kill if still running
+    pkill -9 -f "uvicorn.*src.main:app" 2>/dev/null || true
+    pkill -9 -f "python.*src.main" 2>/dev/null || true
+    
+    echo "Process cleanup complete"
+}
+
+# Perform cleanup
+cleanup_processes
 
 # Wait for port to be released
 sleep 2
 
-# Set PYTHONPATH
-export PYTHONPATH=/Users/andrewflick/Documents/SentimentAgent/backend
+# Get the directory of this script
+SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
+
+# Set PYTHONPATH to the backend directory
+export PYTHONPATH="${SCRIPT_DIR}"
 
 # Start the backend
-cd /Users/andrewflick/Documents/SentimentAgent/backend
-python3 -m src.main
+cd "${SCRIPT_DIR}"
+python3 -m uvicorn src.main:app --host 0.0.0.0 --port 8000 --reload
