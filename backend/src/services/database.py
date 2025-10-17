@@ -174,6 +174,8 @@ class DatabaseService:
     # Solution: Use Unix timestamps (integers) instead of ISO 8601 strings.
     # 
     # Query the _ts system field (Unix timestamp) rather than custom datetime fields.
+    # Note: _ts represents the last modification time in CosmosDB, which for our use case
+    # is equivalent to creation time since we don't update documents after creation.
     # This approach is compatible with both legacy data (with ISO format) and new queries.
     # 
     # Reference: specs/004-fix-the-cosmosdb/

@@ -87,6 +87,9 @@ class TestUserStory1DataLoading:
         """Create a DatabaseService with mocked containers."""
         with patch('azure.cosmos.CosmosClient'):
             from src.services.database import DatabaseService
+            from src.config import settings
+            
+            # Create instance with mocked initialization
             service = object.__new__(DatabaseService)
             
             # Mock the containers
@@ -94,10 +97,14 @@ class TestUserStory1DataLoading:
             service.comments_container = Mock()
             service.sentiment_container = Mock()
             
-            # Mock the helper methods
-            service._datetime_to_timestamp = DatabaseService._datetime_to_timestamp.__get__(service)
+            # Bind methods from the class to this instance
+            service._datetime_to_timestamp = lambda dt: int(dt.timestamp())
             service.get_recent_posts = Mock(return_value=[])
             service.get_sentiment_stats = Mock(return_value={"total": 0})
+            
+            # Bind the actual load_recent_data method to test the real implementation
+            import types
+            service.load_recent_data = types.MethodType(DatabaseService.load_recent_data, service)
             
             return service
     
@@ -112,6 +119,9 @@ class TestUserStory1DataLoading:
           - No CosmosHttpResponseError raised
           - Logs contain "Data loading complete"
           - Method completes without exceptions
+          
+        Note: We're testing the real load_recent_data method with mocked dependencies.
+        The method is bound to the service instance, so it can call mocked methods.
         """
         import logging
         caplog.set_level(logging.INFO)
