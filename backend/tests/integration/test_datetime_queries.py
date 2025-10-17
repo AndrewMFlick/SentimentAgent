@@ -161,18 +161,210 @@ class TestUserStory2_HistoricalDataQueries:
     pass
 
 
-# Placeholder for User Story 3 tests (to be implemented in T014-T015)
+# User Story 3 tests (T014-T015)
 class TestUserStory3_DataCollectionAndAnalysisJobs:
     """Tests for User Story 3: Data Collection and Analysis Jobs.
     
     Goal: Enable background jobs to query existing data by timestamp
     to avoid duplicates.
     
-    Tests to be added:
+    Tests implemented:
     - T014: test_query_for_duplicate_detection()
     - T015: test_query_mixed_document_formats()
     """
-    pass
+    
+    @pytest.fixture
+    def db_service_with_mocks(self):
+        """Create a DatabaseService with mocked containers for testing."""
+        with patch('azure.cosmos.CosmosClient'):
+            from src.services.database import DatabaseService
+            
+            # Create instance with mocked initialization
+            service = object.__new__(DatabaseService)
+            
+            # Mock the containers
+            service.posts_container = Mock()
+            service.comments_container = Mock()
+            service.sentiment_container = Mock()
+            
+            # Bind the _datetime_to_timestamp method
+            import types
+            service._datetime_to_timestamp = types.MethodType(
+                DatabaseService._datetime_to_timestamp, service
+            )
+            service.get_recent_posts = types.MethodType(
+                DatabaseService.get_recent_posts, service
+            )
+            
+            return service
+    
+    def test_query_for_duplicate_detection(self, db_service_with_mocks):
+        """
+        Test that collection jobs can check for existing posts.
+        
+        Task: T014
+        Purpose: Verify collection jobs can query for existing posts by timestamp
+                 to avoid re-collecting the same data
+        Setup: Insert posts from specific time period
+        Test: Query for posts in same time window (simulate duplicate check)
+        Assertions:
+          - Finds existing posts
+          - Can compare timestamps to avoid re-collection
+          - No InternalServerError
+        """
+        # Setup: Create test posts from a specific time period
+        now = datetime.utcnow()
+        test_time_window = now - timedelta(hours=2)
+        
+        # Mock posts from the last 2 hours (as dictionaries, not Mock objects)
+        mock_posts = [
+            {
+                "id": "post1",
+                "subreddit": "test",
+                "title": "Test Post 1",
+                "author": "test_user",
+                "score": 100,
+                "created_utc": (now - timedelta(hours=1)).isoformat() + "Z",
+                "collected_at": (now - timedelta(hours=1)).isoformat() + "Z",
+                "content": "Test content 1",
+                "url": "https://reddit.com/test1",
+                "num_comments": 10
+            },
+            {
+                "id": "post2",
+                "subreddit": "test",
+                "title": "Test Post 2",
+                "author": "test_user",
+                "score": 50,
+                "created_utc": (now - timedelta(minutes=30)).isoformat() + "Z",
+                "collected_at": (now - timedelta(minutes=30)).isoformat() + "Z",
+                "content": "Test content 2",
+                "url": "https://reddit.com/test2",
+                "num_comments": 5
+            }
+        ]
+        
+        # Mock the query_items method to return our test posts
+        db_service_with_mocks.posts_container.query_items = Mock(
+            return_value=mock_posts
+        )
+        
+        # Test: Query for posts in the same time window
+        # This simulates how a collection job would check for existing data
+        posts = db_service_with_mocks.get_recent_posts(hours=2, limit=100)
+        
+        # Assertions
+        assert posts is not None, "Query should return results"
+        assert len(posts) == 2, "Should find 2 posts in the time window"
+        
+        # Verify query was called with correct parameters
+        assert db_service_with_mocks.posts_container.query_items.called, \
+            "query_items should be called"
+        
+        # Verify the query used timestamp parameters
+        call_args = db_service_with_mocks.posts_container.query_items.call_args
+        assert call_args is not None, "query_items should have been called with arguments"
+        
+        # Check that parameters were passed (this verifies datetime formatting worked)
+        query_kwargs = call_args[1]
+        assert 'parameters' in query_kwargs, "Query should include parameters"
+        parameters = query_kwargs['parameters']
+        assert len(parameters) > 0, "Should have at least one parameter (cutoff time)"
+        
+        # Verify the cutoff parameter is an integer timestamp (not ISO string)
+        cutoff_param = next((p for p in parameters if p['name'] == '@cutoff'), None)
+        assert cutoff_param is not None, "Should have @cutoff parameter"
+        assert isinstance(cutoff_param['value'], int), \
+            "Cutoff value should be Unix timestamp (integer), not ISO string"
+    
+    def test_query_mixed_document_formats(self, db_service_with_mocks):
+        """
+        Test backward compatibility with existing stored ISO format dates.
+        
+        Task: T015
+        Purpose: Verify backward compatibility with documents stored in old ISO format
+        Setup: Mock documents with various datetime formats
+        Test: Query using new timestamp parameters
+        Assertions:
+          - Old format documents are included in results (using _ts system field)
+          - New format documents work
+          - No InternalServerError
+        
+        Note: CosmosDB's _ts field is a system-generated Unix timestamp that exists
+              on all documents regardless of how datetime fields are stored in the
+              document body. By querying against _ts, we achieve backward compatibility
+              with documents that have ISO format datetime strings in their custom fields.
+        """
+        now = datetime.utcnow()
+        
+        # Mock mixed format posts (as dictionaries):
+        # - Old format: Has ISO datetime strings in collected_at field
+        # - New format: Also has ISO strings (we don't change storage format)
+        # - Both can be queried via _ts system field
+        mock_mixed_posts = [
+            {
+                "id": "old_post",
+                "subreddit": "test",
+                "title": "Old Format Post",
+                "author": "test_user",
+                "score": 100,
+                "created_utc": "2025-10-17T05:30:00.123456Z",  # Old ISO format with microseconds
+                "collected_at": "2025-10-17T05:30:00.123456Z",
+                "content": "Old content",
+                "url": "https://reddit.com/old",
+                "num_comments": 10
+            },
+            {
+                "id": "new_post",
+                "subreddit": "test",
+                "title": "New Format Post",
+                "author": "test_user",
+                "score": 50,
+                "created_utc": (now - timedelta(hours=6)).isoformat() + "Z",  # Still ISO, but newer
+                "collected_at": (now - timedelta(hours=6)).isoformat() + "Z",
+                "content": "New content",
+                "url": "https://reddit.com/new",
+                "num_comments": 5
+            }
+        ]
+        
+        # Mock query_items to return mixed format posts
+        db_service_with_mocks.posts_container.query_items = Mock(
+            return_value=mock_mixed_posts
+        )
+        
+        # Test: Query for posts from last 24 hours
+        # The query uses _ts system field, which works regardless of how
+        # collected_at is stored in the document
+        posts = db_service_with_mocks.get_recent_posts(hours=24, limit=100)
+        
+        # Assertions
+        assert posts is not None, "Query should return results"
+        assert len(posts) == 2, "Should find both old and new format posts"
+        
+        # Verify both formats are included
+        post_ids = [p.id for p in posts]
+        assert "old_post" in post_ids, "Should include old ISO format posts"
+        assert "new_post" in post_ids, "Should include newer format posts"
+        
+        # Verify query used _ts field (not collected_at field)
+        call_args = db_service_with_mocks.posts_container.query_items.call_args
+        # call_args[1] contains kwargs, the query is passed as 'query' kwarg
+        query_kwargs = call_args[1]
+        query = query_kwargs.get('query', '')
+        
+        assert "c._ts >=" in query, \
+            "Query should use _ts system field for backward compatibility"
+        assert "collected_at" not in query, \
+            "Query should NOT use collected_at custom field (varies by format)"
+        
+        # Verify timestamp parameter format
+        parameters = query_kwargs.get('parameters', [])
+        cutoff_param = next((p for p in parameters if p['name'] == '@cutoff'), None)
+        
+        assert cutoff_param is not None, "Should have @cutoff parameter"
+        assert isinstance(cutoff_param['value'], int), \
+            "Should use Unix timestamp for querying _ts field"
 
 
 @pytest.mark.integration
