@@ -11,7 +11,8 @@ The datetime query fix (Feature 004) enables these jobs to:
 - Clean up old data based on retention policies
 
 All datetime queries use Unix timestamps via database._datetime_to_timestamp() helper,
-which resolves CosmosDB PostgreSQL mode JSON parsing issues with ISO 8601 strings.
+which resolves CosmosDB PostgreSQL mode JSON parsing issues with ISO 8601 datetime 
+strings when used as query parameters.
 
 Related database methods used by jobs:
 - db.get_recent_posts(hours=N) - Check for existing posts (duplicate detection)
