@@ -168,6 +168,20 @@ class DatabaseService:
         except exceptions.CosmosResourceExistsError:
             logger.debug(f"Container already exists: {container_name}")
     
+    def _datetime_to_timestamp(self, dt: datetime) -> int:
+        """Convert datetime to Unix timestamp for CosmosDB queries.
+        
+        CosmosDB PostgreSQL mode has JSON parsing issues with ISO 8601 datetime
+        strings in query parameters. Use Unix timestamps (integers) instead.
+        
+        Args:
+            dt: Datetime object to convert
+            
+        Returns:
+            Unix timestamp as integer (seconds since epoch)
+        """
+        return int(dt.timestamp())
+    
     # Posts operations
     def save_post(self, post: RedditPost):
         """Save a Reddit post."""
