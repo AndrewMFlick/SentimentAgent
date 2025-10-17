@@ -168,6 +168,17 @@ class DatabaseService:
         except exceptions.CosmosResourceExistsError:
             logger.debug(f"Container already exists: {container_name}")
     
+    # ===== Datetime Query Helper =====
+    # CosmosDB PostgreSQL mode has issues with ISO 8601 datetime strings in query parameters.
+    # The JSON parsing fails to properly handle datetime strings, causing HTTP 500 errors.
+    # Solution: Use Unix timestamps (integers) instead of ISO 8601 strings.
+    # 
+    # Query the _ts system field (Unix timestamp) rather than custom datetime fields.
+    # This approach is compatible with both legacy data (with ISO format) and new queries.
+    # 
+    # Reference: specs/004-fix-the-cosmosdb/
+    # Related tasks: T001, T005, T006, T011, T012
+    
     def _datetime_to_timestamp(self, dt: datetime) -> int:
         """Convert datetime to Unix timestamp for CosmosDB queries.
         
@@ -224,9 +235,9 @@ class DatabaseService:
         try:
             cutoff = datetime.utcnow() - timedelta(hours=hours)
             
-            query = "SELECT * FROM c WHERE c.collected_at >= @cutoff"
-            # CosmosDB expects ISO 8601 format without microseconds
-            parameters = [{"name": "@cutoff", "value": cutoff.strftime("%Y-%m-%dT%H:%M:%SZ")}]
+            # Use _ts system field with Unix timestamp for CosmosDB PostgreSQL mode compatibility
+            query = "SELECT * FROM c WHERE c._ts >= @cutoff"
+            parameters = [{"name": "@cutoff", "value": self._datetime_to_timestamp(cutoff)}]
             
             if subreddit:
                 query += " AND c.subreddit = @subreddit"
@@ -312,11 +323,11 @@ class DatabaseService:
                 SUM(CASE WHEN c.sentiment = 'neutral' THEN 1 ELSE 0 END) as neutral,
                 AVG(c.compound_score) as avg_sentiment
             FROM c 
-            WHERE c.analyzed_at >= @cutoff
+            WHERE c._ts >= @cutoff
             """
-            # CosmosDB expects ISO 8601 format without microseconds
+            # Use Unix timestamp for CosmosDB PostgreSQL mode compatibility
             parameters = [
-                {"name": "@cutoff", "value": cutoff.strftime("%Y-%m-%dT%H:%M:%SZ")}
+                {"name": "@cutoff", "value": self._datetime_to_timestamp(cutoff)}
             ]
             
             if subreddit:
@@ -373,12 +384,10 @@ class DatabaseService:
         """Remove data older than retention period."""
         try:
             cutoff = datetime.utcnow() - timedelta(days=settings.data_retention_days)
-            # CosmosDB expects ISO 8601 format without microseconds
-            cutoff_str = cutoff.strftime("%Y-%m-%dT%H:%M:%SZ")
             
-            # Clean posts
-            query = "SELECT c.id, c.subreddit FROM c WHERE c.collected_at < @cutoff"
-            parameters = [{"name": "@cutoff", "value": cutoff_str}]
+            # Clean posts - use _ts system field with Unix timestamp
+            query = "SELECT c.id, c.subreddit FROM c WHERE c._ts < @cutoff"
+            parameters = [{"name": "@cutoff", "value": self._datetime_to_timestamp(cutoff)}]
             
             items = list(self.posts_container.query_items(
                 query=query,
@@ -407,12 +416,28 @@ class DatabaseService:
         try:
             logger.info(f"Loading recent data from last {hours} hours...")
             
-            # TODO: Fix datetime query format for CosmosDB PostgreSQL mode
-            # Temporarily skip data loading until we resolve the datetime format issue
-            logger.warning("Data loading temporarily disabled - datetime format issue with CosmosDB")
-            posts_count = 0
-            comments_count = 0
-            stats = {"total": 0}
+            # Load recent posts
+            posts = self.get_recent_posts(hours=hours, limit=1000)
+            posts_count = len(posts)
+            
+            # Count recent comments using _ts system field with Unix timestamp
+            cutoff = datetime.utcnow() - timedelta(hours=hours)
+            query = "SELECT VALUE COUNT(1) FROM c WHERE c._ts >= @cutoff"
+            parameters = [{"name": "@cutoff", "value": self._datetime_to_timestamp(cutoff)}]
+            
+            try:
+                items = list(self.comments_container.query_items(
+                    query=query,
+                    parameters=parameters,
+                    enable_cross_partition_query=True
+                ))
+                comments_count = items[0] if items else 0
+            except Exception as e:
+                logger.warning(f"Error counting comments: {e}")
+                comments_count = 0
+            
+            # Get sentiment stats
+            stats = self.get_sentiment_stats(hours=hours)
             
             elapsed = time.time() - start_time
             logger.info(
