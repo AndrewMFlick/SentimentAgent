@@ -54,65 +54,124 @@ Scheduled background jobs collect Reddit data, analyze sentiment, and identify t
 
 ---
 
-### User Story 3 - [Brief Title] (Priority: P3)
-
-[Describe this user journey in plain language]
-
-**Why this priority**: [Explain the value and why it has this priority level]
-
-**Independent Test**: [Describe how this can be tested independently]
-
-**Acceptance Scenarios**:
-
-1. **Given** [initial state], **When** [action], **Then** [expected outcome]
-
----
-
-[Add more user stories as needed, each with an assigned priority]
-
 ### Edge Cases
 
-<!--
-  ACTION REQUIRED: The content in this section represents placeholders.
-  Fill them out with the right edge cases.
--->
-
-- What happens when [boundary condition]?
-- How does system handle [error scenario]?
+- What happens when datetime values include microseconds vs. without microseconds?
+- How does the system handle timezone-aware vs. naive datetime objects?
+- What happens when datetime values are stored in ISO 8601 format but queried in a different format?
+- How does the system handle datetime comparison operators (>=, <=, BETWEEN) with the correct format?
+- What happens when the CosmosDB emulator version is upgraded and datetime format requirements change?
 
 ## Requirements *(mandatory)*
 
-<!--
-  ACTION REQUIRED: The content in this section represents placeholders.
-  Fill them out with the right functional requirements.
--->
-
 ### Functional Requirements
 
-- **FR-001**: System MUST [specific capability, e.g., "allow users to create accounts"]
-- **FR-002**: System MUST [specific capability, e.g., "validate email addresses"]  
-- **FR-003**: Users MUST be able to [key interaction, e.g., "reset their password"]
-- **FR-004**: System MUST [data requirement, e.g., "persist user preferences"]
-- **FR-005**: System MUST [behavior, e.g., "log all security events"]
+- **FR-001**: System MUST successfully execute datetime-filtered queries against CosmosDB PostgreSQL mode emulator without InternalServerError exceptions
+- **FR-002**: System MUST support datetime comparison operators (>=, <=, =, BETWEEN) in query parameters for all time-based filtering
+- **FR-003**: System MUST format datetime parameters consistently across all database query methods (`get_recent_posts`, `get_sentiment_stats`, `cleanup_old_data`, `load_recent_data`)
+- **FR-004**: System MUST handle datetime values stored in ISO 8601 format (with or without microseconds) when querying
+- **FR-005**: System MUST preserve backward compatibility with existing data already stored in the database
+- **FR-006**: System MUST log clear error messages when datetime format issues occur, including the attempted format and the database error response
+- **FR-007**: Data loading on startup MUST complete successfully and load actual data counts instead of being disabled
+- **FR-008**: System MUST validate datetime format compatibility during database initialization to detect format issues early
 
-*Example of marking unclear requirements:*
+### Key Entities
 
-- **FR-006**: System MUST authenticate users via [NEEDS CLARIFICATION: auth method not specified - email/password, SSO, OAuth?]
-- **FR-007**: System MUST retain user data for [NEEDS CLARIFICATION: retention period not specified]
-
-### Key Entities *(include if feature involves data)*
-
-- **[Entity 1]**: [What it represents, key attributes without implementation]
-- **[Entity 2]**: [What it represents, relationships to other entities]
+- **DateTime Query Parameter**: Represents a datetime value passed as a query parameter to CosmosDB, requiring specific formatting to be accepted by PostgreSQL mode
+- **Database Query**: SQL queries with parameterized datetime filters (e.g., `WHERE c.collected_at >= @cutoff`)
+- **Stored DateTime Fields**: Datetime values persisted in CosmosDB documents (created_utc, collected_at, analyzed_at, peak_time) that may use different formats
 
 ## Success Criteria *(mandatory)*
 
-<!--
-  ACTION REQUIRED: Define measurable success criteria.
-  These must be technology-agnostic and measurable.
--->
-
 ### Measurable Outcomes
+
+- **SC-001**: Backend startup completes data loading within 5 seconds and logs actual counts of loaded records (posts, comments, sentiment data)
+- **SC-002**: All datetime-filtered database queries execute successfully with 100% success rate (zero InternalServerError exceptions)
+- **SC-003**: Historical data queries (last 24 hours, last 7 days, last 30 days) return results in under 2 seconds
+- **SC-004**: Scheduled cleanup jobs successfully delete old data without datetime query errors, maintaining system performance
+- **SC-005**: Data collection jobs can query for existing posts by timestamp to avoid duplicates, reducing duplicate data by 100%
+
+## Context *(mandatory)*
+
+### Problem Statement
+
+The backend application currently cannot execute datetime-filtered queries against CosmosDB when running in PostgreSQL mode emulation. When attempting to query data using datetime parameters (e.g., filtering posts collected in the last 24 hours), the database returns HTTP 500 InternalServerError with the message: `'/' is invalid after a value. Expected either ',', '}', or ']'`. 
+
+This error occurs at byte position 18 of the datetime parameter string, indicating a JSON serialization issue in how CosmosDB PostgreSQL mode parses the datetime values passed from the Python application.
+
+The current implementation:
+1. Stores datetime values using Python's `.isoformat()` method (e.g., `"2025-10-17T14:53:28.639801Z"`)
+2. Queries using `.strftime("%Y-%m-%dT%H:%M:%SZ")` format (e.g., `"2025-10-17T14:53:28Z"`)
+3. Passes datetime strings as query parameters like `{"name": "@cutoff", "value": "2025-10-17T14:53:28Z"}`
+
+The mismatch between storage format (with microseconds) and query format (without microseconds), or a fundamental incompatibility with how CosmosDB PostgreSQL mode expects datetime parameters, causes all time-based queries to fail.
+
+As a temporary workaround, the `load_recent_data()` method has been disabled, preventing startup data loading and leaving the application with cold caches on startup.
+
+### Current Behavior
+
+- Backend starts successfully but skips data loading with warning: "Data loading temporarily disabled - datetime format issue with CosmosDB"
+- Any API call or background job that queries data by datetime fails with InternalServerError
+- Logs show repeated retry attempts with exponential backoff (4 retries) before giving up
+- No data is loaded into memory on startup, causing slow initial API responses
+- Cleanup jobs cannot run, risking database bloat over time
+- Data collection jobs cannot check for duplicates efficiently
+
+### Desired Behavior
+
+- Backend starts and successfully loads recent data (posts, comments, sentiment stats) into memory
+- All datetime-filtered queries execute without errors
+- Logs show successful data loading: "Data loading complete: 100 posts, 250 comments, 75 sentiment scores loaded in 2.35s"
+- API endpoints respond quickly even immediately after startup
+- Scheduled jobs run successfully with time-based queries
+- Data cleanup maintains database size within retention policies
+
+## Assumptions *(mandatory)*
+
+- CosmosDB PostgreSQL mode emulator expects datetime values in a specific format (to be determined through research/testing)
+- The Azure Cosmos SDK for Python (version 4.5.1) correctly serializes query parameters when given the proper format
+- Datetime values already stored in the database can be queried regardless of their stored format
+- The system uses UTC timezone consistently for all datetime operations
+- Performance impact of datetime formatting changes is negligible (< 1ms per query)
+- The solution should work with both the local CosmosDB emulator and Azure-hosted CosmosDB
+
+## Dependencies *(optional)*
+
+- Azure Cosmos SDK for Python (version 4.5.1) - already installed
+- CosmosDB Emulator running in PostgreSQL mode on localhost:8081
+- Python 3.13.3 datetime handling capabilities
+- Existing database schema with datetime fields (created_utc, collected_at, analyzed_at, peak_time)
+
+## Out of Scope *(optional)*
+
+- Migrating existing data to a new datetime format (backward compatibility must be maintained)
+- Changing the database engine or moving away from CosmosDB PostgreSQL mode
+- Implementing timezone conversion or multi-timezone support (system remains UTC-only)
+- Optimizing query performance beyond fixing the datetime format issue
+- Adding new datetime-based query features or capabilities
+
+## Constraints *(optional)*
+
+- Must maintain backward compatibility with data already stored in the database
+- Cannot introduce breaking changes to the public API
+- Must work with the current CosmosDB emulator version without requiring upgrades
+- Changes should be localized to the database service layer without affecting other components
+- Solution must work consistently across development (emulator) and production (Azure CosmosDB) environments
+
+## Security & Privacy Considerations *(optional)*
+
+- No user-provided datetime values are used in queries (all datetimes are system-generated), mitigating SQL injection risks
+- Datetime format changes should not expose system internals through error messages
+- Query parameter logging should not reveal sensitive timestamp information that could be used for timing attacks
+
+## References *(optional)*
+
+- Azure Cosmos DB SQL Query documentation: https://learn.microsoft.com/en-us/azure/cosmos-db/sql/sql-query-getting-started
+- Azure Cosmos DB PostgreSQL mode documentation: https://learn.microsoft.com/en-us/azure/cosmos-db/postgresql/
+- Python datetime.isoformat() documentation: https://docs.python.org/3/library/datetime.html#datetime.datetime.isoformat
+- Current implementation: `/Users/andrewflick/Documents/SentimentAgent/backend/src/services/database.py`
+- Feature #003 spec (blocked by this issue): `/Users/andrewflick/Documents/SentimentAgent/specs/003-backend-stability-and-data-loading/spec.md`
+
 
 - **SC-001**: [Measurable metric, e.g., "Users can complete account creation in under 2 minutes"]
 - **SC-002**: [Measurable metric, e.g., "System handles 1000 concurrent users without degradation"]
