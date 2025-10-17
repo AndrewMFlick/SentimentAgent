@@ -1,4 +1,27 @@
-"""Data collection scheduler."""
+"""Data collection scheduler.
+
+This module manages scheduled background jobs for collecting Reddit data and analyzing sentiment.
+
+User Story 3 (US3) Implementation:
+----------------------------------
+Scheduled jobs can query existing data by timestamp to avoid duplicate collection.
+The datetime query fix (Feature 004) enables these jobs to:
+- Check for existing posts from the same time period before re-collecting
+- Query recent data for trending topic analysis
+- Clean up old data based on retention policies
+
+All datetime queries use Unix timestamps via database._datetime_to_timestamp() helper,
+which resolves CosmosDB PostgreSQL mode JSON parsing issues with ISO 8601 datetime 
+strings when used as query parameters.
+
+Related database methods used by jobs:
+- db.get_recent_posts(hours=N) - Check for existing posts (duplicate detection)
+- db.cleanup_old_data() - Remove old data based on timestamps
+- db.get_sentiment_stats(hours=N) - Aggregate sentiment over time windows
+
+Reference: specs/004-fix-the-cosmosdb/spec.md (User Story 3)
+Tasks: T014, T015, T016
+"""
 import logging
 import asyncio
 from datetime import datetime

@@ -1,4 +1,27 @@
-"""CosmosDB database service."""
+"""CosmosDB database service.
+
+This module provides database operations for the SentimentAgent application using Azure CosmosDB.
+
+DateTime Query Fix (Feature 004-fix-the-cosmosdb):
+---------------------------------------------------
+CosmosDB PostgreSQL mode has JSON parsing issues with ISO 8601 datetime strings when used
+as query parameters. To resolve this, all datetime-filtered queries use Unix timestamps
+(integers) instead of ISO strings, and query against the CosmosDB _ts system field.
+
+Key Implementation Details:
+- _datetime_to_timestamp() helper converts Python datetime to Unix timestamp (int)
+- All time-based queries use WHERE c._ts >= @cutoff with integer parameters
+- The _ts field is a system-generated Unix timestamp on all CosmosDB documents
+- This approach ensures backward compatibility with existing data
+
+Affected User Stories:
+- US1: Backend startup data loading (get_recent_posts, load_recent_data)
+- US2: Historical data queries (get_sentiment_stats, cleanup_old_data)
+- US3: Data collection jobs (duplicate detection via timestamp queries)
+
+Reference: specs/004-fix-the-cosmosdb/spec.md
+Tasks: T001 (helper), T005-T006 (US1), T011-T012 (US2), T014-T016 (US3)
+"""
 import logging
 import os
 import json
