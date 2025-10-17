@@ -19,6 +19,7 @@ To run these tests:
     pytest tests/integration/test_datetime_queries.py -v
 """
 import pytest
+import types
 from datetime import datetime, timedelta, timezone
 from unittest.mock import Mock, patch
 
@@ -173,11 +174,12 @@ class TestUserStory2_HistoricalDataQueries:
             service.comments_container = Mock()
             service.sentiment_container = Mock()
             
-            # Bind methods from the class to this instance
-            service._datetime_to_timestamp = lambda dt: int(dt.timestamp())
+            # Bind the actual _datetime_to_timestamp method from the class
+            service._datetime_to_timestamp = types.MethodType(
+                DatabaseService._datetime_to_timestamp, service
+            )
             
             # Bind actual methods we want to test
-            import types
             service.get_recent_posts = types.MethodType(DatabaseService.get_recent_posts, service)
             service.get_sentiment_stats = types.MethodType(DatabaseService.get_sentiment_stats, service)
             service.cleanup_old_data = types.MethodType(DatabaseService.cleanup_old_data, service)
@@ -198,7 +200,7 @@ class TestUserStory2_HistoricalDataQueries:
           - No InternalServerError
           - Query uses _ts field and Unix timestamp
         """
-        now = datetime.utcnow()
+        now = datetime.now(timezone.utc)
         recent_post_time = now - timedelta(hours=12)
         old_post_time = now - timedelta(hours=48)
         
@@ -335,7 +337,7 @@ class TestUserStory2_HistoricalDataQueries:
         # Mock settings for data retention
         with patch.object(settings, 'data_retention_days', 90):
             # Simulate old posts that should be deleted
-            now = datetime.utcnow()
+            now = datetime.now(timezone.utc)
             old_post_time = now - timedelta(days=95)  # Older than retention period
             
             old_posts = [
