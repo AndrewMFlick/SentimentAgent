@@ -42,51 +42,51 @@ logger = structlog.get_logger(__name__)
 async def lifespan(app: FastAPI):
     """Application lifespan manager with proper startup and shutdown handling."""
     # Startup
-    logger.info("application_startup", event="starting")
+    logger.info("Application startup beginning")
     
     try:
         # Initialize database (fail-fast on connection failure)
-        logger.info("database_initialization", event="starting")
+        logger.info("Initializing database connection")
         await db.initialize()
         app_state.database_connected = True
-        logger.info("database_initialization", event="completed")
+        logger.info("Database initialization completed")
         
         # Start scheduler
-        logger.info("scheduler_startup", event="starting")
+        logger.info("Starting scheduler")
         scheduler.start()
-        logger.info("scheduler_startup", event="completed")
+        logger.info("Scheduler started successfully")
         
         # Load recent data in background (non-blocking)
-        logger.info("data_loading", event="starting_background_task")
+        logger.info("Starting background data loading task")
         asyncio.create_task(db.load_recent_data())
         
-        logger.info("application_startup", event="completed", uptime_seconds=app_state.get_uptime_seconds())
+        logger.info("Application startup completed", uptime_seconds=app_state.get_uptime_seconds())
         
     except Exception as e:
-        logger.critical("application_startup", event="failed", error=str(e), exc_info=True)
+        logger.critical("Application startup failed", error=str(e), exc_info=True)
         app_state.database_connected = False
         raise  # Fail-fast: crash the application if startup fails
     
     yield
     
     # Shutdown
-    logger.info("application_shutdown", event="starting")
+    logger.info("Application shutdown beginning")
     
     try:
         # Stop scheduler gracefully (wait for running jobs to complete)
-        logger.info("scheduler_shutdown", event="starting")
+        logger.info("Stopping scheduler")
         scheduler.stop()
-        logger.info("scheduler_shutdown", event="completed")
+        logger.info("Scheduler stopped")
         
         # Disconnect database
-        logger.info("database_shutdown", event="starting")
+        logger.info("Disconnecting database")
         app_state.database_connected = False
-        logger.info("database_shutdown", event="completed")
+        logger.info("Database disconnected")
         
-        logger.info("application_shutdown", event="completed", uptime_seconds=app_state.get_uptime_seconds())
+        logger.info("Application shutdown completed", uptime_seconds=app_state.get_uptime_seconds())
         
     except Exception as e:
-        logger.error("application_shutdown", event="error", error=str(e), exc_info=True)
+        logger.error("Application shutdown error", error=str(e), exc_info=True)
 
 
 # Create FastAPI app
