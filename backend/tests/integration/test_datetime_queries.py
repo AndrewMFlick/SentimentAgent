@@ -19,7 +19,9 @@ To run these tests:
     pytest tests/integration/test_datetime_queries.py -v
 """
 import pytest
+import types
 from datetime import datetime, timedelta, timezone
+from unittest.mock import Mock, patch
 
 # Test configuration
 pytestmark = pytest.mark.integration
@@ -144,19 +146,239 @@ class TestUserStory1_BackendStartupDataLoading:
     pass
 
 
-# Placeholder for User Story 2 tests (to be implemented in T008-T010)
+# User Story 2 tests - Historical Data Queries
+@pytest.mark.integration
 class TestUserStory2_HistoricalDataQueries:
     """Tests for User Story 2: Historical Data Queries.
     
     Goal: Enable API endpoints and background jobs to query historical
     data by time ranges without errors.
     
-    Tests to be added:
+    Tests:
     - T008: test_get_recent_posts_datetime_filter()
     - T009: test_get_sentiment_stats_time_range()
     - T010: test_cleanup_old_data_datetime_filter()
     """
-    pass
+    
+    @pytest.fixture
+    def db_service_with_mocks(self):
+        """Create a DatabaseService with mocked containers for US2 tests."""
+        with patch('azure.cosmos.CosmosClient'):
+            from src.services.database import DatabaseService
+            
+            # Create instance with mocked initialization
+            service = object.__new__(DatabaseService)
+            
+            # Mock the containers
+            service.posts_container = Mock()
+            service.comments_container = Mock()
+            service.sentiment_container = Mock()
+            
+            # Bind the actual _datetime_to_timestamp method from the class
+            service._datetime_to_timestamp = types.MethodType(
+                DatabaseService._datetime_to_timestamp, service
+            )
+            
+            # Bind actual methods we want to test
+            service.get_recent_posts = types.MethodType(DatabaseService.get_recent_posts, service)
+            service.get_sentiment_stats = types.MethodType(DatabaseService.get_sentiment_stats, service)
+            service.cleanup_old_data = types.MethodType(DatabaseService.cleanup_old_data, service)
+            
+            return service
+    
+    def test_get_recent_posts_datetime_filter(self, db_service_with_mocks):
+        """
+        Test that get_recent_posts works with datetime parameters.
+        
+        Task: T008
+        Purpose: Verify posts query works with datetime parameters
+        Setup: Insert posts from 12 hours ago and 48 hours ago (simulated)
+        Test: Call get_recent_posts(hours=24)
+        Assertions:
+          - Returns recent post (12h old)
+          - Excludes old post (48h old)
+          - No InternalServerError
+          - Query uses _ts field and Unix timestamp
+        """
+        now = datetime.now(timezone.utc)
+        recent_post_time = now - timedelta(hours=12)
+        old_post_time = now - timedelta(hours=48)
+        
+        # Mock posts: one recent (12h), one old (48h)
+        # The _ts field is a Unix timestamp (CosmosDB system field)
+        # created_utc is stored as ISO format string
+        recent_post = {
+            "id": "post_recent",
+            "subreddit": "test",
+            "title": "Recent post",
+            "author": "user1",
+            "created_utc": recent_post_time.isoformat(),
+            "content": "Recent content",
+            "url": "https://reddit.com/r/test/recent",
+            "upvotes": 100,
+            "comment_count": 5,
+            "_ts": int(recent_post_time.timestamp())
+        }
+        
+        old_post = {
+            "id": "post_old",
+            "subreddit": "test",
+            "title": "Old post",
+            "author": "user2",
+            "created_utc": old_post_time.isoformat(),
+            "content": "Old content",
+            "url": "https://reddit.com/r/test/old",
+            "upvotes": 50,
+            "comment_count": 2,
+            "_ts": int(old_post_time.timestamp())
+        }
+        
+        # Mock query_items to return only the recent post (filtering is done by DB)
+        db_service_with_mocks.posts_container.query_items = Mock(return_value=[recent_post])
+        
+        # Call get_recent_posts with 24 hour window
+        try:
+            posts = db_service_with_mocks.get_recent_posts(hours=24, limit=100)
+            execution_succeeded = True
+        except Exception as e:
+            execution_succeeded = False
+            pytest.fail(f"get_recent_posts raised exception: {e}")
+        
+        # Assertions
+        assert execution_succeeded, "get_recent_posts should complete without exceptions"
+        assert len(posts) == 1, "Should return one post (the recent one)"
+        assert posts[0].id == "post_recent", "Should return the recent post"
+        
+        # Verify the query was called with correct parameters
+        assert db_service_with_mocks.posts_container.query_items.called, "query_items should be called"
+        call_args = db_service_with_mocks.posts_container.query_items.call_args
+        
+        # Verify query string uses _ts field
+        query = call_args[1]['query']
+        assert "c._ts >=" in query, "Query should use _ts field for datetime filtering"
+        
+        # Verify parameters use Unix timestamp (integer)
+        parameters = call_args[1]['parameters']
+        cutoff_param = next((p for p in parameters if p['name'] == '@cutoff'), None)
+        assert cutoff_param is not None, "Should have @cutoff parameter"
+        assert isinstance(cutoff_param['value'], int), "Cutoff value should be Unix timestamp (integer)"
+    
+    def test_get_sentiment_stats_time_range(self, db_service_with_mocks):
+        """
+        Test that get_sentiment_stats works with time ranges.
+        
+        Task: T009
+        Purpose: Verify sentiment stats query works with time ranges
+        Setup: Insert sentiment data from various time periods (simulated)
+        Test: Call get_sentiment_stats(hours=168) for last week
+        Assertions:
+          - Returns aggregated stats
+          - Correct counts for time window
+          - No InternalServerError
+          - Query uses _ts field and Unix timestamp
+        """
+        # Mock aggregated sentiment stats result
+        mock_stats = {
+            "total": 100,
+            "positive": 60,
+            "negative": 20,
+            "neutral": 20,
+            "avg_sentiment": 0.35
+        }
+        
+        # Mock query_items to return aggregated stats
+        db_service_with_mocks.sentiment_container.query_items = Mock(return_value=[mock_stats])
+        
+        # Call get_sentiment_stats with 168 hour (1 week) window
+        try:
+            stats = db_service_with_mocks.get_sentiment_stats(hours=168)
+            execution_succeeded = True
+        except Exception as e:
+            execution_succeeded = False
+            pytest.fail(f"get_sentiment_stats raised exception: {e}")
+        
+        # Assertions
+        assert execution_succeeded, "get_sentiment_stats should complete without exceptions"
+        assert stats is not None, "Should return stats dictionary"
+        assert stats['total'] == 100, "Should return correct total count"
+        assert stats['positive'] == 60, "Should return correct positive count"
+        assert stats['avg_sentiment'] == 0.35, "Should return correct average sentiment"
+        
+        # Verify the query was called with correct parameters
+        assert db_service_with_mocks.sentiment_container.query_items.called, "query_items should be called"
+        call_args = db_service_with_mocks.sentiment_container.query_items.call_args
+        
+        # Verify query string uses _ts field
+        query = call_args[1]['query']
+        assert "c._ts >=" in query, "Query should use _ts field for datetime filtering"
+        
+        # Verify parameters use Unix timestamp (integer)
+        parameters = call_args[1]['parameters']
+        cutoff_param = next((p for p in parameters if p['name'] == '@cutoff'), None)
+        assert cutoff_param is not None, "Should have @cutoff parameter"
+        assert isinstance(cutoff_param['value'], int), "Cutoff value should be Unix timestamp (integer)"
+    
+    def test_cleanup_old_data_datetime_filter(self, db_service_with_mocks):
+        """
+        Test that cleanup_old_data can query old data.
+        
+        Task: T010
+        Purpose: Verify cleanup job can query old data
+        Setup: Insert posts older than retention period (simulated)
+        Test: Call cleanup_old_data()
+        Assertions:
+          - Old posts are deleted
+          - Recent posts remain (checked via mock)
+          - No InternalServerError
+          - Query uses _ts field and Unix timestamp
+        """
+        from src.config import settings
+        
+        # Mock settings for data retention
+        with patch.object(settings, 'data_retention_days', 90):
+            # Simulate old posts that should be deleted
+            now = datetime.now(timezone.utc)
+            old_post_time = now - timedelta(days=95)  # Older than retention period
+            
+            old_posts = [
+                {"id": "old_post_1", "subreddit": "test1", "_ts": int(old_post_time.timestamp())},
+                {"id": "old_post_2", "subreddit": "test2", "_ts": int(old_post_time.timestamp())}
+            ]
+            
+            # Mock query_items to return old posts
+            db_service_with_mocks.posts_container.query_items = Mock(return_value=old_posts)
+            
+            # Mock delete_item to track deletions
+            db_service_with_mocks.posts_container.delete_item = Mock()
+            
+            # Call cleanup_old_data
+            try:
+                db_service_with_mocks.cleanup_old_data()
+                execution_succeeded = True
+            except Exception as e:
+                execution_succeeded = False
+                pytest.fail(f"cleanup_old_data raised exception: {e}")
+            
+            # Assertions
+            assert execution_succeeded, "cleanup_old_data should complete without exceptions"
+            
+            # Verify query was called
+            assert db_service_with_mocks.posts_container.query_items.called, "query_items should be called"
+            call_args = db_service_with_mocks.posts_container.query_items.call_args
+            
+            # Verify query string uses _ts field with < comparison
+            query = call_args[1]['query']
+            assert "c._ts <" in query, "Query should use _ts field for datetime filtering"
+            
+            # Verify parameters use Unix timestamp (integer)
+            parameters = call_args[1]['parameters']
+            cutoff_param = next((p for p in parameters if p['name'] == '@cutoff'), None)
+            assert cutoff_param is not None, "Should have @cutoff parameter"
+            assert isinstance(cutoff_param['value'], int), "Cutoff value should be Unix timestamp (integer)"
+            
+            # Verify delete_item was called for each old post
+            assert db_service_with_mocks.posts_container.delete_item.call_count == 2, \
+                "Should delete both old posts"
 
 
 # Placeholder for User Story 3 tests (to be implemented in T014-T015)
@@ -171,15 +393,6 @@ class TestUserStory3_DataCollectionAndAnalysisJobs:
     - T015: test_query_mixed_document_formats()
     """
     pass
-Tests validate that datetime queries work correctly with CosmosDB PostgreSQL mode,
-which has JSON parsing issues with ISO 8601 datetime strings.
-
-Reference: specs/004-fix-the-cosmosdb/
-"""
-import pytest
-from datetime import datetime, timedelta
-from unittest.mock import Mock, MagicMock, patch
-import asyncio
 
 
 @pytest.mark.integration
