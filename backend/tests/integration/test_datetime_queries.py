@@ -20,6 +20,8 @@ To run these tests:
 """
 import pytest
 from datetime import datetime, timedelta, timezone
+from unittest.mock import Mock, MagicMock, patch
+import asyncio
 
 # Test configuration
 pytestmark = pytest.mark.integration
@@ -171,15 +173,6 @@ class TestUserStory3_DataCollectionAndAnalysisJobs:
     - T015: test_query_mixed_document_formats()
     """
     pass
-Tests validate that datetime queries work correctly with CosmosDB PostgreSQL mode,
-which has JSON parsing issues with ISO 8601 datetime strings.
-
-Reference: specs/004-fix-the-cosmosdb/
-"""
-import pytest
-from datetime import datetime, timedelta
-from unittest.mock import Mock, MagicMock, patch
-import asyncio
 
 
 @pytest.mark.integration
