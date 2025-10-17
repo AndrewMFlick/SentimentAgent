@@ -19,10 +19,7 @@ To run these tests:
     pytest tests/integration/test_datetime_queries.py -v
 """
 import pytest
-import asyncio
-import time
-from datetime import datetime, timedelta
-from typing import List, Dict, Any
+from datetime import datetime, timedelta, timezone
 
 # Test configuration
 pytestmark = pytest.mark.integration
@@ -36,7 +33,7 @@ def test_post_data():
     Returns a list of post dictionaries with various timestamps
     for testing time-based filtering.
     """
-    now = datetime.now()
+    now = datetime.now(timezone.utc)
     
     test_posts = [
         {
@@ -71,7 +68,7 @@ def test_sentiment_data():
     
     Returns a list of sentiment score dictionaries with various timestamps.
     """
-    now = datetime.now()
+    now = datetime.now(timezone.utc)
     
     test_sentiments = [
         {
