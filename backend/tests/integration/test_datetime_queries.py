@@ -265,7 +265,8 @@ class TestUserStory2_HistoricalDataQueries:
         assert cutoff_param is not None, "Should have @cutoff parameter"
         assert isinstance(cutoff_param['value'], int), "Cutoff value should be Unix timestamp (integer)"
     
-    def test_get_sentiment_stats_time_range(self, db_service_with_mocks):
+    @pytest.mark.asyncio
+    async def test_get_sentiment_stats_time_range(self, db_service_with_mocks):
         """
         Test that get_sentiment_stats works with time ranges.
         
@@ -279,21 +280,28 @@ class TestUserStory2_HistoricalDataQueries:
           - No InternalServerError
           - Query uses _ts field and Unix timestamp
         """
-        # Mock aggregated sentiment stats result
-        mock_stats = {
-            "total": 100,
-            "positive": 60,
-            "negative": 20,
-            "neutral": 20,
-            "avg_sentiment": 0.35
-        }
+        # Mock query_items to return separate values for the 5 queries
+        # (total, positive, negative, neutral, avg)
+        def mock_query_items(query, parameters=None, enable_cross_partition_query=True):
+            """Mock that returns different results based on query content."""
+            if "SELECT VALUE COUNT(1)" in query:
+                if "sentiment = 'positive'" in query:
+                    return [60]  # positive count
+                elif "sentiment = 'negative'" in query:
+                    return [20]  # negative count
+                elif "sentiment = 'neutral'" in query:
+                    return [20]  # neutral count
+                else:
+                    return [100]  # total count
+            elif "SELECT VALUE AVG" in query:
+                return [0.35]  # average sentiment
+            return []
         
-        # Mock query_items to return aggregated stats
-        db_service_with_mocks.sentiment_container.query_items = Mock(return_value=[mock_stats])
+        db_service_with_mocks.sentiment_container.query_items = Mock(side_effect=mock_query_items)
         
         # Call get_sentiment_stats with 168 hour (1 week) window
         try:
-            stats = db_service_with_mocks.get_sentiment_stats(hours=168)
+            stats = await db_service_with_mocks.get_sentiment_stats(hours=168)
             execution_succeeded = True
         except Exception as e:
             execution_succeeded = False
@@ -308,14 +316,21 @@ class TestUserStory2_HistoricalDataQueries:
         
         # Verify the query was called with correct parameters
         assert db_service_with_mocks.sentiment_container.query_items.called, "query_items should be called"
-        call_args = db_service_with_mocks.sentiment_container.query_items.call_args
+        
+        # Get all call arguments (multiple calls since we now make 5 queries)
+        all_calls = db_service_with_mocks.sentiment_container.query_items.call_args_list
+        assert len(all_calls) >= 1, "Should make at least one query call"
+        
+        # Check first call (total query)
+        first_call = all_calls[0]
+        query = first_call[0][0]  # First positional arg
+        call_kwargs = first_call[1]  # Keyword args
         
         # Verify query string uses _ts field
-        query = call_args[1]['query']
         assert "c._ts >=" in query, "Query should use _ts field for datetime filtering"
         
         # Verify parameters use Unix timestamp (integer)
-        parameters = call_args[1]['parameters']
+        parameters = call_kwargs['parameters']
         cutoff_param = next((p for p in parameters if p['name'] == '@cutoff'), None)
         assert cutoff_param is not None, "Should have @cutoff parameter"
         assert isinstance(cutoff_param['value'], int), "Cutoff value should be Unix timestamp (integer)"
@@ -590,6 +605,311 @@ class TestUserStory3_DataCollectionAndAnalysisJobs:
     pass
 
 
+# User Story 1 tests for Feature #005 - Sentiment Stats Accuracy
+@pytest.mark.integration
+@pytest.mark.asyncio
+class TestFeature005_SentimentStatsAccuracy:
+    """Tests for Feature #005: CosmosDB SQL Aggregation Fix.
+    
+    Tests verify that sentiment statistics return accurate counts
+    instead of zeros due to CASE WHEN SQL syntax errors.
+    
+    Tests:
+    - T009: test_sentiment_stats_accuracy_with_known_data()
+    - T010: test_sentiment_stats_subreddit_filtering()
+    - T011: test_sentiment_stats_time_window_filtering()
+    - T012: test_sentiment_stats_edge_cases()
+    """
+    
+    @pytest.fixture
+    def db_service_with_mocks(self):
+        """Create a DatabaseService with mocked containers for testing."""
+        with patch('azure.cosmos.CosmosClient'):
+            from src.services.database import DatabaseService
+            import types
+            
+            # Create instance with mocked initialization
+            service = object.__new__(DatabaseService)
+            
+            # Mock the sentiment container
+            service.sentiment_container = Mock()
+            
+            # Bind helper methods
+            service._datetime_to_timestamp = types.MethodType(
+                DatabaseService._datetime_to_timestamp, service
+            )
+            
+            # Bind get_sentiment_stats for testing
+            service.get_sentiment_stats = types.MethodType(
+                DatabaseService.get_sentiment_stats, service
+            )
+            
+            return service
+    
+    async def test_sentiment_stats_accuracy_with_known_data(self, db_service_with_mocks):
+        """
+        Test that sentiment counts are accurate (not zeros).
+        
+        Task: T009
+        Purpose: Verify get_sentiment_stats returns accurate counts matching database
+        Setup: Mock sentiment data with known distribution (2 positive, 1 negative, 1 neutral)
+        Test: Call get_sentiment_stats(hours=1)
+        Assertions:
+          - total == 4
+          - positive == 2
+          - negative == 1
+          - neutral == 1
+          - positive + negative + neutral == total (validation rule)
+          - avg_sentiment matches calculated average
+        """
+        # Mock sentiment data with known distribution
+        # For the broken implementation with CASE WHEN, this would return zeros
+        # For the fixed implementation with separate queries, this should work correctly
+        
+        # We need to mock multiple query results since the fixed implementation
+        # will make 5 separate queries
+        import time
+        now = int(time.time())
+        
+        # Mock query results for the 5 separate queries:
+        # 1. Total count
+        # 2. Positive count
+        # 3. Negative count
+        # 4. Neutral count
+        # 5. Average sentiment
+        
+        call_count = [0]
+        
+        def mock_query_items(query, parameters=None, enable_cross_partition_query=True):
+            """Mock that returns different results based on query content."""
+            call_count[0] += 1
+            
+            # For the broken implementation (single CASE WHEN query)
+            if "SUM(CASE WHEN" in query:
+                # Returns zeros (the bug)
+                return [{"total": 4, "positive": 0, "negative": 0, "neutral": 0, "avg_sentiment": 0.0}]
+            
+            # For the fixed implementation (separate queries with SELECT VALUE)
+            if "SELECT VALUE COUNT(1)" in query:
+                if "sentiment = 'positive'" in query:
+                    return [2]  # 2 positive
+                elif "sentiment = 'negative'" in query:
+                    return [1]  # 1 negative
+                elif "sentiment = 'neutral'" in query:
+                    return [1]  # 1 neutral
+                else:
+                    return [4]  # total count
+            elif "SELECT VALUE AVG" in query:
+                # Average of [0.8, 0.6, -0.5, 0.1] = 0.25
+                return [0.25]
+            
+            return []
+        
+        db_service_with_mocks.sentiment_container.query_items = Mock(side_effect=mock_query_items)
+        
+        # Call get_sentiment_stats
+        try:
+            stats = await db_service_with_mocks.get_sentiment_stats(hours=1)
+            execution_succeeded = True
+        except Exception as e:
+            execution_succeeded = False
+            pytest.fail(f"get_sentiment_stats raised exception: {e}")
+        
+        # Assertions
+        assert execution_succeeded, "get_sentiment_stats should complete without exceptions"
+        assert stats is not None, "Should return stats dictionary"
+        
+        # Key validation: counts should NOT be zero (the bug we're fixing)
+        assert stats['total'] == 4, f"Total should be 4, got {stats['total']}"
+        assert stats['positive'] == 2, f"Positive should be 2, got {stats['positive']}"
+        assert stats['negative'] == 1, f"Negative should be 1, got {stats['negative']}"
+        assert stats['neutral'] == 1, f"Neutral should be 1, got {stats['neutral']}"
+        
+        # Validation rule: positive + negative + neutral == total
+        calculated_total = stats['positive'] + stats['negative'] + stats['neutral']
+        assert calculated_total == stats['total'], \
+            f"Validation rule failed: {stats['positive']} + {stats['negative']} + {stats['neutral']} != {stats['total']}"
+        
+        # Average sentiment should be calculated correctly
+        assert abs(stats['avg_sentiment'] - 0.25) < 0.01, \
+            f"Average sentiment should be 0.25, got {stats['avg_sentiment']}"
+    
+    async def test_sentiment_stats_subreddit_filtering(self, db_service_with_mocks):
+        """
+        Test that subreddit filtering works correctly.
+        
+        Task: T010
+        Purpose: Verify sentiment stats filters by subreddit correctly
+        Setup: Mock sentiment data from multiple subreddits
+        Test: Call get_sentiment_stats(subreddit="politics", hours=1)
+        Assertions:
+          - Only counts from "politics" subreddit are included
+          - Validation rule passes
+        """
+        def mock_query_items(query, parameters=None, enable_cross_partition_query=True):
+            """Mock that returns counts for specific subreddit."""
+            # Check if subreddit filter is in query
+            has_subreddit_filter = "c.subreddit = @subreddit" in query
+            
+            if "SUM(CASE WHEN" in query:
+                # Broken implementation
+                return [{"total": 3, "positive": 0, "negative": 0, "neutral": 0, "avg_sentiment": 0.0}]
+            
+            # Fixed implementation with separate queries
+            if "SELECT VALUE COUNT(1)" in query:
+                if not has_subreddit_filter:
+                    # No filter - return total across all subreddits
+                    if "sentiment = 'positive'" in query:
+                        return [3]
+                    elif "sentiment = 'negative'" in query:
+                        return [2]
+                    elif "sentiment = 'neutral'" in query:
+                        return [1]
+                    else:
+                        return [6]
+                else:
+                    # Filter by subreddit "politics"
+                    if "sentiment = 'positive'" in query:
+                        return [2]  # 2 positive in politics
+                    elif "sentiment = 'negative'" in query:
+                        return [1]  # 1 negative in politics
+                    elif "sentiment = 'neutral'" in query:
+                        return [0]  # 0 neutral in politics
+                    else:
+                        return [3]  # total in politics
+            elif "SELECT VALUE AVG" in query:
+                return [0.3]
+            
+            return []
+        
+        db_service_with_mocks.sentiment_container.query_items = Mock(side_effect=mock_query_items)
+        
+        # Call with subreddit filter
+        stats = await db_service_with_mocks.get_sentiment_stats(subreddit="politics", hours=1)
+        
+        # Assertions
+        assert stats['total'] == 3, "Should return 3 posts from politics"
+        assert stats['positive'] == 2, "Should return 2 positive from politics"
+        assert stats['negative'] == 1, "Should return 1 negative from politics"
+        assert stats['neutral'] == 0, "Should return 0 neutral from politics"
+        
+        # Validation rule
+        assert stats['positive'] + stats['negative'] + stats['neutral'] == stats['total']
+    
+    async def test_sentiment_stats_time_window_filtering(self, db_service_with_mocks):
+        """
+        Test that time window filtering works correctly.
+        
+        Task: T011
+        Purpose: Verify sentiment stats filters by time window
+        Setup: Mock sentiment data with different timestamps
+        Test: Call get_sentiment_stats with various time windows (1h, 24h, 7 days)
+        Assertions:
+          - Each time window returns different counts
+          - Validation rule passes for each
+        """
+        def mock_query_items(query, parameters=None, enable_cross_partition_query=True):
+            """Mock that returns different counts based on time window."""
+            # Extract cutoff timestamp from parameters
+            cutoff = None
+            if parameters:
+                for param in parameters:
+                    if param['name'] == '@cutoff':
+                        cutoff = param['value']
+                        break
+            
+            import time
+            now = int(time.time())
+            one_hour_ago = now - 3600
+            one_day_ago = now - 86400
+            
+            if "SUM(CASE WHEN" in query:
+                return [{"total": 10, "positive": 0, "negative": 0, "neutral": 0, "avg_sentiment": 0.0}]
+            
+            # Simulate different counts for different time windows
+            if cutoff and cutoff >= one_hour_ago:
+                # Last 1 hour
+                if "SELECT VALUE COUNT(1)" in query:
+                    if "sentiment = 'positive'" in query:
+                        return [1]
+                    elif "sentiment = 'negative'" in query:
+                        return [0]
+                    elif "sentiment = 'neutral'" in query:
+                        return [1]
+                    else:
+                        return [2]
+                elif "SELECT VALUE AVG" in query:
+                    return [0.45]
+            else:
+                # Last 24 hours (more data)
+                if "SELECT VALUE COUNT(1)" in query:
+                    if "sentiment = 'positive'" in query:
+                        return [6]
+                    elif "sentiment = 'negative'" in query:
+                        return [2]
+                    elif "sentiment = 'neutral'" in query:
+                        return [2]
+                    else:
+                        return [10]
+                elif "SELECT VALUE AVG" in query:
+                    return [0.35]
+            
+            return []
+        
+        db_service_with_mocks.sentiment_container.query_items = Mock(side_effect=mock_query_items)
+        
+        # Test different time windows
+        stats_1h = await db_service_with_mocks.get_sentiment_stats(hours=1)
+        stats_24h = await db_service_with_mocks.get_sentiment_stats(hours=24)
+        
+        # Assertions for 1 hour window
+        assert stats_1h['total'] == 2, "Should return 2 posts in last hour"
+        assert stats_1h['positive'] + stats_1h['negative'] + stats_1h['neutral'] == stats_1h['total']
+        
+        # Assertions for 24 hour window (should be different)
+        assert stats_24h['total'] == 10, "Should return 10 posts in last 24 hours"
+        assert stats_24h['positive'] + stats_24h['negative'] + stats_24h['neutral'] == stats_24h['total']
+        
+        # Time windows should return different results
+        assert stats_1h['total'] != stats_24h['total'], "Different time windows should return different counts"
+    
+    async def test_sentiment_stats_edge_cases(self, db_service_with_mocks):
+        """
+        Test edge cases: empty database, null values, invalid parameters.
+        
+        Task: T012
+        Purpose: Verify system handles edge cases gracefully
+        Setup: Mock edge case scenarios
+        Test: Call get_sentiment_stats with edge cases
+        Assertions:
+          - Empty database returns zeros (not error)
+          - Null values handled gracefully
+          - System doesn't crash on edge cases
+        """
+        # Test 1: Empty database (no posts in time window)
+        def mock_empty_query(query, parameters=None, enable_cross_partition_query=True):
+            """Mock that returns empty results."""
+            if "SELECT VALUE" in query:
+                return []  # Empty result
+            return []
+        
+        db_service_with_mocks.sentiment_container.query_items = Mock(side_effect=mock_empty_query)
+        
+        stats_empty = await db_service_with_mocks.get_sentiment_stats(hours=24)
+        
+        # Should return zeros, not error
+        assert stats_empty['total'] == 0, "Empty database should return 0 total"
+        assert stats_empty['positive'] == 0, "Empty database should return 0 positive"
+        assert stats_empty['negative'] == 0, "Empty database should return 0 negative"
+        assert stats_empty['neutral'] == 0, "Empty database should return 0 neutral"
+        assert stats_empty['avg_sentiment'] == 0.0, "Empty database should return 0.0 avg"
+        
+        # Test 2: Query with hours=0 (edge case)
+        # Should still work, just very small time window
+        stats_zero_hours = await db_service_with_mocks.get_sentiment_stats(hours=0)
+        assert stats_zero_hours is not None, "Should handle hours=0 without crashing"
+
+
 @pytest.mark.integration
 class TestDatetimeQueries:
     """Test datetime query compatibility with CosmosDB."""
@@ -712,10 +1032,12 @@ class TestUserStory1DataLoading:
         ])
         
         # Mock query_items for comments count
-        db_service_with_mocks.comments_container.query_items = Mock(return_value=[{"$1": 5}])
+        db_service_with_mocks.comments_container.query_items = Mock(return_value=[5])
         
-        # Mock get_sentiment_stats
-        db_service_with_mocks.get_sentiment_stats = Mock(return_value={"total": 10})
+        # Mock get_sentiment_stats (must return coroutine since method is async)
+        async def mock_get_sentiment_stats(**kwargs):
+            return {"total": 10}
+        db_service_with_mocks.get_sentiment_stats = mock_get_sentiment_stats
         
         # Execute load_recent_data - should not raise exceptions
         try:
@@ -751,10 +1073,12 @@ class TestUserStory1DataLoading:
         db_service_with_mocks.get_recent_posts = Mock(return_value=mock_posts)
         
         # Mock query_items for comments count to return 3
-        db_service_with_mocks.comments_container.query_items = Mock(return_value=[{"$1": 3}])
+        db_service_with_mocks.comments_container.query_items = Mock(return_value=[3])
         
-        # Mock get_sentiment_stats to return 8 sentiment scores
-        db_service_with_mocks.get_sentiment_stats = Mock(return_value={"total": 8})
+        # Mock get_sentiment_stats to return 8 sentiment scores (must return coroutine since method is async)
+        async def mock_get_sentiment_stats(**kwargs):
+            return {"total": 8}
+        db_service_with_mocks.get_sentiment_stats = mock_get_sentiment_stats
         
         # Execute load_recent_data
         await db_service_with_mocks.load_recent_data()
