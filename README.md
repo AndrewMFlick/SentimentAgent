@@ -268,6 +268,16 @@ python3 monitoring/process_monitor.py --interval 60
 
 See LICENSE file for details.
 
+## Feature Development Status
+
+### Completed Features ✅
+
+- **[001-reddit-sentiment-analysis](specs/001-reddit-sentiment-analysis/)**: Initial implementation - Merged PR #3
+- **[002-the-performance-is](specs/002-the-performance-is/)**: Asynchronous data collection - Merged PR #4
+- **[003-backend-stability-and-data-loading](specs/003-backend-stability-and-data-loading/)**: Backend stability improvements - Merged [PR #8](https://github.com/AndrewMFlick/SentimentAgent/pull/8) 
+  - See [COMPLETION.md](specs/003-backend-stability-and-data-loading/COMPLETION.md) for full implementation details
+- **[004-fix-the-cosmosdb](specs/004-fix-the-cosmosdb/)**: CosmosDB datetime query fix - Merged [PR #16](https://github.com/AndrewMFlick/SentimentAgent/pull/16)
+
 ## Support
 
 For issues and questions, please open an issue on the GitHub repository.
