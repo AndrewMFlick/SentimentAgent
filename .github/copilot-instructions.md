@@ -5,6 +5,7 @@ Auto-generated from all feature plans. Last updated: 2025-01-15
 ## Active Technologies
 - Python 3.13.3 + Azure Cosmos SDK 4.5.1, FastAPI 0.109.2, structlog 24.1.0 (004-fix-the-cosmosdb)
 - Azure CosmosDB (PostgreSQL mode emulator on localhost:8081, production on Azure) (004-fix-the-cosmosdb)
+- Python 3.13.3 + Azure Cosmos SDK 4.5.1, FastAPI 0.109.2, pytest 8.0.0, structlog 24.1.0 (005-fix-cosmosdb-sql)
 
 - Python 3.13.3 + FastAPI 0.109.2, PRAW 7.7.1 (synchronous), uvicorn 0.27.1, APScheduler 3.10.4, Azure Cosmos SDK 4.5.1, psutil (002-the-performance-is, 003-backend-stability-and-data-loading)
 
@@ -99,10 +100,10 @@ app = FastAPI(lifespan=lifespan)
 ```
 
 ## Recent Changes
+- 005-fix-cosmosdb-sql: Added Python 3.13.3 + Azure Cosmos SDK 4.5.1, FastAPI 0.109.2, pytest 8.0.0, structlog 24.1.0
 - 004-fix-the-cosmosdb: Added Python 3.13.3 + Azure Cosmos SDK 4.5.1, FastAPI 0.109.2, structlog 24.1.0
 
 - 003-backend-stability-and-data-loading: Added backend stability patterns (graceful shutdown, error recovery, health monitoring, startup data loading), added psutil for process metrics
-- 002-the-performance-is: Added Python 3.13.3 + FastAPI 0.109.2, PRAW 7.7.1 (synchronous), uvicorn 0.27.1, APScheduler 3.10.4, Azure Cosmos SDK 4.5.1
 
 <!-- MANUAL ADDITIONS START -->
 <!-- MANUAL ADDITIONS END -->
