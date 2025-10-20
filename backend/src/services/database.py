@@ -383,7 +383,14 @@ class DatabaseService:
             enable_cross_partition_query=True
         )
         items = list(result)
-        return items[0] if items else 0
+        if not items:
+            return 0
+        # SELECT VALUE returns the value directly, not wrapped in a dict
+        value = items[0]
+        # Handle case where CosmosDB returns dict with $1 key (fallback)
+        if isinstance(value, dict) and '$1' in value:
+            value = value['$1']
+        return value if value is not None else 0
     
     async def get_sentiment_stats(self, subreddit: Optional[str] = None, hours: int = 24) -> Dict[str, Any]:
         """Get aggregated sentiment statistics.
