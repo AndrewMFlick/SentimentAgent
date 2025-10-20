@@ -21,6 +21,26 @@ Affected User Stories:
 
 Reference: specs/004-fix-the-cosmosdb/spec.md
 Tasks: T001 (helper), T005-T006 (US1), T011-T012 (US2), T014-T016 (US3)
+
+Sentiment Stats Aggregation Fix (Feature 005-fix-cosmosdb-sql):
+----------------------------------------------------------------
+CosmosDB PostgreSQL mode does not support SUM(CASE WHEN...) syntax, causing sentiment
+statistics to return zero values. Fixed by replacing single complex query with 5 separate
+CosmosDB-compatible queries executed in parallel for performance.
+
+Key Implementation Details:
+- _execute_scalar_query() helper executes queries returning single scalar values
+- get_sentiment_stats() uses 5 separate SELECT VALUE queries (total, positive, negative, neutral, avg)
+- Queries executed in parallel using asyncio.gather() to maintain <2s performance target
+- Fail-fast error handling (raises exceptions instead of returning silent zeros)
+- Structured logging with execution time tracking
+
+Affected Methods:
+- _execute_scalar_query() (new): Helper for scalar query execution
+- get_sentiment_stats() (modified): Now async, uses 5 parallel queries
+
+Reference: specs/005-fix-cosmosdb-sql/spec.md
+Tasks: T008 (helper), T009-T012 (integration tests), T013-T017 (implementation)
 """
 import logging
 import os
