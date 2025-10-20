@@ -387,10 +387,25 @@ class DatabaseService:
             return 0
         # SELECT VALUE returns the value directly, not wrapped in a dict
         value = items[0]
-        # Handle case where CosmosDB returns dict with $1 key (fallback)
-        if isinstance(value, dict) and '$1' in value:
-            value = value['$1']
-        return value if value is not None else 0
+        logger.debug(f"Raw query result value: {value}, type: {type(value)}")
+        
+        # Handle different CosmosDB response formats
+        if isinstance(value, dict):
+            logger.debug(f"Value is dict, keys: {value.keys()}")
+            # CosmosDB sometimes wraps results in dict with $1 key
+            if '$1' in value:
+                logger.debug(f"Extracting value from dict with $1 key")
+                value = value['$1']
+            # Or other numeric keys
+            elif len(value) == 1:
+                logger.debug(f"Extracting single value from dict")
+                value = list(value.values())[0]
+        
+        logger.debug(f"Returning value: {value}, type: {type(value)}")
+        # Convert to appropriate numeric type, return 0 for None
+        if value is None:
+            return 0
+        return float(value) if isinstance(value, (int, float)) else 0
     
     async def get_sentiment_stats(self, subreddit: Optional[str] = None, hours: int = 24) -> Dict[str, Any]:
         """Get aggregated sentiment statistics.
