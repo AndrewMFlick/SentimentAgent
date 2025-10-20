@@ -101,10 +101,10 @@ class AIAgent:
         # Gather sentiment stats for mentioned tools
         for subreddit in mentioned_subreddits:
             # Recent stats (24 hours)
-            stats_24h = db.get_sentiment_stats(subreddit=subreddit, hours=24)
+            stats_24h = await db.get_sentiment_stats(subreddit=subreddit, hours=24)
             
             # Weekly stats
-            stats_week = db.get_sentiment_stats(subreddit=subreddit, hours=168)
+            stats_week = await db.get_sentiment_stats(subreddit=subreddit, hours=168)
             
             context["summary"][subreddit] = {
                 "last_24h": stats_24h,
@@ -119,7 +119,7 @@ class AIAgent:
         
         # If no specific subreddits mentioned, get overall stats
         if not mentioned_subreddits:
-            overall_stats = db.get_sentiment_stats(hours=168)
+            overall_stats = await db.get_sentiment_stats(hours=168)
             context["summary"]["overall"] = overall_stats
             context["sources"].append({
                 "type": "sentiment_stats",

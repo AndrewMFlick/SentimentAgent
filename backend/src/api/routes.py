@@ -109,7 +109,7 @@ async def get_sentiment_stats(
         hours: Time window in hours (default: 24)
     """
     try:
-        stats = db.get_sentiment_stats(subreddit=subreddit, hours=hours)
+        stats = await db.get_sentiment_stats(subreddit=subreddit, hours=hours)
         return {
             "subreddit": subreddit or "all",
             "time_window_hours": hours,
@@ -135,7 +135,7 @@ async def get_sentiment_trends(
     try:
         # This would need a more sophisticated query to get time-series data
         # For now, return basic stats
-        stats = db.get_sentiment_stats(subreddit=subreddit, hours=hours)
+        stats = await db.get_sentiment_stats(subreddit=subreddit, hours=hours)
         
         return {
             "subreddit": subreddit or "all",
