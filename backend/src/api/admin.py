@@ -5,6 +5,7 @@ from typing import Optional
 import structlog
 from fastapi import APIRouter, Header, HTTPException, Query, Depends
 
+from ..models.tool import ToolCreateRequest, ToolUpdateRequest, AliasLinkRequest
 from ..services.database import db
 from ..services.tool_manager import tool_manager
 from ..services.tool_service import ToolService
