@@ -5,12 +5,34 @@
  */
 import { useState } from 'react';
 import { usePendingTools, useApproveTool, useRejectTool } from '../services/toolApi';
+import { ToolTable } from './ToolTable';
+import { ToolEditModal } from './ToolEditModal';
+import { DeleteConfirmationDialog } from './DeleteConfirmationDialog';
+
+interface Tool {
+  id: string;
+  name: string;
+  vendor: string;
+  category: string;
+  description: string;
+  status: string;
+  created_at: string;
+  updated_at: string;
+}
 
 export const AdminToolApproval = () => {
   const [adminToken, setAdminToken] = useState<string>('');
   const [isTokenSet, setIsTokenSet] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
   const [actionSuccess, setActionSuccess] = useState<string | null>(null);
+  
+  // Active tab state
+  const [activeTab, setActiveTab] = useState<'pending' | 'manage'>('pending');
+  
+  // Tool management state
+  const [editingTool, setEditingTool] = useState<Tool | null>(null);
+  const [deletingTool, setDeletingTool] = useState<Tool | null>(null);
+  const [refreshTrigger, setRefreshTrigger] = useState(0);
 
   // Fetch pending tools (only if token is set)
   const {
@@ -70,6 +92,29 @@ export const AdminToolApproval = () => {
     setIsTokenSet(false);
     setActionError(null);
     setActionSuccess(null);
+  };
+
+  // Tool management handlers
+  const handleEditTool = (tool: Tool) => {
+    setEditingTool(tool);
+    setActionError(null);
+    setActionSuccess(null);
+  };
+
+  const handleDeleteTool = (tool: Tool) => {
+    setDeletingTool(tool);
+    setActionError(null);
+    setActionSuccess(null);
+  };
+
+  const handleEditSuccess = () => {
+    setActionSuccess('Tool updated successfully');
+    setRefreshTrigger(prev => prev + 1);
+  };
+
+  const handleDeleteSuccess = () => {
+    setActionSuccess('Tool deleted successfully');
+    setRefreshTrigger(prev => prev + 1);
   };
 
   // Token input form
@@ -162,9 +207,11 @@ export const AdminToolApproval = () => {
         <div className="glass-card p-8">
           <div className="flex justify-between items-start mb-6">
             <div>
-              <h1 className="text-4xl mb-3 text-white font-bold">Admin Tool Approval</h1>
+              <h1 className="text-4xl mb-3 text-white font-bold">Admin Tool Management</h1>
               <p className="text-gray-400 text-sm">
-                Review and approve auto-detected AI tools ({pendingTools.length} pending)
+                {activeTab === 'pending' 
+                  ? `Review and approve auto-detected AI tools (${pendingTools.length} pending)`
+                  : 'Manage all AI tools in the system'}
               </p>
             </div>
             <button onClick={handleClearToken} className="glass-button">
@@ -184,15 +231,42 @@ export const AdminToolApproval = () => {
             </div>
           )}
 
-          {/* Pending tools table */}
-          {pendingTools.length === 0 ? (
-            <div className="text-center py-20 px-5">
-              <p className="text-xl text-gray-300 mb-2">No pending tools</p>
-              <p className="text-sm text-gray-500">
-                All auto-detected tools have been reviewed
-              </p>
-            </div>
-          ) : (
+          {/* Tab Navigation */}
+          <div className="flex gap-2 border-b border-glass-border mb-6">
+            <button
+              onClick={() => setActiveTab('pending')}
+              className={`px-6 py-3 font-bold text-sm transition-all ${
+                activeTab === 'pending'
+                  ? 'border-b-2 border-blue-500 text-blue-400'
+                  : 'text-gray-400 hover:text-gray-200'
+              }`}
+            >
+              Pending Approvals {pendingTools.length > 0 && `(${pendingTools.length})`}
+            </button>
+            <button
+              onClick={() => setActiveTab('manage')}
+              className={`px-6 py-3 font-bold text-sm transition-all ${
+                activeTab === 'manage'
+                  ? 'border-b-2 border-blue-500 text-blue-400'
+                  : 'text-gray-400 hover:text-gray-200'
+              }`}
+            >
+              Manage Tools
+            </button>
+          </div>
+
+          {/* Tab Content */}
+          {activeTab === 'pending' && (
+            <>
+              {/* Pending tools table */}
+              {pendingTools.length === 0 ? (
+                <div className="text-center py-20 px-5">
+                  <p className="text-xl text-gray-300 mb-2">No pending tools</p>
+                  <p className="text-sm text-gray-500">
+                    All auto-detected tools have been reviewed
+                  </p>
+                </div>
+              ) : (
             <div className="overflow-x-auto mt-6">
               <table className="w-full border-collapse">
                 <thead>
@@ -258,8 +332,40 @@ export const AdminToolApproval = () => {
               dashboard.
             </p>
           </div>
+            </>
+          )}
+
+          {/* Manage Tools Tab */}
+          {activeTab === 'manage' && (
+            <ToolTable
+              adminToken={adminToken}
+              onEdit={handleEditTool}
+              onDelete={handleDeleteTool}
+              refreshTrigger={refreshTrigger}
+            />
+          )}
         </div>
       </div>
+
+      {/* Edit Modal */}
+      {editingTool && (
+        <ToolEditModal
+          tool={editingTool}
+          adminToken={adminToken}
+          onClose={() => setEditingTool(null)}
+          onSuccess={handleEditSuccess}
+        />
+      )}
+
+      {/* Delete Confirmation Dialog */}
+      {deletingTool && (
+        <DeleteConfirmationDialog
+          tool={deletingTool}
+          adminToken={adminToken}
+          onClose={() => setDeletingTool(null)}
+          onSuccess={handleDeleteSuccess}
+        />
+      )}
     </div>
   );
 };
