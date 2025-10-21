@@ -87,7 +87,7 @@ class ToolUpdateRequest(BaseModel):
 class AliasLinkRequest(BaseModel):
     """Request model for linking a tool alias."""
 
-    primary_tool_id: str = Field(..., regex=r"^[a-f0-9-]{36}$")
+    primary_tool_id: str = Field(..., pattern=r"^[a-f0-9-]{36}$")
 
 
 class ToolResponse(BaseModel):
