@@ -68,6 +68,13 @@ class Settings(BaseSettings):
     db_retry_base_delay: float = 1.0
     startup_load_hours: int = 24
 
+    # Admin Tool Management
+    admin_tools_max_per_page: int = 100
+    admin_tools_default_per_page: int = 20
+    admin_tool_name_max_length: int = 100
+    admin_tool_description_max_length: int = 500
+    admin_alias_max_per_tool: int = 50
+
     @property
     def subreddit_list(self) -> List[str]:
         """Get list of subreddits to monitor."""
