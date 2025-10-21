@@ -153,6 +153,8 @@ class DatabaseService:
         self.comments_container = None
         self.sentiment_container = None
         self.trending_container = None
+        self.tools_container = None
+        self.aliases_container = None
 
         logger.info("Database service initialized")
 
@@ -184,6 +186,12 @@ class DatabaseService:
             )
             self.trending_container = self.database.get_container_client(
                 settings.cosmos_container_trending
+            )
+            
+            # Tool management containers
+            self.tools_container = self.database.get_container_client("Tools")
+            self.aliases_container = self.database.get_container_client(
+                "ToolAliases"
             )
 
             logger.info("Database containers initialized")
