@@ -59,8 +59,8 @@ const TimeSeriesSection: React.FC<{
   }
 
   return (
-    <div className="mt-12 bg-gray-50 p-6 rounded-lg">
-      <h2 className="text-2xl font-bold mb-6">
+    <div className="mt-12 glass-card p-8">
+      <h2 className="text-3xl font-bold text-white mb-6">
         Sentiment Trends Over Time
       </h2>
 
@@ -70,7 +70,7 @@ const TimeSeriesSection: React.FC<{
           <div>
             <label
               htmlFor="timeseries-tool-select"
-              className="block text-sm font-medium mb-2"
+              className="block text-sm font-medium mb-2 text-gray-200"
             >
               Select Tool
             </label>
@@ -78,11 +78,11 @@ const TimeSeriesSection: React.FC<{
               id="timeseries-tool-select"
               value={selectedToolId}
               onChange={(e) => setSelectedToolId(e.target.value)}
-              className="w-full border rounded px-3 py-2"
+              className="glass-input w-full"
             >
-              <option value="">Choose a tool...</option>
+              <option value="" className="bg-dark-surface text-gray-300">Choose a tool...</option>
               {tools.map((tool) => (
-                <option key={tool.id} value={tool.id}>
+                <option className="bg-dark-surface text-gray-200" key={tool.id} value={tool.id}>
                   {tool.name}
                 </option>
               ))}
@@ -92,7 +92,7 @@ const TimeSeriesSection: React.FC<{
           <div>
             <label
               htmlFor="timeseries-start-date"
-              className="block text-sm font-medium mb-2"
+              className="block text-sm font-medium mb-2 text-gray-200"
             >
               Start Date
             </label>
@@ -101,14 +101,14 @@ const TimeSeriesSection: React.FC<{
               type="date"
               value={startDate}
               onChange={(e) => setStartDate(e.target.value)}
-              className="w-full border rounded px-3 py-2"
+              className="glass-input w-full"
             />
           </div>
 
           <div>
             <label
               htmlFor="timeseries-end-date"
-              className="block text-sm font-medium mb-2"
+              className="block text-sm font-medium mb-2 text-gray-200"
             >
               End Date
             </label>
@@ -117,7 +117,7 @@ const TimeSeriesSection: React.FC<{
               type="date"
               value={endDate}
               onChange={(e) => setEndDate(e.target.value)}
-              className="w-full border rounded px-3 py-2"
+              className="glass-input w-full"
             />
           </div>
 
@@ -125,10 +125,10 @@ const TimeSeriesSection: React.FC<{
             <button
               onClick={handleShowChart}
               disabled={!selectedToolId}
-              className={`px-6 py-2 rounded font-semibold ${
+              className={`glass-button px-6 py-2 rounded-lg font-semibold ${
                 selectedToolId
-                  ? 'bg-blue-600 text-white hover:bg-blue-700'
-                  : 'bg-gray-300 text-gray-500 cursor-not-allowed'
+                  ? 'bg-emerald-600/40 border-emerald-500/60 hover:bg-emerald-600/60'
+                  : 'opacity-50 cursor-not-allowed'
               }`}
             >
               View Trends
@@ -136,7 +136,7 @@ const TimeSeriesSection: React.FC<{
             {showChart && (
               <button
                 onClick={handleReset}
-                className="px-6 py-2 rounded border border-gray-300 hover:bg-gray-50"
+                className="glass-button px-6 py-2 rounded-lg bg-gray-600/30 border-gray-500/50 hover:bg-gray-600/40"
               >
                 Reset
               </button>
@@ -144,7 +144,7 @@ const TimeSeriesSection: React.FC<{
           </div>
         </div>
 
-        <p className="text-sm text-gray-600">
+        <p className="text-sm text-gray-400">
           View daily sentiment trends for up to 90 days
         </p>
       </div>
@@ -204,12 +204,12 @@ const ToolComparisonSection: React.FC<{
   }
 
   return (
-    <div className="mt-12 bg-gray-50 p-6 rounded-lg">
-      <h2 className="text-2xl font-bold mb-6">Compare AI Tools</h2>
+    <div className="mt-12 glass-card p-8">
+      <h2 className="text-3xl font-bold text-white mb-6">Compare AI Tools</h2>
 
       {/* Tool selector */}
       <div className="mb-6">
-        <p className="text-sm text-gray-600 mb-3">
+        <p className="text-sm text-gray-300 mb-3">
           Select 2 or more tools to compare sentiment:
         </p>
         <div className="flex flex-wrap gap-2 mb-4">
@@ -217,10 +217,10 @@ const ToolComparisonSection: React.FC<{
             <button
               key={tool.id}
               onClick={() => handleToolToggle(tool.id)}
-              className={`px-4 py-2 rounded border transition-colors ${
+              className={`px-4 py-2 rounded-lg border transition-all ${
                 selectedToolIds.includes(tool.id)
-                  ? 'bg-blue-500 text-white border-blue-600'
-                  : 'bg-white text-gray-700 border-gray-300 hover:bg-gray-50'
+                  ? 'glass-button bg-emerald-600/40 border-emerald-500/60 text-white'
+                  : 'glass-button bg-dark-elevated/60 text-gray-200 border-glass-border hover:bg-dark-elevated/80'
               }`}
             >
               {tool.name}
@@ -232,10 +232,10 @@ const ToolComparisonSection: React.FC<{
           <button
             onClick={handleCompare}
             disabled={selectedToolIds.length < 2}
-            className={`px-6 py-2 rounded font-semibold ${
+            className={`glass-button px-6 py-2 rounded-lg font-semibold ${
               selectedToolIds.length >= 2
-                ? 'bg-blue-600 text-white hover:bg-blue-700'
-                : 'bg-gray-300 text-gray-500 cursor-not-allowed'
+                ? 'bg-emerald-600/40 border-emerald-500/60 hover:bg-emerald-600/60'
+                : 'opacity-50 cursor-not-allowed'
             }`}
           >
             Compare ({selectedToolIds.length} selected)
@@ -243,7 +243,7 @@ const ToolComparisonSection: React.FC<{
           {showComparison && (
             <button
               onClick={handleReset}
-              className="px-6 py-2 rounded border border-gray-300 hover:bg-gray-50"
+              className="glass-button px-6 py-2 rounded-lg bg-gray-600/30 border-gray-500/50 hover:bg-gray-600/40"
             >
               Reset
             </button>
@@ -253,15 +253,15 @@ const ToolComparisonSection: React.FC<{
 
       {/* Comparison results */}
       {showComparison && (
-        <div className="bg-white p-6 rounded-lg">
+        <div className="glass-card p-8">
           {isLoading && (
-            <div className="text-center py-8">
+            <div className="text-center py-8 text-gray-300">
               Loading comparison...
             </div>
           )}
 
           {error && (
-            <div className="text-red-600 text-center py-8">
+            <div className="text-red-400 text-center py-8">
               Failed to load comparison data
             </div>
           )}
@@ -328,7 +328,7 @@ const DashboardContent: React.FC = () => {
   if (loading && !data) {
     return (
       <div className="flex items-center justify-center h-screen">
-        <div className="text-xl">Loading dashboard...</div>
+        <div className="text-xl text-gray-300">Loading dashboard...</div>
       </div>
     );
   }
@@ -336,7 +336,7 @@ const DashboardContent: React.FC = () => {
   if (error) {
     return (
       <div className="flex items-center justify-center h-screen">
-        <div className="text-xl text-red-600">{error}</div>
+        <div className="text-xl text-red-400">{error}</div>
       </div>
     );
   }
@@ -361,22 +361,24 @@ const DashboardContent: React.FC = () => {
   ];
 
   return (
-    <div className="container mx-auto px-4 py-8">
-      <h1 className="text-4xl font-bold mb-8">Reddit Sentiment Analysis Dashboard</h1>
+    <div className="container mx-auto px-6 py-12">
+      <h1 className="text-5xl font-bold mb-10 bg-gradient-to-r from-emerald-400 to-blue-500 bg-clip-text text-transparent">
+        Reddit Sentiment Analysis Dashboard
+      </h1>
 
       {/* Filters */}
       <div className="mb-8 grid grid-cols-1 md:grid-cols-2 gap-4">
         <div>
-          <label htmlFor="subreddit-select" className="block text-sm font-medium mb-2">Subreddit</label>
+          <label htmlFor="subreddit-select" className="block text-sm font-medium mb-2 text-gray-200">Subreddit</label>
           <select
             id="subreddit-select"
             value={selectedSubreddit}
             onChange={(e) => setSelectedSubreddit(e.target.value)}
-            className="border rounded px-4 py-2 w-full"
+            className="glass-input w-full"
           >
-            <option value="all">All Subreddits</option>
+            <option value="all" className="bg-dark-surface text-gray-300">All Subreddits</option>
             {subreddits.map(sub => (
-              <option key={sub} value={sub}>r/{sub}</option>
+              <option className="bg-dark-surface text-gray-200" key={sub} value={sub}>r/{sub}</option>
             ))}
           </select>
         </div>
@@ -390,17 +392,17 @@ const DashboardContent: React.FC = () => {
 
       {/* Stats Cards */}
       <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-8">
-        <div className="bg-white p-6 rounded-lg shadow">
+        <div className="glass-card p-8">
           <h3 className="text-sm font-medium text-gray-600 mb-2">Total Analyzed</h3>
           <p className="text-3xl font-bold">{data.statistics.total}</p>
         </div>
         
-        <div className="bg-green-50 p-6 rounded-lg shadow">
+        <div className="glass-card p-8 bg-emerald-900/20 border-emerald-700/50">
           <h3 className="text-sm font-medium text-gray-600 mb-2">Positive</h3>
           <p className="text-3xl font-bold text-green-600">{data.statistics.positive}</p>
         </div>
         
-        <div className="bg-red-50 p-6 rounded-lg shadow">
+        <div className="glass-card p-8 bg-red-900/20 border-red-700/50">
           <h3 className="text-sm font-medium text-gray-600 mb-2">Negative</h3>
           <p className="text-3xl font-bold text-red-600">{data.statistics.negative}</p>
         </div>
@@ -414,7 +416,7 @@ const DashboardContent: React.FC = () => {
       {/* Charts */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
         {/* Pie Chart */}
-        <div className="bg-white p-6 rounded-lg shadow">
+        <div className="glass-card p-8">
           <h2 className="text-xl font-bold mb-4">Sentiment Distribution</h2>
           <ResponsiveContainer width="100%" height={300}>
             <PieChart>
@@ -438,7 +440,7 @@ const DashboardContent: React.FC = () => {
         </div>
 
         {/* Bar Chart */}
-        <div className="bg-white p-6 rounded-lg shadow">
+        <div className="glass-card p-8">
           <h2 className="text-xl font-bold mb-4">Sentiment Counts</h2>
           <ResponsiveContainer width="100%" height={300}>
             <BarChart data={barData}>
@@ -456,11 +458,11 @@ const DashboardContent: React.FC = () => {
       </div>
 
       {/* Average Sentiment */}
-      <div className="mt-8 bg-white p-6 rounded-lg shadow">
-        <h2 className="text-xl font-bold mb-4">Average Sentiment Score</h2>
+      <div className="mt-8 glass-card p-8">
+        <h2 className="text-2xl font-semibold mb-6 text-white">Average Sentiment Score</h2>
         <div className="flex items-center gap-4">
           <div className="flex-1">
-            <div className="bg-gray-200 rounded-full h-8">
+            <div className="bg-dark-elevated/50 rounded-full h-8">
               <div
                 className={`h-8 rounded-full flex items-center justify-center text-white font-bold ${
                   data.statistics.avg_sentiment >= 0 ? 'bg-green-500' : 'bg-red-500'
@@ -471,27 +473,27 @@ const DashboardContent: React.FC = () => {
               </div>
             </div>
           </div>
-          <div className="text-sm text-gray-600">
+          <div className="text-sm text-gray-300">
             Range: -1 (negative) to +1 (positive)
           </div>
         </div>
       </div>
 
       {/* Last Updated */}
-      <div className="mt-4 text-sm text-gray-500 text-right">
+      <div className="mt-4 text-sm text-gray-400 text-right">
         Last updated: {new Date(data.timestamp).toLocaleString()}
       </div>
 
       {/* AI Tools Sentiment Section */}
       <div className="mt-12">
-        <h2 className="text-2xl font-bold mb-6">AI Developer Tools Sentiment</h2>
+        <h2 className="text-3xl font-bold text-white mb-6">AI Developer Tools Sentiment</h2>
         
         {toolsLoading && (
           <div className="text-center py-8">Loading AI tools...</div>
         )}
         
         {toolsError && (
-          <div className="text-red-600 text-center py-8">
+          <div className="text-red-400 text-center py-8">
             Failed to load AI tools
           </div>
         )}

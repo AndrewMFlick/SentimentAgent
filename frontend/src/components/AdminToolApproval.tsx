@@ -75,40 +75,42 @@ export const AdminToolApproval = () => {
   // Token input form
   if (!isTokenSet) {
     return (
-      <div className="p-5 max-w-screen-xl mx-auto">
-        <div className="glass-card p-6">
-          <h1 className="text-3xl mb-2 text-white">Admin Tool Approval</h1>
-          <p className="text-gray-400 text-sm mb-5">
-            Enter your admin token to view and manage pending AI tool approvals
-          </p>
+      <div className="min-h-screen bg-gradient-to-br from-dark-bg via-dark-surface to-dark-bg p-5">
+        <div className="max-w-screen-xl mx-auto">
+          <div className="glass-card p-8">
+            <h1 className="text-4xl mb-3 text-white font-bold">Admin Tool Approval</h1>
+            <p className="text-gray-400 text-sm mb-6">
+              Enter your admin token to view and manage pending AI tool approvals
+            </p>
 
-          <form onSubmit={handleSetToken} className="flex flex-col gap-4 max-w-md">
-            <label htmlFor="admin-token" className="text-sm font-bold text-gray-200">
-              Admin Token
-            </label>
-            <input
-              id="admin-token"
-              type="password"
-              value={adminToken}
-              onChange={(e) => setAdminToken(e.target.value)}
-              placeholder="Enter admin token"
-              className="glass-input"
-              autoFocus
-            />
-            <button
-              type="submit"
-              className="glass-button bg-blue-600/20 border-blue-500/50 hover:bg-blue-600/30 disabled:opacity-50 disabled:cursor-not-allowed"
-              disabled={!adminToken.trim()}
-            >
-              Authenticate
-            </button>
-          </form>
+            <form onSubmit={handleSetToken} className="flex flex-col gap-4 max-w-md">
+              <label htmlFor="admin-token" className="text-sm font-bold text-gray-200">
+                Admin Token
+              </label>
+              <input
+                id="admin-token"
+                type="password"
+                value={adminToken}
+                onChange={(e) => setAdminToken(e.target.value)}
+                placeholder="Enter admin token"
+                className="glass-input"
+                autoFocus
+              />
+              <button
+                type="submit"
+                className="glass-button bg-blue-600/30 border-blue-500/50 hover:bg-blue-600/40 disabled:opacity-50 disabled:cursor-not-allowed"
+                disabled={!adminToken.trim()}
+              >
+                Authenticate
+              </button>
+            </form>
 
-          {actionError && (
-            <div className="p-3 px-4 bg-red-900/40 border border-red-700/50 rounded text-red-300 mb-4 mt-4">
-              <strong>Error:</strong> {actionError}
-            </div>
-          )}
+            {actionError && (
+              <div className="p-4 mt-6 bg-red-900/30 border border-red-700/50 rounded-lg text-red-300">
+                <strong>Error:</strong> {actionError}
+              </div>
+            )}
+          </div>
         </div>
       </div>
     );
@@ -117,12 +119,14 @@ export const AdminToolApproval = () => {
   // Loading state
   if (isLoadingPending) {
     return (
-      <div className="p-5 max-w-screen-xl mx-auto">
-        <div className="glass-card p-6">
-          <h1 className="text-3xl mb-2 text-white">Admin Tool Approval</h1>
-          <div className="flex flex-col items-center p-10 gap-4">
-            <div className="border-4 border-gray-700 border-t-blue-600 rounded-full w-10 h-10 animate-spin"></div>
-            <p className="text-gray-300">Loading pending tools...</p>
+      <div className="min-h-screen bg-gradient-to-br from-dark-bg via-dark-surface to-dark-bg p-5">
+        <div className="max-w-screen-xl mx-auto">
+          <div className="glass-card p-8">
+            <h1 className="text-4xl mb-3 text-white font-bold">Admin Tool Approval</h1>
+            <div className="flex flex-col items-center py-16 gap-4">
+              <div className="border-4 border-dark-elevated border-t-blue-500 rounded-full w-12 h-12 animate-spin"></div>
+              <p className="text-gray-300">Loading pending tools...</p>
+            </div>
           </div>
         </div>
       </div>
@@ -132,16 +136,18 @@ export const AdminToolApproval = () => {
   // Error state
   if (pendingError) {
     return (
-      <div className="p-5 max-w-screen-xl mx-auto">
-        <div className="glass-card p-6">
-          <h1 className="text-3xl mb-2 text-white">Admin Tool Approval</h1>
-          <div className="p-3 px-4 bg-red-900/40 border border-red-700/50 rounded text-red-300 mb-4">
-            <strong>Error loading pending tools:</strong>{' '}
-            {pendingError instanceof Error ? pendingError.message : 'Unknown error'}
+      <div className="min-h-screen bg-gradient-to-br from-dark-bg via-dark-surface to-dark-bg p-5">
+        <div className="max-w-screen-xl mx-auto">
+          <div className="glass-card p-8">
+            <h1 className="text-4xl mb-3 text-white font-bold">Admin Tool Approval</h1>
+            <div className="p-4 bg-red-900/30 border border-red-700/50 rounded-lg text-red-300 mb-6">
+              <strong>Error loading pending tools:</strong>{' '}
+              {pendingError instanceof Error ? pendingError.message : 'Unknown error'}
+            </div>
+            <button onClick={handleClearToken} className="glass-button">
+              Clear Token & Re-authenticate
+            </button>
           </div>
-          <button onClick={handleClearToken} className="glass-button bg-gray-700/50">
-            Clear Token & Re-authenticate
-          </button>
         </div>
       </div>
     );
@@ -151,105 +157,107 @@ export const AdminToolApproval = () => {
 
   // Main admin panel
   return (
-    <div className="p-5 max-w-screen-xl mx-auto">
-      <div className="glass-card p-6">
-        <div className="flex justify-between items-start mb-5">
-          <div>
-            <h1 className="text-3xl mb-2 text-white">Admin Tool Approval</h1>
-            <p className="text-gray-400 text-sm mb-5">
-              Review and approve auto-detected AI tools ({pendingTools.length} pending)
-            </p>
+    <div className="min-h-screen bg-gradient-to-br from-dark-bg via-dark-surface to-dark-bg p-5">
+      <div className="max-w-screen-xl mx-auto">
+        <div className="glass-card p-8">
+          <div className="flex justify-between items-start mb-6">
+            <div>
+              <h1 className="text-4xl mb-3 text-white font-bold">Admin Tool Approval</h1>
+              <p className="text-gray-400 text-sm">
+                Review and approve auto-detected AI tools ({pendingTools.length} pending)
+              </p>
+            </div>
+            <button onClick={handleClearToken} className="glass-button">
+              Logout
+            </button>
           </div>
-          <button onClick={handleClearToken} className="glass-button bg-gray-700/50">
-            Logout
-          </button>
-        </div>
 
-        {/* Action feedback */}
-        {actionSuccess && (
-          <div className="p-3 px-4 bg-emerald-900/40 border border-emerald-700/50 rounded text-emerald-300 mb-4">
-            <strong>Success:</strong> {actionSuccess}
-          </div>
-        )}
-        {actionError && (
-          <div className="p-3 px-4 bg-red-900/40 border border-red-700/50 rounded text-red-300 mb-4">
-            <strong>Error:</strong> {actionError}
-          </div>
-        )}
+          {/* Action feedback */}
+          {actionSuccess && (
+            <div className="p-4 bg-emerald-900/30 border border-emerald-700/50 rounded-lg text-emerald-300 mb-4">
+              <strong>Success:</strong> {actionSuccess}
+            </div>
+          )}
+          {actionError && (
+            <div className="p-4 bg-red-900/30 border border-red-700/50 rounded-lg text-red-300 mb-4">
+              <strong>Error:</strong> {actionError}
+            </div>
+          )}
 
-        {/* Pending tools table */}
-        {pendingTools.length === 0 ? (
-          <div className="text-center py-16 px-5">
-            <p className="text-lg text-gray-400 mb-2">No pending tools</p>
-            <p className="text-sm text-gray-500">
-              All auto-detected tools have been reviewed
-            </p>
-          </div>
-        ) : (
-          <div className="overflow-x-auto mt-5">
-            <table className="w-full border-collapse">
-              <thead>
-                <tr>
-                  <th className="text-left p-3 bg-gray-800/50 border-b-2 border-gray-700 text-sm font-bold text-gray-200">Tool Name</th>
-                  <th className="text-left p-3 bg-gray-800/50 border-b-2 border-gray-700 text-sm font-bold text-gray-200">Vendor</th>
-                  <th className="text-left p-3 bg-gray-800/50 border-b-2 border-gray-700 text-sm font-bold text-gray-200">7-Day Mentions</th>
-                  <th className="text-left p-3 bg-gray-800/50 border-b-2 border-gray-700 text-sm font-bold text-gray-200">First Detected</th>
-                  <th className="text-left p-3 bg-gray-800/50 border-b-2 border-gray-700 text-sm font-bold text-gray-200">Actions</th>
-                </tr>
-              </thead>
-              <tbody>
-                {pendingTools.map((tool) => (
-                  <tr key={tool.id} className="border-b border-gray-700">
-                    <td className="p-3 text-sm text-gray-300">
-                      <strong>{tool.name}</strong>
-                      {tool.description && (
-                        <div className="text-xs text-gray-500 mt-1">{tool.description}</div>
-                      )}
-                    </td>
-                    <td className="p-3 text-sm text-gray-300">{tool.vendor || 'Unknown'}</td>
-                    <td className="p-3 text-sm text-gray-300">
-                      <span className="inline-block px-2 py-1 bg-blue-900/40 rounded-full text-xs font-bold text-blue-300">
-                        {tool.mention_count_7d || 0} mentions
-                      </span>
-                    </td>
-                    <td className="p-3 text-sm text-gray-300">
-                      {tool.first_detected
-                        ? new Date(tool.first_detected).toLocaleDateString()
-                        : 'Unknown'}
-                    </td>
-                    <td className="p-3 text-sm text-gray-300">
-                      <div className="flex gap-2">
-                        <button
-                          onClick={() => handleApprove(tool.id, tool.name)}
-                          disabled={isApproving || isRejecting}
-                          className="px-3 py-1.5 text-xs font-bold bg-emerald-900/40 text-emerald-300 border border-emerald-700/50 rounded transition-all hover:bg-emerald-900/60 disabled:opacity-50 disabled:cursor-not-allowed"
-                          title="Approve this tool"
-                        >
-                          {isApproving ? '⏳' : '✓'} Approve
-                        </button>
-                        <button
-                          onClick={() => handleReject(tool.id, tool.name)}
-                          disabled={isApproving || isRejecting}
-                          className="px-3 py-1.5 text-xs font-bold bg-red-900/40 text-red-300 border border-red-700/50 rounded transition-all hover:bg-red-900/60 disabled:opacity-50 disabled:cursor-not-allowed"
-                          title="Reject this tool"
-                        >
-                          {isRejecting ? '⏳' : '✗'} Reject
-                        </button>
-                      </div>
-                    </td>
+          {/* Pending tools table */}
+          {pendingTools.length === 0 ? (
+            <div className="text-center py-20 px-5">
+              <p className="text-xl text-gray-300 mb-2">No pending tools</p>
+              <p className="text-sm text-gray-500">
+                All auto-detected tools have been reviewed
+              </p>
+            </div>
+          ) : (
+            <div className="overflow-x-auto mt-6">
+              <table className="w-full border-collapse">
+                <thead>
+                  <tr>
+                    <th className="text-left p-4 bg-dark-elevated/70 border-b-2 border-glass-border-strong text-sm font-bold text-gray-200">Tool Name</th>
+                    <th className="text-left p-4 bg-dark-elevated/70 border-b-2 border-glass-border-strong text-sm font-bold text-gray-200">Vendor</th>
+                    <th className="text-left p-4 bg-dark-elevated/70 border-b-2 border-glass-border-strong text-sm font-bold text-gray-200">7-Day Mentions</th>
+                    <th className="text-left p-4 bg-dark-elevated/70 border-b-2 border-glass-border-strong text-sm font-bold text-gray-200">First Detected</th>
+                    <th className="text-left p-4 bg-dark-elevated/70 border-b-2 border-glass-border-strong text-sm font-bold text-gray-200">Actions</th>
                   </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
+                </thead>
+                <tbody>
+                  {pendingTools.map((tool) => (
+                    <tr key={tool.id} className="border-b border-glass-border hover:bg-dark-elevated/30 transition-colors">
+                      <td className="p-4 text-sm text-gray-200">
+                        <strong className="text-white">{tool.name}</strong>
+                        {tool.description && (
+                          <div className="text-xs text-gray-500 mt-1">{tool.description}</div>
+                        )}
+                      </td>
+                      <td className="p-4 text-sm text-gray-300">{tool.vendor || 'Unknown'}</td>
+                      <td className="p-4 text-sm text-gray-300">
+                        <span className="inline-block px-3 py-1 bg-blue-900/40 border border-blue-700/50 rounded-full text-xs font-bold text-blue-300">
+                          {tool.mention_count_7d || 0} mentions
+                        </span>
+                      </td>
+                      <td className="p-4 text-sm text-gray-300">
+                        {tool.first_detected
+                          ? new Date(tool.first_detected).toLocaleDateString()
+                          : 'Unknown'}
+                      </td>
+                      <td className="p-4 text-sm text-gray-300">
+                        <div className="flex gap-2">
+                          <button
+                            onClick={() => handleApprove(tool.id, tool.name)}
+                            disabled={isApproving || isRejecting}
+                            className="px-3 py-1.5 text-xs font-bold bg-emerald-900/40 text-emerald-300 border border-emerald-700/50 rounded-lg transition-all hover:bg-emerald-900/60 hover:border-emerald-600/60 disabled:opacity-50 disabled:cursor-not-allowed"
+                            title="Approve this tool"
+                          >
+                            {isApproving ? '⏳' : '✓'} Approve
+                          </button>
+                          <button
+                            onClick={() => handleReject(tool.id, tool.name)}
+                            disabled={isApproving || isRejecting}
+                            className="px-3 py-1.5 text-xs font-bold bg-red-900/40 text-red-300 border border-red-700/50 rounded-lg transition-all hover:bg-red-900/60 hover:border-red-600/60 disabled:opacity-50 disabled:cursor-not-allowed"
+                            title="Reject this tool"
+                          >
+                            {isRejecting ? '⏳' : '✗'} Reject
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
 
-        <div className="mt-6 p-4 bg-gray-800/50 rounded">
-          <p className="text-xs text-gray-400 m-0">
-            <strong>Note:</strong> Tools with 50+ mentions in the last 7 days are
-            automatically queued for approval. Approved tools will appear in the public
-            dashboard.
-          </p>
+          <div className="mt-8 p-5 bg-dark-elevated/50 border border-glass-border rounded-lg">
+            <p className="text-xs text-gray-400 m-0">
+              <strong className="text-gray-300">Note:</strong> Tools with 50+ mentions in the last 7 days are
+              automatically queued for approval. Approved tools will appear in the public
+              dashboard.
+            </p>
+          </div>
         </div>
       </div>
     </div>

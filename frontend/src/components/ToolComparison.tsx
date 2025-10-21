@@ -33,7 +33,7 @@ const DeltaHighlights = ({ deltas }: DeltaHighlightsProps) => {
   if (significantDeltas.length === 0) {
     return (
       <div className="delta-highlights">
-        <p className="text-sm text-gray-500">
+        <p className="text-sm text-gray-400">
           No significant differences (&gt;10%) between tools
         </p>
       </div>
@@ -42,14 +42,14 @@ const DeltaHighlights = ({ deltas }: DeltaHighlightsProps) => {
 
   return (
     <div className="delta-highlights">
-      <h4 className="text-sm font-semibold mb-2">
+      <h4 className="text-lg font-semibold mb-3 text-white">
         Significant Differences (&gt;10%)
       </h4>
       <div className="space-y-2">
         {significantDeltas.map((delta, idx) => (
           <div
             key={idx}
-            className="p-2 bg-gray-50 rounded border border-gray-200"
+            className="glass-card-light p-3"
           >
             <div className="flex items-center justify-between">
               <span className="text-sm font-medium">
@@ -59,14 +59,14 @@ const DeltaHighlights = ({ deltas }: DeltaHighlightsProps) => {
             <div className="mt-1 space-y-1">
               {Math.abs(delta.positive_delta) > 10 && (
                 <div className="flex items-center gap-2">
-                  <span className="text-xs text-gray-600">
+                  <span className="text-xs text-gray-300">
                     Positive:
                   </span>
                   <span
                     className={`text-xs font-semibold ${
                       delta.positive_delta > 0
-                        ? 'text-green-600'
-                        : 'text-red-600'
+                        ? 'text-emerald-400'
+                        : 'text-red-400'
                     }`}
                   >
                     {delta.positive_delta > 0 ? '↑' : '↓'}{' '}
@@ -76,14 +76,14 @@ const DeltaHighlights = ({ deltas }: DeltaHighlightsProps) => {
               )}
               {Math.abs(delta.negative_delta) > 10 && (
                 <div className="flex items-center gap-2">
-                  <span className="text-xs text-gray-600">
+                  <span className="text-xs text-gray-300">
                     Negative:
                   </span>
                   <span
                     className={`text-xs font-semibold ${
                       delta.negative_delta > 0
-                        ? 'text-red-600'
-                        : 'text-green-600'
+                        ? 'text-red-400'
+                        : 'text-emerald-400'
                     }`}
                   >
                     {delta.negative_delta > 0 ? '↑' : '↓'}{' '}
@@ -124,35 +124,35 @@ export const ToolComparison = ({
   return (
     <div className="tool-comparison">
       <div className="mb-6">
-        <h3 className="text-lg font-semibold mb-4">
+        <h3 className="text-2xl font-semibold mb-6 text-white">
           Tool Sentiment Comparison
         </h3>
 
         {/* Grouped Bar Chart */}
         <ResponsiveContainer width="100%" height={300}>
           <BarChart data={chartData}>
-            <CartesianGrid strokeDasharray="3 3" />
-            <XAxis dataKey="name" />
-            <YAxis label={{ value: 'Percentage (%)', angle: -90 }} />
+            <CartesianGrid strokeDasharray="3 3" stroke="#374151" />
+            <XAxis dataKey="name" stroke="#9ca3af" />
+            <YAxis label={{ value: 'Percentage (%)', angle: -90, fill: '#9ca3af' }} stroke="#9ca3af" />
             <Tooltip
               content={({ active, payload }) => {
                 if (active && payload && payload.length) {
                   const data = payload[0].payload;
                   return (
-                    <div className="bg-white p-3 border rounded shadow">
-                      <p className="font-semibold mb-1">
+                    <div className="glass-card p-4 shadow-glass">
+                      <p className="font-semibold mb-1 text-white">
                         {data.name}
                       </p>
-                      <p className="text-sm text-gray-600 mb-2">
+                      <p className="text-sm text-gray-300 mb-2">
                         {data.mentions} mentions
                       </p>
                       {payload.map((entry: any) => {
                         const colorClass =
                           entry.dataKey === 'Positive'
-                            ? 'text-green-600'
+                            ? 'text-emerald-400'
                             : entry.dataKey === 'Negative'
-                            ? 'text-red-600'
-                            : 'text-gray-600';
+                            ? 'text-red-400'
+                            : 'text-gray-300';
                         return (
                           <p
                             key={entry.dataKey}
@@ -168,7 +168,7 @@ export const ToolComparison = ({
                 return null;
               }}
             />
-            <Legend />
+            <Legend wrapperStyle={{ color: '#9ca3af' }} />
             <Bar dataKey="Positive" fill={colors.Positive} />
             <Bar dataKey="Negative" fill={colors.Negative} />
             <Bar dataKey="Neutral" fill={colors.Neutral} />
@@ -181,34 +181,34 @@ export const ToolComparison = ({
         {comparison.tools.map((tool) => (
           <div
             key={tool.tool_id}
-            className="p-4 border rounded-lg bg-white shadow-sm"
+            className="glass-card p-6"
           >
-            <h4 className="font-semibold mb-2">{tool.tool_name}</h4>
-            <div className="text-sm text-gray-600 mb-3">
+            <h4 className="font-semibold mb-2 text-white">{tool.tool_name}</h4>
+            <div className="text-sm text-gray-300 mb-3">
               {tool.total_mentions} mentions
             </div>
             <div className="space-y-2">
               <div className="flex justify-between items-center">
-                <span className="text-sm">Positive:</span>
-                <span className="font-semibold text-green-600">
+                <span className="text-sm text-gray-300">Positive:</span>
+                <span className="font-semibold text-emerald-400">
                   {tool.positive_percentage.toFixed(1)}%
                 </span>
               </div>
               <div className="flex justify-between items-center">
-                <span className="text-sm">Negative:</span>
-                <span className="font-semibold text-red-600">
+                <span className="text-sm text-gray-300">Negative:</span>
+                <span className="font-semibold text-red-400">
                   {tool.negative_percentage.toFixed(1)}%
                 </span>
               </div>
               <div className="flex justify-between items-center">
-                <span className="text-sm">Neutral:</span>
-                <span className="font-semibold text-gray-600">
+                <span className="text-sm text-gray-300">Neutral:</span>
+                <span className="font-semibold text-gray-300">
                   {tool.neutral_percentage.toFixed(1)}%
                 </span>
               </div>
-              <div className="flex justify-between items-center pt-2 border-t">
-                <span className="text-sm">Avg Sentiment:</span>
-                <span className="font-semibold">
+              <div className="flex justify-between items-center pt-2 border-t border-glass-border">
+                <span className="text-sm text-gray-300">Avg Sentiment:</span>
+                <span className="font-semibold text-white">
                   {tool.avg_sentiment.toFixed(3)}
                 </span>
               </div>
