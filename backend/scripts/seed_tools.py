@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
-"""Seed initial AI tools (GitHub Copilot, Jules AI)."""
+"""Seed initial AI tools into Tools container."""
 import asyncio
 import sys
+import uuid
 from pathlib import Path
-from datetime import datetime
+from datetime import datetime, timezone
 
 # Add parent directory to path for imports
 sys.path.insert(0, str(Path(__file__).parent.parent))
@@ -16,74 +17,95 @@ logger = structlog.get_logger()
 
 
 async def seed_tools():
-    """Seed initial approved AI tools."""
-    logger.info("Starting tool seeding")
-    
-    # Initial tools to seed
+    """Seed initial tools into Tools container."""
+    logger.info("Starting tool seeding for Tools container")
+
+    now = datetime.now(timezone.utc).isoformat()
+
+    # Initial tools matching new schema
     initial_tools = [
         {
-            "id": "github-copilot",
+            "id": str(uuid.uuid4()),
+            "partitionKey": "tool",
             "name": "GitHub Copilot",
-            "vendor": "GitHub/Microsoft",
-            "category": "AI Assistant",
-            "aliases": [
-                "copilot",
-                "gh copilot",
-                "github copilot",
-                "ghcopilot"
-            ],
-            "status": "approved",
-            "detection_threshold": 0.7,
-            "approved_by": "system",
-            "approved_at": datetime.utcnow().isoformat(),
-            "created_at": datetime.utcnow().isoformat()
+            "slug": "github-copilot",
+            "vendor": "GitHub",
+            "category": "code-completion",
+            "description": (
+                "AI pair programmer that suggests code and entire functions"
+            ),
+            "status": "active",
+            "metadata": {
+                "website": "https://github.com/features/copilot",
+                "documentation": "https://docs.github.com/copilot",
+                "pricing": "subscription"
+            },
+            "created_at": now,
+            "updated_at": now
         },
         {
-            "id": "jules-ai",
+            "id": str(uuid.uuid4()),
+            "partitionKey": "tool",
             "name": "Jules AI",
+            "slug": "jules-ai",
             "vendor": "Jules",
-            "category": "AI Agent",
-            "aliases": [
-                "jules",
-                "julesai",
-                "jules ai",
-                "jules agent"
-            ],
-            "status": "approved",
-            "detection_threshold": 0.7,
-            "approved_by": "system",
-            "approved_at": datetime.utcnow().isoformat(),
-            "created_at": datetime.utcnow().isoformat()
+            "category": "code-completion",
+            "description": "AI coding assistant for enhanced productivity",
+            "status": "active",
+            "metadata": {
+                "website": "https://jules.ai",
+                "pricing": "freemium"
+            },
+            "created_at": now,
+            "updated_at": now
         }
     ]
-    
+
     async with CosmosClient(
         settings.cosmos_endpoint,
         credential=settings.cosmos_key
     ) as client:
         database = client.get_database_client(settings.cosmos_database)
-        container = database.get_container_client("ai_tools")
-        
+        container = database.get_container_client("Tools")
+
         for tool in initial_tools:
             try:
-                # Check if tool exists
-                await container.read_item(
-                    item=tool["id"],
-                    partition_key=tool["id"]
+                # Check if tool with same name exists
+                query = (
+                    "SELECT * FROM Tools t "
+                    "WHERE t.name = @name AND t.partitionKey = 'tool'"
                 )
-                logger.info(
-                    f"Tool already exists: {tool['name']}",
-                    tool_id=tool["id"]
+                items = container.query_items(
+                    query=query,
+                    parameters=[{"name": "@name", "value": tool["name"]}]
                 )
-            except Exception:
+
+                # Check if any items exist
+                existing = []
+                async for item in items:
+                    existing.append(item)
+
+                if existing:
+                    logger.info(
+                        f"Tool already exists: {tool['name']}",
+                        tool_id=existing[0]["id"]
+                    )
+                    continue
+
                 # Create tool
                 await container.create_item(body=tool)
                 logger.info(
                     f"✅ Seeded tool: {tool['name']}",
                     tool_id=tool["id"],
-                    status=tool["status"]
+                    slug=tool["slug"],
+                    category=tool["category"]
                 )
-    
+            except Exception as e:
+                logger.error(
+                    f"Failed to seed {tool['name']}",
+                    error=str(e)
+                )
+
     logger.info("Tool seeding complete")
 
 
