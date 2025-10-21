@@ -8,6 +8,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from .config import settings
 from .api import router
+from .api.admin import router as admin_router
 from .services import db, scheduler
 from .services.health import app_state
 
@@ -51,6 +52,27 @@ async def lifespan(app: FastAPI):
         app_state.database_connected = True
         logger.info("Database initialization completed")
         
+        # Initialize AI Tools services
+        logger.info("Initializing AI Tools services")
+        from .services.tool_manager import ToolManager
+        from .services.sentiment_aggregator import SentimentAggregator
+        from .services import tool_manager, sentiment_aggregator
+        
+        # Create global instances
+        import sys
+        tool_manager_instance = ToolManager(db)
+        sentiment_aggregator_instance = SentimentAggregator(db)
+        
+        # Update module globals
+        sys.modules['src.services.tool_manager'].tool_manager = (
+            tool_manager_instance
+        )
+        sys.modules['src.services.sentiment_aggregator'].sentiment_aggregator = (
+            sentiment_aggregator_instance
+        )
+        
+        logger.info("AI Tools services initialized")
+        
         # Start scheduler
         logger.info("Starting scheduler")
         scheduler.start()
@@ -60,10 +82,17 @@ async def lifespan(app: FastAPI):
         logger.info("Starting background data loading task")
         asyncio.create_task(db.load_recent_data())
         
-        logger.info("Application startup completed", uptime_seconds=app_state.get_uptime_seconds())
+        logger.info(
+            "Application startup completed",
+            uptime_seconds=app_state.get_uptime_seconds()
+        )
         
     except Exception as e:
-        logger.critical("Application startup failed", error=str(e), exc_info=True)
+        logger.critical(
+            "Application startup failed",
+            error=str(e),
+            exc_info=True
+        )
         app_state.database_connected = False
         raise  # Fail-fast: crash the application if startup fails
     
@@ -108,6 +137,9 @@ app.add_middleware(
 
 # Include API routes
 app.include_router(router, prefix="/api/v1")
+
+# Include admin routes (requires authentication)
+app.include_router(admin_router, prefix="/api/v1")
 
 
 @app.get("/")

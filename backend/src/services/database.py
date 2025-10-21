@@ -586,6 +586,331 @@ class DatabaseService:
         except Exception as e:
             logger.error(f"Error loading recent data: {e}", exc_info=True)
             # Don't raise - startup should continue even if data loading fails
+    
+    # AI Tools Feature Methods
+    
+    async def get_approved_tools(self) -> List[Dict[str, Any]]:
+        """Get all approved AI tools."""
+        try:
+            query = "SELECT * FROM c WHERE c.status = 'approved'"
+            
+            items = list(self.client.get_database_client(
+                settings.cosmos_database
+            ).get_container_client(
+                "ai_tools"
+            ).query_items(
+                query=query,
+                enable_cross_partition_query=True
+            ))
+            
+            return items
+        except Exception as e:
+            logger.error(f"Error getting approved tools: {e}")
+            return []
+    
+    async def get_tool(self, tool_id: str) -> Optional[Dict[str, Any]]:
+        """Get a specific tool by ID."""
+        try:
+            container = self.client.get_database_client(
+                settings.cosmos_database
+            ).get_container_client("ai_tools")
+            
+            item = container.read_item(
+                item=tool_id,
+                partition_key=tool_id
+            )
+            return item
+        except exceptions.CosmosResourceNotFoundError:
+            return None
+        except Exception as e:
+            logger.error(f"Error getting tool {tool_id}: {e}")
+            return None
+    
+    async def update_tool(
+        self,
+        tool_id: str,
+        updates: Dict[str, Any]
+    ) -> Dict[str, Any]:
+        """Update a tool record."""
+        try:
+            container = self.client.get_database_client(
+                settings.cosmos_database
+            ).get_container_client("ai_tools")
+            
+            # Read existing item
+            item = container.read_item(
+                item=tool_id,
+                partition_key=tool_id
+            )
+            
+            # Apply updates
+            item.update(updates)
+            
+            # Replace item
+            updated = container.replace_item(
+                item=tool_id,
+                body=item
+            )
+            
+            return updated
+        except Exception as e:
+            logger.error(f"Error updating tool {tool_id}: {e}")
+            raise
+    
+    async def get_tool_sentiment(
+        self,
+        tool_id: str,
+        hours: Optional[int] = None,
+        start_date: Optional[str] = None,
+        end_date: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """
+        Get sentiment breakdown for a tool.
+        
+        Query Pattern #1: Aggregate time_period_aggregates table.
+        """
+        try:
+            # Build query based on time filter
+            if hours:
+                cutoff = datetime.utcnow() - timedelta(hours=hours)
+                date_filter = (
+                    f"WHERE c.date >= '{cutoff.strftime('%Y-%m-%d')}'"
+                )
+            elif start_date and end_date:
+                date_filter = (
+                    f"WHERE c.date >= '{start_date}' "
+                    f"AND c.date <= '{end_date}'"
+                )
+            else:
+                # Default to last 24 hours
+                cutoff = datetime.utcnow() - timedelta(hours=24)
+                date_filter = (
+                    f"WHERE c.date >= '{cutoff.strftime('%Y-%m-%d')}'"
+                )
+            
+            query = f"""
+                SELECT
+                    SUM(c.total_mentions) as total_mentions,
+                    SUM(c.positive_count) as positive_count,
+                    SUM(c.negative_count) as negative_count,
+                    SUM(c.neutral_count) as neutral_count,
+                    AVG(c.avg_sentiment) as avg_sentiment
+                FROM c
+                WHERE c.tool_id = @tool_id
+                    AND c.deleted_at = null
+                    AND {date_filter}
+            """
+            
+            container = self.client.get_database_client(
+                settings.cosmos_database
+            ).get_container_client("time_period_aggregates")
+            
+            items = list(container.query_items(
+                query=query,
+                parameters=[{"name": "@tool_id", "value": tool_id}],
+                enable_cross_partition_query=True
+            ))
+            
+            if not items or not items[0]:
+                return {
+                    "total_mentions": 0,
+                    "positive_count": 0,
+                    "negative_count": 0,
+                    "neutral_count": 0,
+                    "avg_sentiment": 0.0
+                }
+            
+            return items[0]
+            
+        except Exception as e:
+            logger.error(f"Error getting tool sentiment {tool_id}: {e}")
+            raise
+    
+    async def compare_tools(
+        self,
+        tool_ids: List[str],
+        hours: Optional[int] = None,
+        start_date: Optional[str] = None,
+        end_date: Optional[str] = None
+    ) -> List[Dict[str, Any]]:
+        """
+        Get sentiment data for multiple tools in parallel.
+        
+        Query Pattern #2: Multiple tool sentiment queries executed
+        concurrently. Uses asyncio.gather() for performance.
+        
+        Args:
+            tool_ids: List of tool IDs to compare
+            hours: Number of hours to look back (optional)
+            start_date: Start date for filtering (optional)
+            end_date: End date for filtering (optional)
+        
+        Returns:
+            List of sentiment dicts, one per tool (same order as
+            tool_ids)
+        """
+        try:
+            # Execute all sentiment queries in parallel
+            sentiments = await asyncio.gather(*[
+                self.get_tool_sentiment(tool_id, hours, start_date, end_date)
+                for tool_id in tool_ids
+            ])
+            
+            # Add tool_id to each result for frontend convenience
+            for tool_id, sentiment in zip(tool_ids, sentiments):
+                sentiment["tool_id"] = tool_id
+            
+            return sentiments
+            
+        except Exception as e:
+            logger.error(f"Error comparing tools {tool_ids}: {e}")
+            raise
+    
+    async def get_tool_timeseries(
+        self,
+        tool_id: str,
+        start_date: str,
+        end_date: str
+    ) -> List[Dict[str, Any]]:
+        """
+        Get time series data for a tool.
+        
+        Query Pattern #3: Query time_period_aggregates by date range.
+        """
+        try:
+            query = """
+                SELECT
+                    c.date,
+                    c.total_mentions,
+                    c.positive_count,
+                    c.negative_count,
+                    c.neutral_count,
+                    c.avg_sentiment
+                FROM c
+                WHERE c.tool_id = @tool_id
+                    AND c.date >= @start_date
+                    AND c.date <= @end_date
+                    AND c.deleted_at = null
+                ORDER BY c.date ASC
+            """
+            
+            container = self.client.get_database_client(
+                settings.cosmos_database
+            ).get_container_client("time_period_aggregates")
+            
+            items = list(container.query_items(
+                query=query,
+                parameters=[
+                    {"name": "@tool_id", "value": tool_id},
+                    {"name": "@start_date", "value": start_date},
+                    {"name": "@end_date", "value": end_date}
+                ],
+                enable_cross_partition_query=True
+            ))
+            
+            return items
+            
+        except Exception as e:
+            logger.error(
+                f"Error getting tool timeseries {tool_id}: {e}"
+            )
+            raise
+    
+    async def get_pending_tools(self) -> List[Dict[str, Any]]:
+        """Get tools pending approval."""
+        try:
+            query = "SELECT * FROM c WHERE c.status = 'pending'"
+            
+            container = self.client.get_database_client(
+                settings.cosmos_database
+            ).get_container_client("ai_tools")
+            
+            items = list(container.query_items(
+                query=query,
+                enable_cross_partition_query=True
+            ))
+            
+            return items
+        except Exception as e:
+            logger.error(f"Error getting pending tools: {e}")
+            return []
+    
+    async def query_items(
+        self,
+        container_name: str,
+        query: str,
+        parameters: Optional[List[Dict[str, Any]]] = None
+    ) -> List[Dict[str, Any]]:
+        """Generic query method for any container."""
+        try:
+            container = self.client.get_database_client(
+                settings.cosmos_database
+            ).get_container_client(container_name)
+            
+            items = list(container.query_items(
+                query=query,
+                parameters=parameters or [],
+                enable_cross_partition_query=True
+            ))
+            
+            return items
+        except Exception as e:
+            logger.error(
+                f"Error querying {container_name}: {e}"
+            )
+            return []
+    
+    async def upsert_item(
+        self,
+        container_name: str,
+        item: Dict[str, Any]
+    ) -> Dict[str, Any]:
+        """Generic upsert method for any container."""
+        try:
+            container = self.client.get_database_client(
+                settings.cosmos_database
+            ).get_container_client(container_name)
+            
+            result = container.upsert_item(body=item)
+            return result
+        except Exception as e:
+            logger.error(
+                f"Error upserting to {container_name}: {e}"
+            )
+            raise
+    
+    async def delete_item(
+        self,
+        container_name: str,
+        item_id: str,
+        partition_key: str
+    ) -> None:
+        """
+        Delete an item from a container.
+        
+        Args:
+            container_name: Name of the container
+            item_id: Item identifier (document id)
+            partition_key: Partition key value
+        """
+        try:
+            container = self.client.get_database_client(
+                settings.cosmos_database
+            ).get_container_client(container_name)
+            
+            container.delete_item(item=item_id, partition_key=partition_key)
+            
+            logger.debug(
+                "Item deleted",
+                container=container_name,
+                item_id=item_id
+            )
+        except Exception as e:
+            logger.error(
+                f"Error deleting from {container_name}: {e}",
+                exc_info=True
+            )
+            raise
 
 
 # Global database instance

@@ -9,8 +9,12 @@ import os
 from ..services import db, ai_agent
 from ..services.health import app_state
 from ..models import RedditPost, SentimentScore, TrendingTopic
+from .tools import router as tools_router
 
 router = APIRouter()
+
+# Include AI Tools router
+router.include_router(tools_router)
 
 
 class QueryRequest(BaseModel):

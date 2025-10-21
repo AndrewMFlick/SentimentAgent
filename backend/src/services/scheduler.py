@@ -86,6 +86,37 @@ class CollectionScheduler:
             replace_existing=True
         )
         
+        # Schedule daily sentiment aggregation (00:05 UTC)
+        self.scheduler.add_job(
+            self.compute_daily_aggregates,
+            trigger='cron',
+            hour=0,
+            minute=5,
+            id='daily_aggregation',
+            name='Compute daily sentiment aggregates',
+            replace_existing=True
+        )
+        
+        # Schedule tool auto-detection (hourly)
+        self.scheduler.add_job(
+            self.check_tool_auto_detection,
+            trigger=IntervalTrigger(hours=1),
+            id='tool_auto_detection',
+            name='Check for auto-detection candidates',
+            replace_existing=True
+        )
+        
+        # Schedule sentiment data cleanup (02:00 UTC)
+        self.scheduler.add_job(
+            self.cleanup_sentiment_data,
+            trigger='cron',
+            hour=2,
+            minute=0,
+            id='sentiment_cleanup',
+            name='Clean up old sentiment aggregates',
+            replace_existing=True
+        )
+        
         self.scheduler.start()
         self.is_running = True
         
@@ -340,6 +371,147 @@ class CollectionScheduler:
             logger.info(msg)
         except Exception as e:
             logger.error(f"Trending analysis failed: {e}")
+    
+    async def compute_daily_aggregates(self):
+        """Compute daily sentiment aggregates for all tools."""
+        start_time = datetime.utcnow()
+        logger.info("Starting daily sentiment aggregation")
+        try:
+            from .sentiment_aggregator import sentiment_aggregator
+            
+            if sentiment_aggregator:
+                aggregates = await sentiment_aggregator.compute_daily_aggregates()
+                execution_time = (
+                    datetime.utcnow() - start_time
+                ).total_seconds()
+                
+                logger.info(
+                    "Daily aggregation completed",
+                    tool_count=len(aggregates),
+                    execution_time_s=round(execution_time, 2),
+                    status="success"
+                )
+            else:
+                logger.warning("Sentiment aggregator not initialized")
+        except Exception as e:
+            execution_time = (
+                datetime.utcnow() - start_time
+            ).total_seconds()
+            logger.error(
+                "Daily aggregation failed",
+                error=str(e),
+                execution_time_s=round(execution_time, 2),
+                status="failed",
+                exc_info=True
+            )
+    
+    async def check_tool_auto_detection(self):
+        """Check for tools that should be auto-queued for approval."""
+        start_time = datetime.utcnow()
+        logger.info("Checking for auto-detection candidates")
+        try:
+            from .tool_manager import tool_manager
+            
+            if tool_manager:
+                candidates = await tool_manager.check_auto_detection()
+                execution_time = (
+                    datetime.utcnow() - start_time
+                ).total_seconds()
+                
+                logger.info(
+                    "Auto-detection check completed",
+                    tools_queued=len(candidates),
+                    execution_time_s=round(execution_time, 2),
+                    status="success"
+                )
+            else:
+                logger.warning("Tool manager not initialized")
+        except Exception as e:
+            execution_time = (
+                datetime.utcnow() - start_time
+            ).total_seconds()
+            logger.error(
+                "Tool auto-detection failed",
+                error=str(e),
+                execution_time_s=round(execution_time, 2),
+                status="failed",
+                exc_info=True
+            )
+    
+    async def cleanup_sentiment_data(self):
+        """Clean up old sentiment aggregates based on retention policy."""
+        logger.info("Starting sentiment data cleanup")
+        try:
+            from datetime import timedelta
+            
+            # Step 1: Soft delete aggregates older than retention period
+            cutoff_date = (
+                datetime.utcnow() -
+                timedelta(days=settings.sentiment_retention_days)
+            ).strftime('%Y-%m-%d')
+            
+            query_soft = """
+                SELECT c.id, c.tool_id, c.date
+                FROM c
+                WHERE c.date < @cutoff_date
+                    AND c.deleted_at = null
+            """
+            
+            items_to_soft_delete = await db.query_items(
+                "time_period_aggregates",
+                query_soft,
+                parameters=[{"name": "@cutoff_date", "value": cutoff_date}]
+            )
+            
+            # Mark as deleted
+            soft_deleted_count = 0
+            for item in items_to_soft_delete:
+                item["deleted_at"] = datetime.utcnow().isoformat()
+                await db.upsert_item("time_period_aggregates", item)
+                soft_deleted_count += 1
+            
+            # Step 2: Hard delete aggregates soft-deleted 30+ days ago
+            hard_delete_cutoff = (
+                datetime.utcnow() -
+                timedelta(days=30)
+            ).isoformat()
+            
+            query_hard = """
+                SELECT c.id, c.tool_id, c.date, c.deleted_at
+                FROM c
+                WHERE c.deleted_at != null
+                    AND c.deleted_at < @hard_delete_cutoff
+            """
+            
+            items_to_hard_delete = await db.query_items(
+                "time_period_aggregates",
+                query_hard,
+                parameters=[
+                    {"name": "@hard_delete_cutoff", "value": hard_delete_cutoff}
+                ]
+            )
+            
+            # Permanently delete from database
+            hard_deleted_count = 0
+            for item in items_to_hard_delete:
+                await db.delete_item(
+                    "time_period_aggregates",
+                    item["id"],
+                    item["tool_id"]  # partition key
+                )
+                hard_deleted_count += 1
+            
+            logger.info(
+                "Sentiment cleanup completed",
+                soft_deleted=soft_deleted_count,
+                hard_deleted=hard_deleted_count,
+                retention_days=settings.sentiment_retention_days
+            )
+        except Exception as e:
+            logger.error(
+                f"Sentiment data cleanup failed: {e}",
+                exc_info=True
+            )
 
 
 # Global scheduler instance

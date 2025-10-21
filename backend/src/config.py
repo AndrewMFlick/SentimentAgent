@@ -44,6 +44,11 @@ class Settings(BaseSettings):
     
     # Data Retention
     data_retention_days: int = 90
+    sentiment_retention_days: int = 90  # AI tools sentiment aggregates
+    
+    # AI Tool Detection
+    tool_detection_threshold: float = 0.7  # Min confidence
+    tool_auto_approve_threshold: int = 50  # Mentions in 7 days
     
     # API
     api_host: str = "0.0.0.0"

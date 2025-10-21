@@ -1,7 +1,16 @@
 import React, { useEffect, useState } from 'react';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { api } from '../services/api';
-import { DashboardData } from '../types';
+import { DashboardData, AITool } from '../types';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, PieChart, Pie, Cell } from 'recharts';
+import { ToolSentimentCard } from './ToolSentimentCard';
+import { ToolComparison } from './ToolComparison';
+import { SentimentTimeSeries } from './SentimentTimeSeries';
+import { TimeRangeFilter } from './TimeRangeFilter';
+import { useTools, useToolSentiment, useToolComparison, useTimeSeries, TimeRangeValue } from '../services/toolApi';
+
+// Create a client
+const queryClient = new QueryClient();
 
 const COLORS = {
   positive: '#4ade80',
@@ -9,13 +18,276 @@ const COLORS = {
   neutral: '#94a3b8'
 };
 
-export const Dashboard: React.FC = () => {
+// Time series section with tool selector and date range
+const TimeSeriesSection: React.FC<{
+  tools: AITool[];
+}> = ({ tools }) => {
+  const [selectedToolId, setSelectedToolId] = useState<string>('');
+  const [showChart, setShowChart] = useState(false);
+  
+  // Default to last 30 days
+  const today = new Date();
+  const thirtyDaysAgo = new Date(today);
+  thirtyDaysAgo.setDate(today.getDate() - 30);
+  
+  const [startDate, setStartDate] = useState(
+    thirtyDaysAgo.toISOString().split('T')[0]
+  );
+  const [endDate, setEndDate] = useState(
+    today.toISOString().split('T')[0]
+  );
+
+  const { data, isLoading, error } = useTimeSeries(
+    showChart ? selectedToolId : null,
+    startDate,
+    endDate
+  );
+
+  const handleShowChart = () => {
+    if (selectedToolId) {
+      setShowChart(true);
+    }
+  };
+
+  const handleReset = () => {
+    setSelectedToolId('');
+    setShowChart(false);
+  };
+
+  if (tools.length === 0) {
+    return null;
+  }
+
+  return (
+    <div className="mt-12 bg-gray-50 p-6 rounded-lg">
+      <h2 className="text-2xl font-bold mb-6">
+        Sentiment Trends Over Time
+      </h2>
+
+      {/* Tool and date selector */}
+      <div className="mb-6">
+        <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-4">
+          <div>
+            <label
+              htmlFor="timeseries-tool-select"
+              className="block text-sm font-medium mb-2"
+            >
+              Select Tool
+            </label>
+            <select
+              id="timeseries-tool-select"
+              value={selectedToolId}
+              onChange={(e) => setSelectedToolId(e.target.value)}
+              className="w-full border rounded px-3 py-2"
+            >
+              <option value="">Choose a tool...</option>
+              {tools.map((tool) => (
+                <option key={tool.id} value={tool.id}>
+                  {tool.name}
+                </option>
+              ))}
+            </select>
+          </div>
+
+          <div>
+            <label
+              htmlFor="timeseries-start-date"
+              className="block text-sm font-medium mb-2"
+            >
+              Start Date
+            </label>
+            <input
+              id="timeseries-start-date"
+              type="date"
+              value={startDate}
+              onChange={(e) => setStartDate(e.target.value)}
+              className="w-full border rounded px-3 py-2"
+            />
+          </div>
+
+          <div>
+            <label
+              htmlFor="timeseries-end-date"
+              className="block text-sm font-medium mb-2"
+            >
+              End Date
+            </label>
+            <input
+              id="timeseries-end-date"
+              type="date"
+              value={endDate}
+              onChange={(e) => setEndDate(e.target.value)}
+              className="w-full border rounded px-3 py-2"
+            />
+          </div>
+
+          <div className="flex items-end gap-2">
+            <button
+              onClick={handleShowChart}
+              disabled={!selectedToolId}
+              className={`px-6 py-2 rounded font-semibold ${
+                selectedToolId
+                  ? 'bg-blue-600 text-white hover:bg-blue-700'
+                  : 'bg-gray-300 text-gray-500 cursor-not-allowed'
+              }`}
+            >
+              View Trends
+            </button>
+            {showChart && (
+              <button
+                onClick={handleReset}
+                className="px-6 py-2 rounded border border-gray-300 hover:bg-gray-50"
+              >
+                Reset
+              </button>
+            )}
+          </div>
+        </div>
+
+        <p className="text-sm text-gray-600">
+          View daily sentiment trends for up to 90 days
+        </p>
+      </div>
+
+      {/* Time series chart */}
+      {showChart && (
+        <SentimentTimeSeries
+          timeSeries={data || null}
+          loading={isLoading}
+          error={
+            error ? 'Failed to load time series data' : null
+          }
+        />
+      )}
+    </div>
+  );
+};
+
+// Tool comparison section with multi-select
+const ToolComparisonSection: React.FC<{
+  tools: AITool[];
+  timeRange: TimeRangeValue;
+}> = ({ tools, timeRange }) => {
+  const [selectedToolIds, setSelectedToolIds] = useState<string[]>([]);
+  const [showComparison, setShowComparison] = useState(false);
+
+  const { data, isLoading, error } = useToolComparison(
+    selectedToolIds,
+    {
+      hours: timeRange.hours,
+      startDate: timeRange.startDate,
+      endDate: timeRange.endDate
+    }
+  );
+
+  const handleToolToggle = (toolId: string) => {
+    setSelectedToolIds((prev) =>
+      prev.includes(toolId)
+        ? prev.filter((id) => id !== toolId)
+        : [...prev, toolId]
+    );
+  };
+
+  const handleCompare = () => {
+    if (selectedToolIds.length >= 2) {
+      setShowComparison(true);
+    }
+  };
+
+  const handleReset = () => {
+    setSelectedToolIds([]);
+    setShowComparison(false);
+  };
+
+  if (tools.length < 2) {
+    return null;
+  }
+
+  return (
+    <div className="mt-12 bg-gray-50 p-6 rounded-lg">
+      <h2 className="text-2xl font-bold mb-6">Compare AI Tools</h2>
+
+      {/* Tool selector */}
+      <div className="mb-6">
+        <p className="text-sm text-gray-600 mb-3">
+          Select 2 or more tools to compare sentiment:
+        </p>
+        <div className="flex flex-wrap gap-2 mb-4">
+          {tools.map((tool) => (
+            <button
+              key={tool.id}
+              onClick={() => handleToolToggle(tool.id)}
+              className={`px-4 py-2 rounded border transition-colors ${
+                selectedToolIds.includes(tool.id)
+                  ? 'bg-blue-500 text-white border-blue-600'
+                  : 'bg-white text-gray-700 border-gray-300 hover:bg-gray-50'
+              }`}
+            >
+              {tool.name}
+            </button>
+          ))}
+        </div>
+
+        <div className="flex gap-2">
+          <button
+            onClick={handleCompare}
+            disabled={selectedToolIds.length < 2}
+            className={`px-6 py-2 rounded font-semibold ${
+              selectedToolIds.length >= 2
+                ? 'bg-blue-600 text-white hover:bg-blue-700'
+                : 'bg-gray-300 text-gray-500 cursor-not-allowed'
+            }`}
+          >
+            Compare ({selectedToolIds.length} selected)
+          </button>
+          {showComparison && (
+            <button
+              onClick={handleReset}
+              className="px-6 py-2 rounded border border-gray-300 hover:bg-gray-50"
+            >
+              Reset
+            </button>
+          )}
+        </div>
+      </div>
+
+      {/* Comparison results */}
+      {showComparison && (
+        <div className="bg-white p-6 rounded-lg">
+          {isLoading && (
+            <div className="text-center py-8">
+              Loading comparison...
+            </div>
+          )}
+
+          {error && (
+            <div className="text-red-600 text-center py-8">
+              Failed to load comparison data
+            </div>
+          )}
+
+          {data && <ToolComparison comparison={data} />}
+        </div>
+      )}
+    </div>
+  );
+};
+
+const DashboardContent: React.FC = () => {
   const [data, setData] = useState<DashboardData | null>(null);
   const [selectedSubreddit, setSelectedSubreddit] = useState<string>('all');
   const [subreddits, setSubreddits] = useState<string[]>([]);
-  const [timeWindow, setTimeWindow] = useState<number>(24);
   const [loading, setLoading] = useState<boolean>(true);
   const [error, setError] = useState<string | null>(null);
+  
+  // Time range state
+  const [timeRange, setTimeRange] = useState<TimeRangeValue>({
+    preset: '24h',
+    hours: 24
+  });
+
+  // Fetch AI tools
+  const { data: toolsData, isLoading: toolsLoading, error: toolsError } = useTools();
 
   useEffect(() => {
     loadSubreddits();
@@ -26,7 +298,7 @@ export const Dashboard: React.FC = () => {
     // Refresh every 5 minutes
     const interval = setInterval(loadData, 5 * 60 * 1000);
     return () => clearInterval(interval);
-  }, [selectedSubreddit, timeWindow]);
+  }, [selectedSubreddit, timeRange]);
 
   const loadSubreddits = async () => {
     try {
@@ -42,7 +314,8 @@ export const Dashboard: React.FC = () => {
     setError(null);
     try {
       const subreddit = selectedSubreddit === 'all' ? undefined : selectedSubreddit;
-      const result = await api.getSentimentStats(subreddit, timeWindow);
+      const hours = timeRange.hours || 24;
+      const result = await api.getSentimentStats(subreddit, hours);
       setData(result);
     } catch (err) {
       setError('Failed to load sentiment data');
@@ -92,13 +365,14 @@ export const Dashboard: React.FC = () => {
       <h1 className="text-4xl font-bold mb-8">Reddit Sentiment Analysis Dashboard</h1>
 
       {/* Filters */}
-      <div className="mb-8 flex gap-4">
+      <div className="mb-8 grid grid-cols-1 md:grid-cols-2 gap-4">
         <div>
-          <label className="block text-sm font-medium mb-2">Subreddit</label>
+          <label htmlFor="subreddit-select" className="block text-sm font-medium mb-2">Subreddit</label>
           <select
+            id="subreddit-select"
             value={selectedSubreddit}
             onChange={(e) => setSelectedSubreddit(e.target.value)}
-            className="border rounded px-4 py-2"
+            className="border rounded px-4 py-2 w-full"
           >
             <option value="all">All Subreddits</option>
             {subreddits.map(sub => (
@@ -107,19 +381,11 @@ export const Dashboard: React.FC = () => {
           </select>
         </div>
         
-        <div>
-          <label className="block text-sm font-medium mb-2">Time Window</label>
-          <select
-            value={timeWindow}
-            onChange={(e) => setTimeWindow(Number(e.target.value))}
-            className="border rounded px-4 py-2"
-          >
-            <option value={1}>Last Hour</option>
-            <option value={6}>Last 6 Hours</option>
-            <option value={24}>Last 24 Hours</option>
-            <option value={168}>Last Week</option>
-          </select>
-        </div>
+        <TimeRangeFilter
+          value={timeRange}
+          onChange={setTimeRange}
+          maxDays={90}
+        />
       </div>
 
       {/* Stats Cards */}
@@ -215,6 +481,71 @@ export const Dashboard: React.FC = () => {
       <div className="mt-4 text-sm text-gray-500 text-right">
         Last updated: {new Date(data.timestamp).toLocaleString()}
       </div>
+
+      {/* AI Tools Sentiment Section */}
+      <div className="mt-12">
+        <h2 className="text-2xl font-bold mb-6">AI Developer Tools Sentiment</h2>
+        
+        {toolsLoading && (
+          <div className="text-center py-8">Loading AI tools...</div>
+        )}
+        
+        {toolsError && (
+          <div className="text-red-600 text-center py-8">
+            Failed to load AI tools
+          </div>
+        )}
+        
+        {toolsData && toolsData.tools && (
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+            {toolsData.tools.map((tool) => (
+              <ToolSentimentCardWrapper
+                key={tool.id}
+                toolId={tool.id}
+                timeRange={timeRange}
+              />
+            ))}
+          </div>
+        )}
+      </div>
+
+      {/* Tool Comparison Section */}
+      <ToolComparisonSection
+        tools={toolsData?.tools || []}
+        timeRange={timeRange}
+      />
+
+      {/* Time Series Section */}
+      <TimeSeriesSection tools={toolsData?.tools || []} />
     </div>
+  );
+};
+
+// Wrapper component for individual tool sentiment cards
+const ToolSentimentCardWrapper: React.FC<{
+  toolId: string;
+  timeRange: TimeRangeValue;
+}> = ({ toolId, timeRange }) => {
+  const { data, isLoading, error } = useToolSentiment(toolId, {
+    hours: timeRange.hours,
+    startDate: timeRange.startDate,
+    endDate: timeRange.endDate
+  });
+  
+  return (
+    <ToolSentimentCard
+      sentiment={data || null}
+      loading={isLoading}
+      error={error ? 'Failed to load sentiment data' : null}
+    />
+  );
+};
+
+// Main Dashboard component wrapped with QueryClientProvider
+export const Dashboard: React.FC = () => {
+  return (
+    <QueryClientProvider client={queryClient}>
+      <DashboardContent />
+    </QueryClientProvider>
   );
 };

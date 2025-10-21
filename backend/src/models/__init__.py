@@ -46,6 +46,10 @@ class SentimentScore(BaseModel):
     neutral_score: float = Field(default=0.0, ge=0.0, le=1.0, description="Neutral sentiment component")
     analysis_method: str = Field(..., description="Analysis method: VADER or LLM")
     analyzed_at: datetime = Field(default_factory=datetime.utcnow, description="Analysis timestamp")
+    detected_tool_ids: list[str] = Field(
+        default_factory=list,
+        description="AI tool IDs detected in content"
+    )
 
 
 class AITool(BaseModel):

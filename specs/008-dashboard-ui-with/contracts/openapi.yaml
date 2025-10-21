@@ -1,0 +1,489 @@
+openapi: 3.0.3
+info:
+  title: AI Tools Sentiment Analysis API
+  description: API endpoints for tool-specific sentiment tracking, comparison, and time series analysis
+  version: 1.0.0
+  contact:
+    name: SentimentAgent API
+servers:
+  - url: http://localhost:8000/api/v1
+    description: Local development server
+  - url: https://api.sentimentagent.com/api/v1
+    description: Production server
+
+paths:
+  /tools:
+    get:
+      summary: List all approved AI tools
+      description: Returns list of all tools approved for sentiment tracking
+      operationId: listTools
+      tags:
+        - Tools
+      responses:
+        '200':
+          description: List of approved tools
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  tools:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/AITool'
+                  total:
+                    type: integer
+                    example: 5
+
+  /tools/{tool_id}/sentiment:
+    get:
+      summary: Get sentiment breakdown for a specific tool
+      description: Returns positive/negative/neutral counts and percentages for a tool within time range (P1 requirement)
+      operationId: getToolSentiment
+      tags:
+        - Tools
+      parameters:
+        - name: tool_id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: hours
+          in: query
+          description: Time window in hours (default 720 = 30 days)
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 2160
+            default: 720
+        - name: start_date
+          in: query
+          description: Start date (ISO 8601 format, alternative to hours)
+          required: false
+          schema:
+            type: string
+            format: date
+        - name: end_date
+          in: query
+          description: End date (ISO 8601 format, alternative to hours)
+          required: false
+          schema:
+            type: string
+            format: date
+      responses:
+        '200':
+          description: Tool sentiment breakdown
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ToolSentiment'
+        '404':
+          description: Tool not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /tools/compare:
+    get:
+      summary: Compare sentiment between multiple tools
+      description: Side-by-side sentiment comparison for 2+ tools (P2 requirement)
+      operationId: compareTools
+      tags:
+        - Tools
+      parameters:
+        - name: tool_ids
+          in: query
+          description: Comma-separated list of tool IDs to compare
+          required: true
+          schema:
+            type: string
+            example: "uuid1,uuid2,uuid3"
+        - name: hours
+          in: query
+          description: Time window in hours
+          required: false
+          schema:
+            type: integer
+            default: 720
+      responses:
+        '200':
+          description: Tool comparison results
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ToolComparison'
+        '400':
+          description: Invalid tool IDs or missing required parameters
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /tools/{tool_id}/timeseries:
+    get:
+      summary: Get sentiment time series for a tool
+      description: Returns daily sentiment aggregates over time (P2 requirement)
+      operationId: getToolTimeSeries
+      tags:
+        - Tools
+      parameters:
+        - name: tool_id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: start_date
+          in: query
+          required: true
+          description: Start date (ISO 8601)
+          schema:
+            type: string
+            format: date
+        - name: end_date
+          in: query
+          required: true
+          description: End date (ISO 8601)
+          schema:
+            type: string
+            format: date
+        - name: granularity
+          in: query
+          description: Aggregation granularity
+          required: false
+          schema:
+            type: string
+            enum: [daily, weekly]
+            default: daily
+      responses:
+        '200':
+          description: Time series data
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TimeSeries'
+        '404':
+          description: Tool not found
+
+  /tools/last_updated:
+    get:
+      summary: Get last update timestamp across all tools
+      description: Used by frontend to poll for changes (FR-011 requirement)
+      operationId: getLastUpdated
+      tags:
+        - Tools
+      responses:
+        '200':
+          description: Last update timestamp
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  last_updated:
+                    type: string
+                    format: date-time
+                    example: "2025-10-20T22:30:00Z"
+
+  /admin/tools/pending:
+    get:
+      summary: List pending tool approvals
+      description: Admin endpoint to view auto-detected tools awaiting approval (FR-014)
+      operationId: listPendingTools
+      tags:
+        - Admin
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: List of pending tools
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  pending_tools:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/PendingTool'
+        '401':
+          description: Unauthorized - admin auth required
+
+  /admin/tools/{tool_id}/approve:
+    post:
+      summary: Approve a pending tool
+      description: Admin action to approve auto-detected tool (FR-012)
+      operationId: approveTool
+      tags:
+        - Admin
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: tool_id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Tool approved successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AITool'
+        '404':
+          description: Tool not found
+        '400':
+          description: Tool not in pending status
+
+  /admin/tools/{tool_id}/reject:
+    post:
+      summary: Reject a pending tool
+      description: Admin action to reject auto-detected tool (FR-012)
+      operationId: rejectTool
+      tags:
+        - Admin
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: tool_id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        description: Rejection reason
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                reason:
+                  type: string
+                  example: "False positive - not an AI tool"
+      responses:
+        '200':
+          description: Tool rejected successfully
+        '404':
+          description: Tool not found
+
+components:
+  schemas:
+    AITool:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+          example: "GitHub Copilot"
+        vendor:
+          type: string
+          example: "GitHub/Microsoft"
+        category:
+          type: string
+          enum: [code_assistant, chat_bot, other]
+        aliases:
+          type: array
+          items:
+            type: string
+          example: ["copilot", "co-pilot", "github copilot"]
+        status:
+          type: string
+          enum: [pending, approved, rejected]
+        created_at:
+          type: string
+          format: date-time
+
+    ToolSentiment:
+      type: object
+      properties:
+        tool_id:
+          type: string
+          format: uuid
+        tool_name:
+          type: string
+        time_window:
+          type: object
+          properties:
+            start_date:
+              type: string
+              format: date
+            end_date:
+              type: string
+              format: date
+            hours:
+              type: integer
+        statistics:
+          type: object
+          properties:
+            total_mentions:
+              type: integer
+              example: 1250
+            positive:
+              type: object
+              properties:
+                count:
+                  type: integer
+                  example: 750
+                percentage:
+                  type: number
+                  format: float
+                  example: 60.0
+            negative:
+              type: object
+              properties:
+                count:
+                  type: integer
+                  example: 300
+                percentage:
+                  type: number
+                  example: 24.0
+            neutral:
+              type: object
+              properties:
+                count:
+                  type: integer
+                  example: 200
+                percentage:
+                  type: number
+                  example: 16.0
+            avg_sentiment:
+              type: number
+              format: float
+              example: 0.342
+              description: Compound score -1.0 to 1.0
+        timestamp:
+          type: string
+          format: date-time
+
+    ToolComparison:
+      type: object
+      properties:
+        time_window:
+          type: object
+          properties:
+            hours:
+              type: integer
+            start_date:
+              type: string
+              format: date
+            end_date:
+              type: string
+              format: date
+        tools:
+          type: array
+          items:
+            type: object
+            properties:
+              tool_id:
+                type: string
+                format: uuid
+              tool_name:
+                type: string
+              statistics:
+                $ref: '#/components/schemas/ToolSentiment/properties/statistics'
+        deltas:
+          type: array
+          description: Pairwise sentiment differences
+          items:
+            type: object
+            properties:
+              tool_a:
+                type: string
+                example: "GitHub Copilot"
+              tool_b:
+                type: string
+                example: "Jules AI"
+              positive_delta:
+                type: number
+                example: 15.5
+                description: "Percentage point difference"
+              avg_sentiment_delta:
+                type: number
+                example: 0.12
+
+    TimeSeries:
+      type: object
+      properties:
+        tool_id:
+          type: string
+          format: uuid
+        tool_name:
+          type: string
+        granularity:
+          type: string
+          enum: [daily, weekly]
+        data_points:
+          type: array
+          items:
+            type: object
+            properties:
+              date:
+                type: string
+                format: date
+              total_mentions:
+                type: integer
+              positive_count:
+                type: integer
+              negative_count:
+                type: integer
+              neutral_count:
+                type: integer
+              avg_sentiment:
+                type: number
+                format: float
+
+    PendingTool:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        aliases:
+          type: array
+          items:
+            type: string
+        mention_count:
+          type: integer
+          description: Number of mentions that triggered detection
+        first_detected_at:
+          type: string
+          format: date-time
+        sample_mentions:
+          type: array
+          description: Example posts containing this tool
+          items:
+            type: object
+            properties:
+              content_excerpt:
+                type: string
+              subreddit:
+                type: string
+              confidence:
+                type: number
+
+    Error:
+      type: object
+      properties:
+        error:
+          type: string
+        message:
+          type: string
+        details:
+          type: object
+
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
