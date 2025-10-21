@@ -26,34 +26,34 @@ const CustomTooltip = ({ active, payload }: any) => {
     const data = payload[0].payload;
     
     return (
-      <div className="bg-white p-3 border rounded shadow-lg">
+      <div className="glass-card p-4 shadow-glass">
         <p className="font-semibold mb-2">{data.date}</p>
         <div className="space-y-1">
-          <p className="text-sm text-gray-600">
+          <p className="text-sm text-gray-300">
             Total Mentions:{' '}
             <span className="font-semibold">
               {data.total_mentions}
             </span>
           </p>
-          <p className="text-sm text-green-600">
+          <p className="text-sm text-emerald-400">
             Positive:{' '}
             <span className="font-semibold">
               {data.positive_count}
             </span>
           </p>
-          <p className="text-sm text-red-600">
+          <p className="text-sm text-red-400">
             Negative:{' '}
             <span className="font-semibold">
               {data.negative_count}
             </span>
           </p>
-          <p className="text-sm text-gray-600">
+          <p className="text-sm text-gray-300">
             Neutral:{' '}
             <span className="font-semibold">
               {data.neutral_count}
             </span>
           </p>
-          <p className="text-sm text-blue-600 pt-2 border-t">
+          <p className="text-sm text-blue-400 pt-2 border-t">
             Avg Sentiment:{' '}
             <span className="font-semibold">
               {data.avg_sentiment?.toFixed(3) || 'N/A'}
@@ -102,8 +102,8 @@ export const SentimentTimeSeries = ({
 }: SentimentTimeSeriesProps) => {
   if (loading) {
     return (
-      <div className="bg-white p-6 rounded-lg shadow">
-        <div className="text-center py-8 text-gray-500">
+      <div className="glass-card p-8">
+        <div className="text-center py-8 text-gray-300">
           Loading time series data...
         </div>
       </div>
@@ -112,8 +112,8 @@ export const SentimentTimeSeries = ({
 
   if (error) {
     return (
-      <div className="bg-white p-6 rounded-lg shadow">
-        <div className="text-center py-8 text-red-600">
+      <div className="glass-card p-8">
+        <div className="text-center py-8 text-red-400">
           {error}
         </div>
       </div>
@@ -122,8 +122,8 @@ export const SentimentTimeSeries = ({
 
   if (!timeSeries || !timeSeries.data_points.length) {
     return (
-      <div className="bg-white p-6 rounded-lg shadow">
-        <div className="text-center py-8 text-gray-500">
+      <div className="glass-card p-8">
+        <div className="text-center py-8 text-gray-400">
           No time series data available for the selected period
         </div>
       </div>
@@ -134,12 +134,12 @@ export const SentimentTimeSeries = ({
   const sentimentShifts = detectSentimentShifts(timeSeries.data_points);
 
   return (
-    <div className="bg-white p-6 rounded-lg shadow">
-      <div className="mb-4">
-        <h3 className="text-lg font-semibold">
+    <div className="glass-card p-8">
+      <div className="mb-6">
+        <h3 className="text-2xl font-semibold text-white">
           {timeSeries.tool_name} - Sentiment Trends
         </h3>
-        <p className="text-sm text-gray-600">
+        <p className="text-sm text-gray-300">
           {timeSeries.time_period.start} to{' '}
           {timeSeries.time_period.end} (
           {timeSeries.data_points.length} days)
@@ -147,13 +147,13 @@ export const SentimentTimeSeries = ({
         
         {/* Show sentiment shift alerts */}
         {sentimentShifts.length > 0 && (
-          <div className="mt-3 p-3 bg-yellow-50 border border-yellow-200 rounded">
-            <p className="text-sm font-semibold text-yellow-800 mb-2">
+          <div className="mt-4 p-4 bg-yellow-900/20 border border-yellow-700/50 rounded-lg">
+            <p className="text-sm font-semibold text-yellow-400 mb-2">
               ⚠️ Extreme Sentiment Shifts Detected
             </p>
             <div className="space-y-1">
               {sentimentShifts.map((shift, idx) => (
-                <p key={idx} className="text-xs text-yellow-700">
+                <p key={idx} className="text-xs text-yellow-300">
                   {shift.date}: {shift.direction === 'up' ? '📈' : '📉'}{' '}
                   {shift.change > 0 ? '+' : ''}{shift.change.toFixed(2)} sentiment change
                 </p>
@@ -168,21 +168,25 @@ export const SentimentTimeSeries = ({
           data={timeSeries.data_points}
           margin={{ top: 5, right: 30, left: 20, bottom: 5 }}
         >
-          <CartesianGrid strokeDasharray="3 3" />
+          <CartesianGrid strokeDasharray="3 3" stroke="#374151" />
           <XAxis
             dataKey="date"
-            tick={{ fontSize: 12 }}
+            tick={{ fontSize: 12, fill: '#9ca3af' }}
             angle={-45}
             textAnchor="end"
             height={80}
+            stroke="#9ca3af"
           />
           <YAxis
             yAxisId="left"
             label={{
               value: 'Mention Count',
               angle: -90,
-              position: 'insideLeft'
+              position: 'insideLeft',
+              fill: '#9ca3af'
             }}
+            stroke="#9ca3af"
+            tick={{ fill: '#9ca3af' }}
           />
           <YAxis
             yAxisId="right"
@@ -191,11 +195,14 @@ export const SentimentTimeSeries = ({
             label={{
               value: 'Avg Sentiment',
               angle: 90,
-              position: 'insideRight'
+              position: 'insideRight',
+              fill: '#9ca3af'
             }}
+            stroke="#9ca3af"
+            tick={{ fill: '#9ca3af' }}
           />
           <Tooltip content={<CustomTooltip />} />
-          <Legend />
+          <Legend wrapperStyle={{ color: '#9ca3af' }} />
           
           {/* Mention count lines */}
           <Line
@@ -247,7 +254,7 @@ export const SentimentTimeSeries = ({
       {/* Summary stats */}
       <div className="mt-6 grid grid-cols-2 md:grid-cols-4 gap-4">
         <div className="text-center">
-          <p className="text-sm text-gray-600">Total Mentions</p>
+          <p className="text-sm text-gray-300">Total Mentions</p>
           <p className="text-xl font-bold">
             {timeSeries.data_points.reduce(
               (sum, p) => sum + p.total_mentions,
@@ -256,8 +263,8 @@ export const SentimentTimeSeries = ({
           </p>
         </div>
         <div className="text-center">
-          <p className="text-sm text-gray-600">Avg Positive</p>
-          <p className="text-xl font-bold text-green-600">
+          <p className="text-sm text-gray-300">Avg Positive</p>
+          <p className="text-xl font-bold text-emerald-400">
             {(
               (timeSeries.data_points.reduce(
                 (sum, p) => sum + p.positive_count,
@@ -273,8 +280,8 @@ export const SentimentTimeSeries = ({
           </p>
         </div>
         <div className="text-center">
-          <p className="text-sm text-gray-600">Avg Negative</p>
-          <p className="text-xl font-bold text-red-600">
+          <p className="text-sm text-gray-300">Avg Negative</p>
+          <p className="text-xl font-bold text-red-400">
             {(
               (timeSeries.data_points.reduce(
                 (sum, p) => sum + p.negative_count,
@@ -290,8 +297,8 @@ export const SentimentTimeSeries = ({
           </p>
         </div>
         <div className="text-center">
-          <p className="text-sm text-gray-600">Avg Sentiment</p>
-          <p className="text-xl font-bold text-blue-600">
+          <p className="text-sm text-gray-300">Avg Sentiment</p>
+          <p className="text-xl font-bold text-blue-400">
             {(
               timeSeries.data_points.reduce(
                 (sum, p) => sum + (p.avg_sentiment || 0),
