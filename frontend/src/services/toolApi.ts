@@ -222,3 +222,87 @@ export const useRejectTool = (adminToken: string | null) => {
   
   return { rejectTool, isLoading, error };
 };
+
+/**
+ * Hook to link a tool as an alias of another primary tool
+ * 
+ * @param adminToken - Admin authentication token
+ */
+export const useLinkAlias = (adminToken: string | null) => {
+  const [isLoading, setIsLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  
+  const linkAlias = async (aliasToolId: string, primaryToolId: string) => {
+    if (!adminToken) {
+      setError('Admin token is required');
+      return null;
+    }
+    
+    setIsLoading(true);
+    setError(null);
+    
+    try {
+      const result = await api.linkAlias(aliasToolId, primaryToolId, adminToken);
+      return result;
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Failed to link alias';
+      setError(message);
+      throw err;
+    } finally {
+      setIsLoading(false);
+    }
+  };
+  
+  return { linkAlias, isLoading, error };
+};
+
+/**
+ * Hook to unlink a tool alias
+ * 
+ * @param adminToken - Admin authentication token
+ */
+export const useUnlinkAlias = (adminToken: string | null) => {
+  const [isLoading, setIsLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  
+  const unlinkAlias = async (aliasToolId: string) => {
+    if (!adminToken) {
+      setError('Admin token is required');
+      return null;
+    }
+    
+    setIsLoading(true);
+    setError(null);
+    
+    try {
+      const result = await api.unlinkAlias(aliasToolId, adminToken);
+      return result;
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Failed to unlink alias';
+      setError(message);
+      throw err;
+    } finally {
+      setIsLoading(false);
+    }
+  };
+  
+  return { unlinkAlias, isLoading, error };
+};
+
+/**
+ * Hook to fetch all tools for admin management
+ * 
+ * @param adminToken - Admin authentication token
+ */
+export const useAllToolsAdmin = (adminToken: string | null) => {
+  return useQuery({
+    queryKey: ['allToolsAdmin', adminToken],
+    queryFn: () => {
+      if (!adminToken) throw new Error('Admin token is required');
+      return api.getAllToolsAdmin(adminToken);
+    },
+    enabled: !!adminToken,
+    staleTime: 30 * 1000, // 30 seconds
+    refetchInterval: false
+  });
+};

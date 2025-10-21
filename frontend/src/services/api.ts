@@ -193,5 +193,148 @@ export const api = {
       }
     );
     return response.data;
+  },
+
+  // =========================================================================
+  // Admin Tool Management endpoints
+  // =========================================================================
+
+  /**
+   * Create a new AI tool
+   * @param toolData - Tool creation data
+   * @param adminToken - Admin authentication token
+   */
+  createTool: async (toolData: any, adminToken: string): Promise<{ tool: any; message: string }> => {
+    const response = await axios.post(
+      `${API_BASE_URL}/admin/tools`,
+      toolData,
+      {
+        headers: {
+          'X-Admin-Token': adminToken
+        }
+      }
+    );
+    return response.data;
+  },
+
+  /**
+   * List all tools with pagination
+   * @param page - Page number
+   * @param limit - Results per page
+   * @param search - Search query
+   * @param category - Category filter
+   * @param adminToken - Admin authentication token
+   */
+  listAdminTools: async (
+    page: number = 1,
+    limit: number = 20,
+    search: string = '',
+    category: string | null = null,
+    adminToken: string
+  ): Promise<any> => {
+    const params = new URLSearchParams();
+    params.append('page', page.toString());
+    params.append('limit', limit.toString());
+    if (search) params.append('search', search);
+    if (category) params.append('category', category);
+
+    const response = await axios.get(
+      `${API_BASE_URL}/admin/tools?${params}`,
+      {
+        headers: {
+          'X-Admin-Token': adminToken
+        }
+      }
+    );
+    return response.data;
+  },
+
+  /**
+   * Get tool details
+   * @param toolId - Tool identifier
+   * @param adminToken - Admin authentication token
+   */
+  getToolDetails: async (toolId: string, adminToken: string): Promise<any> => {
+    const response = await axios.get(
+      `${API_BASE_URL}/admin/tools/${toolId}`,
+      {
+        headers: {
+          'X-Admin-Token': adminToken
+        }
+      }
+    );
+    return response.data;
+  },
+
+  /**
+   * Update a tool
+   * @param toolId - Tool identifier
+   * @param updates - Fields to update
+   * @param adminToken - Admin authentication token
+   */
+  updateTool: async (toolId: string, updates: any, adminToken: string): Promise<{ tool: any; message: string }> => {
+    const response = await axios.put(
+      `${API_BASE_URL}/admin/tools/${toolId}`,
+      updates,
+      {
+        headers: {
+          'X-Admin-Token': adminToken
+        }
+      }
+    );
+    return response.data;
+  },
+
+  /**
+   * Delete a tool (soft delete)
+   * @param toolId - Tool identifier
+   * @param adminToken - Admin authentication token
+   */
+  deleteTool: async (toolId: string, adminToken: string): Promise<{ message: string }> => {
+    const response = await axios.delete(
+      `${API_BASE_URL}/admin/tools/${toolId}`,
+      {
+        headers: {
+          'X-Admin-Token': adminToken
+        }
+      }
+    );
+    return response.data;
+  },
+
+  /**
+   * Link a tool as an alias to another tool
+   * @param aliasToolId - Tool ID to set as alias
+   * @param primaryToolId - Primary tool ID
+   * @param adminToken - Admin authentication token
+   */
+  linkAlias: async (aliasToolId: string, primaryToolId: string, adminToken: string): Promise<{ alias: any; message: string }> => {
+    const response = await axios.put(
+      `${API_BASE_URL}/admin/tools/${aliasToolId}/alias`,
+      { primary_tool_id: primaryToolId },
+      {
+        headers: {
+          'X-Admin-Token': adminToken
+        }
+      }
+    );
+    return response.data;
+  },
+
+  /**
+   * Remove alias relationship
+   * @param aliasToolId - Alias tool ID
+   * @param adminToken - Admin authentication token
+   */
+  unlinkAlias: async (aliasToolId: string, adminToken: string): Promise<{ message: string }> => {
+    const response = await axios.delete(
+      `${API_BASE_URL}/admin/tools/${aliasToolId}/alias`,
+      {
+        headers: {
+          'X-Admin-Token': adminToken
+        }
+      }
+    );
+    return response.data;
   }
 };

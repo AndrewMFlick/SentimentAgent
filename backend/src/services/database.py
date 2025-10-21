@@ -427,6 +427,73 @@ class DatabaseService:
             return 0
         return float(value) if isinstance(value, (int, float)) else 0
 
+    async def _resolve_tool_alias(self, tool_id: str) -> str:
+        """
+        Resolve a tool ID to its primary tool ID if it's an alias.
+        
+        Args:
+            tool_id: Tool ID (may be alias or primary)
+            
+        Returns:
+            Primary tool ID (same as input if not an alias)
+        """
+        if not self.aliases_container:
+            return tool_id
+            
+        try:
+            query = (
+                "SELECT * FROM ToolAliases ta "
+                "WHERE ta.alias_tool_id = @id AND ta.partitionKey = 'alias'"
+            )
+            items = self.aliases_container.query_items(
+                query=query,
+                parameters=[{"name": "@id", "value": tool_id}]
+            )
+            
+            results = []
+            async for item in items:
+                results.append(item)
+                
+            return results[0]["primary_tool_id"] if results else tool_id
+        except Exception as e:
+            logger.error(f"Error resolving tool alias {tool_id}: {e}")
+            return tool_id
+    
+    async def _get_tool_ids_for_aggregation(self, primary_tool_id: str) -> List[str]:
+        """
+        Get all tool IDs that should be aggregated together (primary + aliases).
+        
+        Args:
+            primary_tool_id: Primary tool ID
+            
+        Returns:
+            List of tool IDs including primary and all its aliases
+        """
+        tool_ids = [primary_tool_id]
+        
+        if not self.aliases_container:
+            return tool_ids
+            
+        try:
+            # Find all aliases pointing to this primary tool
+            query = (
+                "SELECT * FROM ToolAliases ta "
+                "WHERE ta.primary_tool_id = @id AND ta.partitionKey = 'alias'"
+            )
+            items = self.aliases_container.query_items(
+                query=query,
+                parameters=[{"name": "@id", "value": primary_tool_id}]
+            )
+            
+            async for item in items:
+                tool_ids.append(item["alias_tool_id"])
+                
+            logger.debug(f"Tool IDs for aggregation (primary {primary_tool_id}): {tool_ids}")
+            return tool_ids
+        except Exception as e:
+            logger.error(f"Error getting tool IDs for aggregation {primary_tool_id}: {e}")
+            return tool_ids
+
     async def get_sentiment_stats(
         self, subreddit: Optional[str] = None, hours: int = 24
     ) -> Dict[str, Any]:
@@ -697,8 +764,15 @@ class DatabaseService:
         Get sentiment breakdown for a tool.
 
         Query Pattern #1: Aggregate time_period_aggregates table.
+        Resolves aliases to consolidate data under primary tool.
         """
         try:
+            # Resolve alias to primary tool if applicable
+            resolved_tool_id = await self._resolve_tool_alias(tool_id)
+            
+            # Get all tool IDs that should be aggregated (primary + its aliases)
+            tool_ids_to_aggregate = await self._get_tool_ids_for_aggregation(resolved_tool_id)
+            
             # Build query based on time filter
             if hours:
                 cutoff = datetime.utcnow() - timedelta(hours=hours)
@@ -720,7 +794,7 @@ class DatabaseService:
                     SUM(c.neutral_count) as neutral_count,
                     AVG(c.avg_sentiment) as avg_sentiment
                 FROM c
-                WHERE c.tool_id = @tool_id
+                WHERE ARRAY_CONTAINS(@tool_ids, c.tool_id)
                     AND c.deleted_at = null
                     AND {date_filter}
             """
@@ -732,7 +806,7 @@ class DatabaseService:
             items = list(
                 container.query_items(
                     query=query,
-                    parameters=[{"name": "@tool_id", "value": tool_id}],
+                    parameters=[{"name": "@tool_ids", "value": tool_ids_to_aggregate}],
                     enable_cross_partition_query=True,
                 )
             )
