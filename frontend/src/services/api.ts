@@ -193,5 +193,62 @@ export const api = {
       }
     );
     return response.data;
+  },
+
+  /**
+   * Link a tool as an alias of another primary tool
+   * @param toolId - ID of tool to set as alias
+   * @param primaryToolId - ID of primary tool
+   * @param adminToken - Admin authentication token
+   */
+  linkAlias: async (
+    toolId: string,
+    primaryToolId: string,
+    adminToken: string
+  ): Promise<{
+    message: string;
+    alias_tool: { id: string; name: string };
+    primary_tool: { id: string; name: string };
+  }> => {
+    const response = await axios.put(
+      `${API_BASE_URL}/admin/tools/${toolId}/alias`,
+      { primary_tool_id: primaryToolId },
+      {
+        headers: {
+          'X-Admin-Token': adminToken
+        }
+      }
+    );
+    return response.data;
+  },
+
+  /**
+   * Remove alias relationship for a tool
+   * @param toolId - ID of alias tool to unlink
+   * @param adminToken - Admin authentication token
+   */
+  unlinkAlias: async (toolId: string, adminToken: string): Promise<{ message: string }> => {
+    const response = await axios.delete(
+      `${API_BASE_URL}/admin/tools/${toolId}/alias`,
+      {
+        headers: {
+          'X-Admin-Token': adminToken
+        }
+      }
+    );
+    return response.data;
+  },
+
+  /**
+   * Get all tools (for admin management)
+   * @param adminToken - Admin authentication token
+   */
+  getAllToolsAdmin: async (adminToken: string): Promise<{ tools: AITool[] }> => {
+    const response = await axios.get(`${API_BASE_URL}/tools`, {
+      headers: {
+        'X-Admin-Token': adminToken
+      }
+    });
+    return response.data;
   }
 };
