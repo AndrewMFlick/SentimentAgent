@@ -10,6 +10,7 @@ All Feature #008 code is committed and in place, but the feature appears "missin
 ## What's Implemented ✅
 
 ### Backend APIs (100% Complete)
+
 - ✅ `/api/v1/tools` - List approved AI tools
 - ✅ `/api/v1/tools/{tool_id}/sentiment` - Get tool-specific sentiment
 - ✅ `/api/v1/tools/compare` - Compare multiple tools
@@ -20,6 +21,7 @@ All Feature #008 code is committed and in place, but the feature appears "missin
 - ✅ `/api/v1/admin/tools/{tool_id}/reject` - Admin: reject tool
 
 ### Frontend Components (100% Complete)
+
 - ✅ `ToolSentimentCard.tsx` - Display tool sentiment
 - ✅ `ToolComparison.tsx` - Compare tools side-by-side
 - ✅ `SentimentTimeSeries.tsx` - Time series charts
@@ -28,16 +30,19 @@ All Feature #008 code is committed and in place, but the feature appears "missin
 - ✅ `toolApi.ts` - React hooks for data fetching
 
 ### Database Models (100% Complete)
+
 - ✅ `ai_tool.py` - AI Tool model
 - ✅ `tool_mention.py` - Tool Mention model
 - ✅ `time_aggregate.py` - Time Period Aggregate model
 
 ### Services (100% Complete)
+
 - ✅ `tool_detector.py` - Detect tool mentions in posts
 - ✅ `tool_manager.py` - Manage AI tools
 - ✅ `sentiment_aggregator.py` - Aggregate sentiment data
 
 ### Background Jobs (100% Complete)
+
 - ✅ Daily aggregation job
 - ✅ Cleanup/retention job
 - ✅ Tool detection job
@@ -47,7 +52,8 @@ All Feature #008 code is committed and in place, but the feature appears "missin
 ### 1. **Database Containers** (May Need Creation)
 
 Check if these CosmosDB containers exist:
-```
+
+```text
 sentiment_analysis/
   ├── ai_tools (✅ should exist)
   ├── tool_mentions (❌ likely empty)
@@ -57,12 +63,14 @@ sentiment_analysis/
 ### 2. **Seed Data** (Required)
 
 **Action Required**: Run the seed script
+
 ```bash
 cd backend
 python3 scripts/seed_tools.py
 ```
 
 This creates:
+
 - GitHub Copilot (id: `github-copilot`, status: `approved`)
 - Jules AI (id: `jules-ai`, status: `approved`)
 
@@ -75,17 +83,20 @@ The tool detector scans **existing** `sentiment_scores` for tool mentions.
 **Solution Options**:
 
 **Option A**: Wait for Data Collection (Automatic)
+
 - The Reddit collector runs every 30 minutes (see scheduler)
 - Once posts are collected and analyzed, tool detection will run
 - Background aggregation will compute daily stats
 
 **Option B**: Manual Trigger (Immediate)
+
 ```bash
 # Trigger data collection immediately
 curl -X POST http://localhost:8000/api/v1/admin/collect
 ```
 
 **Option C**: Create Sample Tool Mentions (For Testing)
+
 ```python
 # backend/scripts/create_sample_mentions.py
 import asyncio
@@ -175,6 +186,7 @@ if __name__ == "__main__":
 ## Quick Start Guide 🚀
 
 ### Step 1: Ensure Backend is Running
+
 ```bash
 cd backend
 ./start.sh
@@ -182,17 +194,20 @@ cd backend
 ```
 
 ### Step 2: Seed Initial Tools
+
 ```bash
 cd backend
 python3 scripts/seed_tools.py
 ```
 
 ### Step 3: Check Tool List
+
 ```bash
 curl http://localhost:8000/api/v1/tools | jq
 ```
 
 **Expected Output**:
+
 ```json
 {
   "tools": [
@@ -213,19 +228,23 @@ curl http://localhost:8000/api/v1/tools | jq
 ```
 
 ### Step 4: Option A - Wait for Real Data
+
 Just wait. The scheduler will:
+
 1. Collect Reddit posts (every 30 minutes)
 2. Analyze sentiment
 3. Detect tool mentions
 4. Aggregate daily stats (at 00:05 UTC)
 
 ### Step 4: Option B - Create Sample Data (Instant Results)
+
 ```bash
 cd backend
 python3 scripts/create_sample_mentions.py  # Create this file from above
 ```
 
 ### Step 5: Access Frontend
+
 ```bash
 cd frontend
 npm run dev
@@ -244,21 +263,26 @@ npm run dev
 ## Troubleshooting
 
 ### "No tools found" in frontend
+
 **Cause**: Seeds script not run or failed  
 **Fix**: Run `python3 scripts/seed_tools.py`
 
 ### "No sentiment data" in tool cards
+
 **Cause**: No tool mentions detected yet  
-**Fix**: 
+**Fix**:
+
 - Wait for data collection (automatic)
 - OR trigger collection: `curl -X POST http://localhost:8000/api/v1/admin/collect`
 - OR create sample data (see Option C above)
 
 ### CosmosDB container errors
+
 **Cause**: Containers not created  
 **Fix**: Run `python3 scripts/create_containers.py`
 
 ### Frontend 404 errors
+
 **Cause**: Backend not running or wrong port  
 **Fix**: Check `vite.config.ts` proxy points to `http://localhost:8000`
 
@@ -276,11 +300,13 @@ npm run dev
 ## Next Actions
 
 **Priority 1** (Required for Feature to Work):
+
 1. ✅ Run seed script: `python3 scripts/seed_tools.py`
 2. ⚠️ Wait for Reddit data OR create sample data
 3. ⚠️ Wait for aggregation job OR manually trigger
 
 **Priority 2** (Nice to Have):
+
 1. Add more AI tools (Cursor, Claude, etc.) via admin UI
 2. Monitor background jobs logs for errors
 3. Test time range filtering on frontend

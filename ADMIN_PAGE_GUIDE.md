@@ -1,11 +1,13 @@
 # Admin Page Usage Guide
 
 ## Overview
+
 The Admin Tool Approval page (`/admin`) allows administrators to review and approve/reject AI tools that have been auto-detected from Reddit discussions.
 
 ## How It Works
 
 ### Step 1: Authentication
+
 1. Navigate to `http://localhost:5173/admin`
 2. You'll see an admin token input form
 3. **Enter ANY text as the admin token** (e.g., "admin", "test", "password")
@@ -13,7 +15,9 @@ The Admin Tool Approval page (`/admin`) allows administrators to review and appr
    - In production, this would validate against a real auth system
 
 ### Step 2: View Pending Tools
+
 Once authenticated, you'll see:
+
 - **Pending Tools Table**: List of tools awaiting approval
   - Tool Name
   - Description
@@ -25,12 +29,14 @@ Once authenticated, you'll see:
 ### Step 3: Approve or Reject Tools
 
 **Approve a Tool:**
+
 - Click the green "✓ Approve" button
 - Tool status changes from "pending" → "approved"
 - Tool will now appear on the main dashboard
 - Sentiment data will be calculated and displayed
 
 **Reject a Tool:**
+
 - Click the red "✗ Reject" button  
 - Tool status changes from "pending" → "rejected"
 - Tool will NOT appear on dashboard
@@ -106,6 +112,7 @@ curl -H "X-Admin-Token: admin" http://localhost:8000/api/v1/admin/tools/pending 
 ```
 
 **Expected Response (if no pending tools):**
+
 ```json
 {
   "pending_tools": [],
@@ -114,6 +121,7 @@ curl -H "X-Admin-Token: admin" http://localhost:8000/api/v1/admin/tools/pending 
 ```
 
 **Expected Response (with pending tools):**
+
 ```json
 {
   "pending_tools": [
@@ -134,7 +142,7 @@ curl -H "X-Admin-Token: admin" http://localhost:8000/api/v1/admin/tools/pending 
 ### Option 3: Full Integration Test
 
 1. **Create a pending tool** (Option 1 script)
-2. **Open admin page**: http://localhost:5173/admin
+2. **Open admin page**: <http://localhost:5173/admin>
 3. **Enter token**: "admin" (or any text)
 4. **You should see**: Cursor Editor in the pending tools table
 5. **Click "✓ Approve"**: Tool becomes approved
@@ -143,9 +151,9 @@ curl -H "X-Admin-Token: admin" http://localhost:8000/api/v1/admin/tools/pending 
 
 ## Admin Page UI Components
 
-### When Authenticated:
+### When Authenticated
 
-```
+```text
 ┌─────────────────────────────────────────────────────────┐
 │  Admin Tool Approval                        [Logout]    │
 ├─────────────────────────────────────────────────────────┤
@@ -170,9 +178,9 @@ curl -H "X-Admin-Token: admin" http://localhost:8000/api/v1/admin/tools/pending 
 └─────────────────────────────────────────────────────────┘
 ```
 
-### When NOT Authenticated:
+### When NOT Authenticated
 
-```
+```text
 ┌─────────────────────────────────────────────────────────┐
 │  Admin Tool Approval                                    │
 │                                                         │
@@ -189,11 +197,13 @@ curl -H "X-Admin-Token: admin" http://localhost:8000/api/v1/admin/tools/pending 
 ## Security Notes
 
 ⚠️ **Current Implementation** (Development Only):
+
 - Accepts any non-empty token
 - No real authentication
 - No token validation
 
 ✅ **Production Requirements** (TODO):
+
 - Implement OAuth 2.0 or JWT tokens
 - Validate tokens against auth service
 - Add role-based access control (RBAC)
@@ -203,21 +213,26 @@ curl -H "X-Admin-Token: admin" http://localhost:8000/api/v1/admin/tools/pending 
 ## Troubleshooting
 
 ### "No pending tools to display"
+
 **Cause**: All tools are either "approved" or "rejected"  
 **Fix**: Create a pending tool using Option 1 script above
 
 ### "Admin authentication required"
+
 **Cause**: Token not sent in request header  
 **Fix**: Make sure you entered a token and clicked Submit
 
 ### Admin page shows loading forever
+
 **Cause**: Backend not running  
-**Fix**: 
+**Fix**:
+
 ```bash
 cd backend && ./start.sh
 ```
 
 ### 401 Unauthorized error
+
 **Cause**: Empty or missing token  
 **Fix**: Enter any non-empty value as token
 

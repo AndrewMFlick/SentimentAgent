@@ -8,6 +8,7 @@
 **Organization**: Tasks are grouped by user story to enable independent implementation and testing of each story.
 
 ## Format: `[ID] [P?] [Story] Description`
+
 - **[P]**: Can run in parallel (different files, no dependencies)
 - **[Story]**: Which user story this task belongs to (e.g., US1, US2, US3, US4)
 - Include exact file paths in descriptions
@@ -54,7 +55,7 @@
 
 ### Tests for User Story 1 (TDD)
 
-**NOTE: Write these tests FIRST, ensure they FAIL before implementation**
+**NOTE:** Write these tests FIRST, ensure they FAIL before implementation
 
 - [ ] T015 [P] [US1] Unit test for get_tool_sentiment() in `backend/tests/unit/test_database_tools.py` - verify correct query execution and data aggregation
 - [ ] T016 [P] [US1] Integration test for GET /tools/{tool_id}/sentiment endpoint in `backend/tests/integration/test_tool_api.py` - verify 200 response with correct JSON structure
@@ -154,13 +155,13 @@
 
 **Purpose**: Automated tool discovery and approval workflow
 
-### Tests
+### Phase 7 Tests
 
 - [ ] T053 [P] Unit test for tool_detector in `backend/tests/unit/test_tool_detector.py` - verify keyword matching, confidence scoring, and false positive handling
 - [ ] T054 [P] Unit test for tool_manager in `backend/tests/unit/test_tool_manager.py` - verify approval/rejection workflow and status transitions
 - [x] T055 [P] Integration test for admin endpoints in `backend/tests/integration/test_admin_api.py` - verify approval/rejection updates database and triggers backfill (7/7 tests passing)
 
-### Implementation
+### Phase 7 Implementation
 
 - [x] T056 [US-Admin] Implement detect_tools_in_content() method in `backend/src/services/tool_detector.py` with regex patterns and fuzzy matching
 - [x] T057 [US-Admin] Implement check_auto_detection() background job in `backend/src/services/tool_manager.py` to scan for 50+ mentions in 7 days (already existed)
@@ -181,12 +182,12 @@
 
 **Purpose**: Automated data aggregation and retention management
 
-### Tests
+### Phase 8 Tests
 
 - [x] T066 [P] Integration test for daily aggregation job in `backend/tests/integration/test_aggregation_job.py` - verify aggregates computed correctly for all tools (5/5 tests passing)
 - [x] T067 [P] Integration test for cleanup job in `backend/tests/integration/test_retention.py` - verify soft delete and hard delete after 30 days (5/5 tests passing)
 
-### Implementation
+### Phase 8 Implementation
 
 - [x] T068 [US-Jobs] Implement compute_daily_aggregates() job in `backend/src/services/sentiment_aggregator.py` to run at 00:05 UTC (already existed, scheduled in scheduler.py)
 - [x] T069 [US-Jobs] Add compute_aggregate_for_date() method to calculate stats from tool_mentions and sentiment_scores (already existed in SentimentAggregator)
@@ -244,6 +245,7 @@
 ### Within Each Phase
 
 **Phase 2 (Foundational):**
+
 - T004-T007 (models) can run in parallel [P]
 - T008 (containers) depends on models complete
 - T009 (seeding) depends on T008
@@ -252,6 +254,7 @@
 - T014 (scheduler) depends on T013
 
 **Phase 3 (User Story 1):**
+
 - T015-T017 (tests) must be written first, run in parallel [P]
 - T018 (database method) before T020 (API endpoint)
 - T019 (list endpoint) can run parallel to T018 [P]
@@ -261,11 +264,13 @@
 - T026-T027 (polish) after T025
 
 **Phase 4-6 (User Stories 2-4):**
+
 - Similar pattern: Tests first → Backend → Frontend → Integration
 
 ### Parallel Opportunities
 
 **Maximum Parallelization (with 4 developers after Foundational phase):**
+
 - Developer A: User Story 1 (P1) - MVP
 - Developer B: User Story 2 (P2) - Comparison
 - Developer C: User Story 3 (P2) - Time Series
@@ -319,6 +324,7 @@ Each phase adds value without breaking previous functionality.
 **Week 1-1.5**: Everyone works on Setup + Foundational together
 
 **Week 1.5 onwards** (after Foundational complete):
+
 - **Developer A (Backend Lead)**: User Story 1 backend (T018-T021) → User Story 2 backend (T030-T032)
 - **Developer B (Frontend Lead)**: User Story 1 frontend (T022-T025) → User Story 2 frontend (T033-T036)
 - **Developer C (Features)**: User Story 3 (T037-T045) → User Story 4 (T046-T052)
@@ -331,6 +337,7 @@ Each phase adds value without breaking previous functionality.
 ## Task Summary
 
 **Total Tasks**: 85
+
 - **Phase 1 (Setup)**: 3 tasks
 - **Phase 2 (Foundational)**: 11 tasks (BLOCKING)
 - **Phase 3 (US1 - P1)**: 13 tasks (MVP)

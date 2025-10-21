@@ -11,12 +11,14 @@ Thank you for your interest in contributing! This document provides guidelines f
 ## Code Style
 
 ### Python (Backend)
+
 - Follow PEP 8 style guide
 - Use type hints for function parameters and returns
 - Document functions with docstrings
 - Run linting before committing
 
 ### TypeScript (Frontend)
+
 - Follow the existing code style
 - Use functional components with hooks
 - Add prop types for components
@@ -25,6 +27,7 @@ Thank you for your interest in contributing! This document provides guidelines f
 ## Testing
 
 ### Backend Tests
+
 ```bash
 cd backend
 pytest
@@ -32,6 +35,7 @@ pytest --cov=src  # With coverage
 ```
 
 ### Adding New Tests
+
 - Place tests in `backend/tests/`
 - Name test files as `test_*.py`
 - Use descriptive test names
@@ -51,6 +55,7 @@ pytest --cov=src  # With coverage
 ## Commit Messages
 
 Use clear, descriptive commit messages:
+
 - `feat: Add new feature`
 - `fix: Fix bug in sentiment analysis`
 - `docs: Update README`
@@ -60,6 +65,7 @@ Use clear, descriptive commit messages:
 ## Feature Requests
 
 Open an issue with:
+
 - Clear description of the feature
 - Use case / motivation
 - Proposed implementation (optional)
@@ -67,6 +73,7 @@ Open an issue with:
 ## Bug Reports
 
 Include:
+
 - Clear description of the bug
 - Steps to reproduce
 - Expected vs actual behavior

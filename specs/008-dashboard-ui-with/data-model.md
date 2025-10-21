@@ -105,9 +105,11 @@
 | deleted_at | datetime | No | Soft delete timestamp | For retention policy |
 
 **Relationships**:
+
 - Belongs to AI Tool (many-to-one)
 
 **Indexes**:
+
 - Primary: `id` (composite key)
 - Filter: `tool_id` (for tool-specific queries)
 - Filter: `date` (for time range queries)
@@ -115,11 +117,13 @@
 - Filter: `deleted_at IS NULL` (for active records only)
 
 **Constraints**:
+
 - `total_mentions = positive_count + negative_count + neutral_count`
 - `date` must be in the past (no future aggregates)
 - Unique constraint on `(tool_id, date)` to prevent duplicates
 
 **Computed Fields** (not stored):
+
 - `positive_percentage = (positive_count / total_mentions) * 100`
 - `negative_percentage = (negative_count / total_mentions) * 100`
 - `neutral_percentage = (neutral_count / total_mentions) * 100`
@@ -139,6 +143,7 @@
 **Purpose**: Link sentiment scores to detected tools for faster aggregation queries.
 
 **Migration**:
+
 - Add field to existing `sentiment_scores` container
 - Default value: `[]` (empty list)
 - Backfill existing records via migration script (scan for tool mentions)
@@ -353,17 +358,20 @@ ORDER BY created_at ASC
 ## Data Validation Rules
 
 ### Tool Detection Quality
+
 - Min confidence: 0.8 (80% certainty)
 - Max 10 tool mentions per post (prevent spam detection)
 - Case-insensitive matching with word boundaries
 
 ### Aggregation Consistency
+
 - Daily job runs at 00:05 UTC
 - Recompute last 2 days to handle late-arriving data
 - Validate: `total_mentions = sum(positive + negative + neutral)`
 - Alert if aggregate values drift > 5% from raw counts
 
 ### Retention Policy
+
 - Soft delete: Set `deleted_at` timestamp
 - Hard delete: 30 days after soft delete
 - Admin override: Exclude specific tools from retention
@@ -373,18 +381,23 @@ ORDER BY created_at ASC
 ## Performance Considerations
 
 ### Indexes
+
 - All foreign keys indexed for fast joins
 - Composite indexes for time-based queries
 - Partition keys aligned with query patterns (tool_id)
 
 ### Query Optimization
+
 - Pre-computed aggregates avoid full table scans
 - Time range filters use indexed `date` field
 - Limit results to 90 days max (SC-007: < 3s queries)
 
 ### Storage Estimates
+
 - AI Tools: ~50 records × 1KB = 50KB (negligible)
 - Tool Mentions: 10,000/tool/90days × 5 tools × 1KB = ~50MB
 - Time Period Aggregates: 90 days × 5 tools × 0.5KB = ~225KB
 
-**Total: ~50MB additional storage for 90-day retention**
+**Total:** ~50MB additional storage for 90-day retention
+
+---

@@ -9,6 +9,7 @@
 This feature adds tool-specific sentiment tracking to the SentimentAgent dashboard. Users can view sentiment breakdowns for AI tools (GitHub Copilot, Jules, etc.), compare tools side-by-side, and track sentiment trends over time.
 
 **Key Capabilities**:
+
 - View sentiment breakdown per AI tool (positive/negative/neutral percentages)
 - Compare sentiment between 2+ tools
 - Visualize sentiment trends with time series charts
@@ -494,6 +495,7 @@ python scripts/compute_aggregates.py --tool-id <uuid> --date 2025-10-20
 **Cause**: Date range exceeds 90-day retention or no data for period
 
 **Solution**:
+
 - Check date range is within last 90 days
 - Verify aggregates exist: `SELECT * FROM time_period_aggregates WHERE tool_id = '...' AND date >= '...'`
 
@@ -502,6 +504,7 @@ python scripts/compute_aggregates.py --tool-id <uuid> --date 2025-10-20
 **Cause**: Low confidence threshold or overly broad aliases
 
 **Solution**:
+
 - Increase confidence threshold in tool_detector.py
 - Refine tool aliases to be more specific
 - Review and reject false positives via admin interface
@@ -524,5 +527,5 @@ python scripts/compute_aggregates.py --tool-id <uuid> --date 2025-10-20
 - **Data Model**: `specs/008-dashboard-ui-with/data-model.md`
 - **API Contract**: `specs/008-dashboard-ui-with/contracts/openapi.yaml`
 - **Research Decisions**: `specs/008-dashboard-ui-with/research.md`
-- **Recharts Docs**: https://recharts.org/
-- **React Query Docs**: https://tanstack.com/query/latest/docs/react/overview
+- **Recharts Docs**: <https://recharts.org/>
+- **React Query Docs**: <https://tanstack.com/query/latest/docs/react/overview>

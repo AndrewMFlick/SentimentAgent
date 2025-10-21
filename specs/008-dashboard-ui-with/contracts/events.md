@@ -39,10 +39,12 @@ Scheduler (00:05 UTC)
 ```
 
 **Data Dependencies**:
+
 - Input: `tool_mentions`, `sentiment_scores` (yesterday's data)
 - Output: `time_period_aggregates` (new/updated records)
 
 **Error Handling**:
+
 - Catch-log-continue pattern: If one tool fails, continue with others
 - Retry failed tools with exponential backoff (max 3 attempts)
 - Alert admin if > 20% of tools fail
@@ -84,6 +86,7 @@ Scheduler (hourly)
 ```
 
 **Data Dependencies**:
+
 - Input: `sentiment_scores` (last 7 days), `ai_tools` (existing tools)
 - Output: `ai_tools` (new pending records)
 
@@ -111,6 +114,7 @@ Scheduler (hourly)
 ```
 
 **Error Handling**:
+
 - Log errors but don't crash (detection is non-critical)
 - Skip records with parsing errors
 - Rate limit: Max 10 new pending tools per run (prevent spam)
@@ -163,6 +167,7 @@ Admin POST /approve
 ```
 
 **Side Effects**:
+
 - Tool appears in `/api/v1/tools` list
 - Dashboard polls detect new tool (via `last_updated` endpoint)
 - Historical data backfill runs asynchronously
@@ -210,6 +215,7 @@ Admin POST /reject
 ```
 
 **Side Effects**:
+
 - Tool never appears in dashboard
 - Auto-detection skips this tool in future runs
 - No historical data processing
@@ -267,6 +273,7 @@ Scheduler (02:00 UTC)
 ```
 
 **Error Handling**:
+
 - Fail-safe: Never delete data newer than retention period
 - Transaction: Rollback if delete count > expected (data corruption check)
 - Alert admin if storage freed < expected (may indicate cleanup failure)
@@ -333,6 +340,7 @@ All events are logged to structured logs with the following format:
 ```
 
 **Log Levels**:
+
 - `INFO`: Normal job execution, tool approvals
 - `WARNING`: Detection rate limits hit, retry attempts
 - `ERROR`: Job failures, validation errors
@@ -427,6 +435,7 @@ async def test_daily_aggregation_job(db, scheduler):
 ## Summary
 
 This feature adds 6 key event types:
+
 1. **Daily Aggregation** (scheduled): Precompute sentiment statistics
 2. **Tool Auto-Detection** (scheduled): Find new tools to track
 3. **Tool Approval** (admin action): Enable tool in dashboard
