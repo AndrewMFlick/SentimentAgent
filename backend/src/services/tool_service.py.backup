@@ -29,8 +29,8 @@ class ToolService:
         Initialize ToolService.
 
         Args:
-            tools_container: Cosmos DB container for Tools (sync)
-            aliases_container: Cosmos DB container for ToolAliases (sync)
+            tools_container: Cosmos DB container for Tools
+            aliases_container: Cosmos DB container for ToolAliases
         """
         self.tools_container = tools_container
         self.aliases_container = aliases_container
@@ -70,7 +70,6 @@ class ToolService:
             "updated_at": now
         }
 
-        # Sync operation - no await
         self.tools_container.create_item(body=tool)
         logger.info(
             "Tool created",
@@ -97,7 +96,6 @@ class ToolService:
                 "WHERE t.id = @id AND t.partitionKey = 'tool' "
                 "AND t.status != 'deleted'"
             )
-            # Sync iteration - no await
             items = self.tools_container.query_items(
                 query=query,
                 parameters=[{"name": "@id", "value": tool_id}]
@@ -126,7 +124,6 @@ class ToolService:
                 "WHERE t.name = @name AND t.partitionKey = 'tool' "
                 "AND t.status != 'deleted'"
             )
-            # Sync iteration - no await
             items = self.tools_container.query_items(
                 query=query,
                 parameters=[{"name": "@name", "value": name}]
@@ -175,9 +172,10 @@ class ToolService:
         query += f" ORDER BY t.name OFFSET {offset} LIMIT {limit}"
 
         try:
-            # Sync iteration - no await
             items = self.tools_container.query_items(query=query)
-            results = list(items)
+            results = []
+            async for item in items:
+                results.append(item)
 
             logger.info(
                 "Tools listed",
@@ -218,9 +216,10 @@ class ToolService:
             query += f" AND t.category = '{category}'"
 
         try:
-            # Sync iteration - no await
             items = self.tools_container.query_items(query=query)
-            results = list(items)
+            results = []
+            async for item in items:
+                results.append(item)
             return results[0] if results else 0
         except Exception as e:
             logger.error("Failed to count tools", error=str(e))
@@ -257,8 +256,7 @@ class ToolService:
 
         tool["updated_at"] = datetime.now(timezone.utc).isoformat()
 
-        # Sync operation - no await
-        self.tools_container.replace_item(item=tool_id, body=tool)
+        await self.tools_container.replace_item(item=tool_id, body=tool)
         logger.info("Tool updated", tool_id=tool_id, updates=update_dict)
 
         return tool
@@ -279,8 +277,7 @@ class ToolService:
             return False
 
         if hard_delete:
-            # Sync operation - no await
-            self.tools_container.delete_item(
+            await self.tools_container.delete_item(
                 item=tool_id,
                 partition_key="tool"
             )
@@ -288,8 +285,7 @@ class ToolService:
         else:
             tool["status"] = "deleted"
             tool["updated_at"] = datetime.now(timezone.utc).isoformat()
-            # Sync operation - no await
-            self.tools_container.replace_item(item=tool_id, body=tool)
+            await self.tools_container.replace_item(item=tool_id, body=tool)
             logger.info("Tool soft deleted", tool_id=tool_id)
 
         return True
@@ -340,8 +336,7 @@ class ToolService:
             "created_by": created_by
         }
 
-        # Sync operation - no await
-        self.aliases_container.create_item(body=alias)
+        await self.aliases_container.create_item(body=alias)
         logger.info(
             "Alias created",
             alias_id=alias_id,
@@ -368,13 +363,14 @@ class ToolService:
             "SELECT * FROM ToolAliases ta "
             "WHERE ta.primary_tool_id = @id AND ta.partitionKey = 'alias'"
         )
-        # Sync iteration - no await
         items = self.aliases_container.query_items(
             query=query,
             parameters=[{"name": "@id", "value": primary_tool_id}]
         )
 
-        results = list(items)
+        results = []
+        async for item in items:
+            results.append(item)
 
         return results
 
@@ -389,8 +385,7 @@ class ToolService:
             True if removed, False if not found
         """
         try:
-            # Sync operation - no await
-            self.aliases_container.delete_item(
+            await self.aliases_container.delete_item(
                 item=alias_id,
                 partition_key="alias"
             )
@@ -413,13 +408,14 @@ class ToolService:
             "SELECT * FROM ToolAliases ta "
             "WHERE ta.alias_tool_id = @id AND ta.partitionKey = 'alias'"
         )
-        # Sync iteration - no await
         items = self.aliases_container.query_items(
             query=query,
             parameters=[{"name": "@id", "value": tool_id}]
         )
 
-        results = list(items)
+        results = []
+        async for item in items:
+            results.append(item)
 
         return results[0]["primary_tool_id"] if results else tool_id
 
@@ -453,13 +449,14 @@ class ToolService:
                 "SELECT * FROM ToolAliases ta "
                 "WHERE ta.alias_tool_id = @id AND ta.partitionKey = 'alias'"
             )
-            # Sync iteration - no await
             items = self.aliases_container.query_items(
                 query=query,
                 parameters=[{"name": "@id", "value": current_id}]
             )
 
-            results = list(items)
+            results = []
+            async for item in items:
+                results.append(item)
 
             if results:
                 current_id = results[0]["primary_tool_id"]
