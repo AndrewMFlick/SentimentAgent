@@ -6,12 +6,16 @@
  * 2. Tool Management - Manually add new tools
  */
 import { useState } from 'react';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { usePendingTools, useApproveTool, useRejectTool } from '../services/toolApi';
 import { AdminToolManagement } from './AdminToolManagement';
 
+// Create a client
+const queryClient = new QueryClient();
+
 type TabType = 'approval' | 'management';
 
-export const AdminPanel = () => {
+const AdminPanelContent = () => {
   const [activeTab, setActiveTab] = useState<TabType>('management');
   const [adminToken, setAdminToken] = useState<string>('');
   const [isTokenSet, setIsTokenSet] = useState(false);
@@ -291,5 +295,13 @@ export const AdminPanel = () => {
         </div>
       </div>
     </div>
+  );
+};
+
+export const AdminPanel = () => {
+  return (
+    <QueryClientProvider client={queryClient}>
+      <AdminPanelContent />
+    </QueryClientProvider>
   );
 };
