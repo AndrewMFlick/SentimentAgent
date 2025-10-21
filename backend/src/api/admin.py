@@ -1,14 +1,14 @@
-"""Admin API endpoints for tool approval workflow."""
+"""Admin API endpoints for tool approval workflow and tool management."""
 
 from typing import Optional
 
 import structlog
-from fastapi import APIRouter, Header, HTTPException, Depends
+from fastapi import APIRouter, Header, HTTPException, Query, Depends
 
 from ..services.database import db
 from ..services.tool_manager import tool_manager
 from ..services.tool_service import ToolService
-from ..models.tool import AliasLinkRequest
+from ..models.tool import ToolCreateRequest, ToolUpdateRequest, AliasLinkRequest
 
 logger = structlog.get_logger(__name__)
 
@@ -17,13 +17,17 @@ router = APIRouter(prefix="/admin", tags=["Admin"])
 
 # Dependency to get ToolService instance
 async def get_tool_service() -> ToolService:
-    """Get ToolService instance with database containers."""
-    if not db.tools_container or not db.aliases_container:
-        raise HTTPException(
-            status_code=500,
-            detail="Database containers not initialized"
-        )
-    return ToolService(db.tools_container, db.aliases_container)
+    """Get ToolService instance from database containers."""
+    if not db.client or not db.database:
+        raise HTTPException(status_code=500, detail="Database not initialized")
+    
+    tools_container = db.database.get_container_client("Tools")
+    aliases_container = db.database.get_container_client("ToolAliases")
+    
+    return ToolService(
+        tools_container=tools_container,
+        aliases_container=aliases_container
+    )
 
 
 # Simple authentication middleware (check for admin token)
@@ -253,26 +257,322 @@ async def reject_tool(tool_id: str, x_admin_token: Optional[str] = Header(None))
         raise HTTPException(status_code=500, detail="Failed to reject tool")
 
 
-@router.put("/tools/{tool_id}/alias")
-async def link_alias(
-    tool_id: str,
-    link: AliasLinkRequest,
+# =========================================================================
+# Tool Management Endpoints (CRUD operations for admin)
+# =========================================================================
+
+
+@router.post("/tools")
+async def create_tool(
+    tool_data: ToolCreateRequest,
     x_admin_token: Optional[str] = Header(None),
     tool_service: ToolService = Depends(get_tool_service)
 ):
     """
-    Link a tool as an alias of another primary tool.
+    Create a new AI tool.
 
-    This consolidates sentiment data for the alias tool under the primary tool.
+    Requires admin authentication.
 
     Args:
-        tool_id: ID of the tool to set as alias
-        link: Request containing primary_tool_id
+        tool_data: Tool creation request data
         x_admin_token: Admin authentication token
-        tool_service: ToolService dependency
 
     Returns:
-        Success message with alias and primary tool details
+        Created tool record
+    """
+    try:
+        # Verify admin access
+        admin_user = verify_admin(x_admin_token)
+
+        logger.info(
+            "Admin creating tool",
+            tool_name=tool_data.name,
+            admin=admin_user
+        )
+
+        # Create tool using ToolService
+        tool = await tool_service.create_tool(tool_data)
+
+        logger.info(
+            "Tool created successfully",
+            tool_id=tool["id"],
+            tool_name=tool["name"],
+            admin=admin_user
+        )
+
+        return {"tool": tool, "message": "Tool created successfully"}
+
+    except ValueError as e:
+        logger.warning(
+            "Tool creation validation error",
+            error=str(e),
+            tool_name=tool_data.name
+        )
+        raise HTTPException(status_code=400, detail=str(e))
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(
+            "Failed to create tool",
+            tool_name=tool_data.name,
+            error=str(e),
+            exc_info=True
+        )
+        raise HTTPException(status_code=500, detail="Failed to create tool")
+
+
+@router.get("/tools")
+async def list_tools(
+    page: int = Query(default=1, ge=1, description="Page number"),
+    limit: int = Query(default=20, ge=1, le=100, description="Results per page"),
+    search: str = Query(default="", description="Search by tool name"),
+    category: Optional[str] = Query(default=None, description="Filter by category"),
+    x_admin_token: Optional[str] = Header(None),
+    tool_service: ToolService = Depends(get_tool_service)
+):
+    """
+    List all tools with pagination and filtering.
+
+    Requires admin authentication.
+
+    Args:
+        page: Page number (1-indexed)
+        limit: Results per page
+        search: Search query
+        category: Category filter
+        x_admin_token: Admin authentication token
+
+    Returns:
+        Paginated list of tools
+    """
+    try:
+        # Verify admin access
+        admin_user = verify_admin(x_admin_token)
+
+        logger.info(
+            "Admin listing tools",
+            page=page,
+            limit=limit,
+            search=search,
+            category=category,
+            admin=admin_user
+        )
+
+        # Get tools and total count
+        tools = await tool_service.list_tools(
+            page=page,
+            limit=limit,
+            search=search,
+            category=category
+        )
+        
+        total = await tool_service.count_tools(
+            search=search,
+            category=category
+        )
+
+        logger.info(
+            "Tools listed successfully",
+            count=len(tools),
+            total=total,
+            admin=admin_user
+        )
+
+        return {
+            "tools": tools,
+            "total": total,
+            "page": page,
+            "limit": limit
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(
+            "Failed to list tools",
+            error=str(e),
+            exc_info=True
+        )
+        raise HTTPException(status_code=500, detail="Failed to list tools")
+
+
+@router.get("/tools/{tool_id}")
+async def get_tool_details(
+    tool_id: str,
+    x_admin_token: Optional[str] = Header(None),
+    tool_service: ToolService = Depends(get_tool_service)
+):
+    """
+    Get details of a specific tool.
+
+    Requires admin authentication.
+
+    Args:
+        tool_id: Tool UUID
+        x_admin_token: Admin authentication token
+
+    Returns:
+        Tool record with aliases
+    """
+    try:
+        # Verify admin access
+        admin_user = verify_admin(x_admin_token)
+
+        logger.info("Admin fetching tool details", tool_id=tool_id, admin=admin_user)
+
+        # Get tool
+        tool = await tool_service.get_tool(tool_id)
+        if not tool:
+            raise HTTPException(status_code=404, detail=f"Tool '{tool_id}' not found")
+
+        # Get aliases
+        aliases = await tool_service.get_aliases(tool_id)
+
+        logger.info(
+            "Tool details retrieved",
+            tool_id=tool_id,
+            alias_count=len(aliases),
+            admin=admin_user
+        )
+
+        return {"tool": tool, "aliases": aliases}
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(
+            "Failed to get tool details",
+            tool_id=tool_id,
+            error=str(e),
+            exc_info=True
+        )
+        raise HTTPException(status_code=500, detail="Failed to retrieve tool details")
+
+
+@router.put("/tools/{tool_id}")
+async def update_tool(
+    tool_id: str,
+    updates: ToolUpdateRequest,
+    x_admin_token: Optional[str] = Header(None),
+    tool_service: ToolService = Depends(get_tool_service)
+):
+    """
+    Update tool details.
+
+    Requires admin authentication.
+
+    Args:
+        tool_id: Tool UUID
+        updates: Fields to update
+        x_admin_token: Admin authentication token
+
+    Returns:
+        Updated tool record
+    """
+    try:
+        # Verify admin access
+        admin_user = verify_admin(x_admin_token)
+
+        logger.info(
+            "Admin updating tool",
+            tool_id=tool_id,
+            updates=updates.dict(exclude_unset=True),
+            admin=admin_user
+        )
+
+        # Update tool
+        tool = await tool_service.update_tool(tool_id, updates)
+        if not tool:
+            raise HTTPException(status_code=404, detail=f"Tool '{tool_id}' not found")
+
+        logger.info(
+            "Tool updated successfully",
+            tool_id=tool_id,
+            admin=admin_user
+        )
+
+        return {"tool": tool, "message": "Tool updated successfully"}
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(
+            "Failed to update tool",
+            tool_id=tool_id,
+            error=str(e),
+            exc_info=True
+        )
+        raise HTTPException(status_code=500, detail="Failed to update tool")
+
+
+@router.delete("/tools/{tool_id}")
+async def delete_tool(
+    tool_id: str,
+    x_admin_token: Optional[str] = Header(None),
+    tool_service: ToolService = Depends(get_tool_service)
+):
+    """
+    Delete a tool (soft delete - sets status to 'deleted').
+
+    Requires admin authentication.
+
+    Args:
+        tool_id: Tool UUID
+        x_admin_token: Admin authentication token
+
+    Returns:
+        Success message
+    """
+    try:
+        # Verify admin access
+        admin_user = verify_admin(x_admin_token)
+
+        logger.info("Admin deleting tool", tool_id=tool_id, admin=admin_user)
+
+        # Delete tool (soft delete)
+        success = await tool_service.delete_tool(tool_id, hard_delete=False)
+        if not success:
+            raise HTTPException(status_code=404, detail=f"Tool '{tool_id}' not found")
+
+        logger.info(
+            "Tool deleted successfully",
+            tool_id=tool_id,
+            admin=admin_user
+        )
+
+        return {"message": "Tool deleted successfully"}
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(
+            "Failed to delete tool",
+            tool_id=tool_id,
+            error=str(e),
+            exc_info=True
+        )
+        raise HTTPException(status_code=500, detail="Failed to delete tool")
+
+
+@router.put("/tools/{tool_id}/alias")
+async def link_alias(
+    tool_id: str,
+    link_request: AliasLinkRequest,
+    x_admin_token: Optional[str] = Header(None),
+    tool_service: ToolService = Depends(get_tool_service)
+):
+    """
+    Link a tool as an alias to another primary tool.
+
+    Requires admin authentication.
+
+    Args:
+        tool_id: Tool ID to set as alias
+        link_request: Primary tool ID
+        x_admin_token: Admin authentication token
+
+    Returns:
+        Created alias relationship
     """
     try:
         # Verify admin access
@@ -281,108 +581,58 @@ async def link_alias(
         logger.info(
             "Admin linking alias",
             alias_tool_id=tool_id,
-            primary_tool_id=link.primary_tool_id,
+            primary_tool_id=link_request.primary_tool_id,
             admin=admin_user
         )
 
-        # Validate both tools exist
-        alias_tool = await tool_service.get_tool(tool_id)
-        primary_tool = await tool_service.get_tool(link.primary_tool_id)
-
-        if not alias_tool or not primary_tool:
-            raise HTTPException(status_code=404, detail="Tool not found")
-
-        # Prevent self-referencing alias
-        if tool_id == link.primary_tool_id:
-            raise HTTPException(
-                status_code=400,
-                detail="Tool cannot be alias of itself"
-            )
-
-        # Check for circular aliases
-        if await tool_service.has_circular_alias(tool_id, link.primary_tool_id):
-            raise HTTPException(
-                status_code=400,
-                detail="Circular alias detected"
-            )
-
-        # Check if alias tool is already a primary for other tools
-        existing_aliases = await tool_service.get_aliases(tool_id)
-        if existing_aliases:
-            raise HTTPException(
-                status_code=400,
-                detail="Alias tool is already primary for other aliases"
-            )
-
-        # Create alias relationship
+        # Create alias
         alias = await tool_service.create_alias(
-            tool_id,
-            link.primary_tool_id,
-            admin_user
-        )
-
-        # Security audit log
-        logger.warning(
-            "AUDIT: Alias linked",
-            action="link_alias",
             alias_tool_id=tool_id,
-            alias_tool_name=alias_tool.get("name"),
-            primary_tool_id=link.primary_tool_id,
-            primary_tool_name=primary_tool.get("name"),
-            admin_user=admin_user,
-            timestamp=__import__("datetime").datetime.utcnow().isoformat(),
-            status="success"
+            primary_tool_id=link_request.primary_tool_id,
+            created_by=admin_user
         )
 
         logger.info(
             "Alias linked successfully",
-            alias_tool=alias_tool.get("name"),
-            primary_tool=primary_tool.get("name"),
+            alias_id=alias["id"],
             admin=admin_user
         )
 
-        return {
-            "message": "Alias linked successfully",
-            "alias_tool": {
-                "id": alias_tool["id"],
-                "name": alias_tool["name"]
-            },
-            "primary_tool": {
-                "id": primary_tool["id"],
-                "name": primary_tool["name"]
-            }
-        }
+        return {"alias": alias, "message": "Alias linked successfully"}
 
+    except ValueError as e:
+        logger.warning(
+            "Alias link validation error",
+            error=str(e),
+            alias_tool_id=tool_id
+        )
+        raise HTTPException(status_code=400, detail=str(e))
     except HTTPException:
         raise
-    except ValueError as e:
-        # Handle validation errors from ToolService
-        raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
         logger.error(
             "Failed to link alias",
-            tool_id=tool_id,
+            alias_tool_id=tool_id,
             error=str(e),
             exc_info=True
         )
-        raise HTTPException(status_code=500, detail="Internal server error")
+        raise HTTPException(status_code=500, detail="Failed to link alias")
 
 
-@router.delete("/tools/{tool_id}/alias")
+@router.delete("/tools/{alias_tool_id}/alias")
 async def unlink_alias(
-    tool_id: str,
+    alias_tool_id: str,
     x_admin_token: Optional[str] = Header(None),
     tool_service: ToolService = Depends(get_tool_service)
 ):
     """
     Remove alias relationship for a tool.
 
-    This will remove the alias link, making the tool independent again.
+    Requires admin authentication.
 
     Args:
-        tool_id: ID of the alias tool to unlink
+        alias_tool_id: Alias tool ID
         x_admin_token: Admin authentication token
-        tool_service: ToolService dependency
 
     Returns:
         Success message
@@ -393,52 +643,42 @@ async def unlink_alias(
 
         logger.info(
             "Admin unlinking alias",
-            alias_tool_id=tool_id,
+            alias_tool_id=alias_tool_id,
             admin=admin_user
         )
 
-        # Find the alias relationship
+        # Find and remove alias
         query = (
             "SELECT * FROM ToolAliases ta "
             "WHERE ta.alias_tool_id = @id AND ta.partitionKey = 'alias'"
         )
-        items = db.aliases_container.query_items(
+        
+        aliases_container = db.database.get_container_client("ToolAliases")
+        items = aliases_container.query_items(
             query=query,
-            parameters=[{"name": "@id", "value": tool_id}]
+            parameters=[{"name": "@id", "value": alias_tool_id}]
         )
 
-        alias = None
+        results = []
         async for item in items:
-            alias = item
-            break
+            results.append(item)
 
-        if not alias:
+        if not results:
             raise HTTPException(
                 status_code=404,
-                detail="No alias relationship found for this tool"
+                detail=f"No alias found for tool '{alias_tool_id}'"
             )
 
         # Remove the alias
-        removed = await tool_service.remove_alias(alias["id"])
-        if not removed:
-            raise HTTPException(
-                status_code=404,
-                detail="Alias relationship not found"
-            )
+        alias_id = results[0]["id"]
+        success = await tool_service.remove_alias(alias_id)
 
-        # Security audit log
-        logger.warning(
-            "AUDIT: Alias unlinked",
-            action="unlink_alias",
-            alias_tool_id=tool_id,
-            admin_user=admin_user,
-            timestamp=__import__("datetime").datetime.utcnow().isoformat(),
-            status="success"
-        )
+        if not success:
+            raise HTTPException(status_code=500, detail="Failed to remove alias")
 
         logger.info(
             "Alias unlinked successfully",
-            alias_tool_id=tool_id,
+            alias_tool_id=alias_tool_id,
             admin=admin_user
         )
 
@@ -449,8 +689,8 @@ async def unlink_alias(
     except Exception as e:
         logger.error(
             "Failed to unlink alias",
-            tool_id=tool_id,
+            alias_tool_id=alias_tool_id,
             error=str(e),
             exc_info=True
         )
-        raise HTTPException(status_code=500, detail="Internal server error")
+        raise HTTPException(status_code=500, detail="Failed to unlink alias")
