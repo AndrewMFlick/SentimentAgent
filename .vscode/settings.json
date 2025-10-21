@@ -29,10 +29,17 @@
     },
     "css.lint.unknownAtRules": "ignore",
     "css.lint.validProperties": [],
+    "extensions.ignoreRecommendations": true,
+    "html.autoClosingTags": false,
+    "html.customData": [],
     "[typescriptreact]": {
         "editor.quickSuggestions": {
             "strings": false
-        }
+        },
+        "editor.defaultFormatter": "dbaeumer.vscode-eslint"
+    },
+    "[typescript]": {
+        "editor.defaultFormatter": "dbaeumer.vscode-eslint"
     },
     "files.exclude": {
         "**/.git": true,
