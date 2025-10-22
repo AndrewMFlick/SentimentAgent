@@ -24,10 +24,12 @@ async def get_tool_service() -> ToolService:
     
     tools_container = db.database.get_container_client("Tools")
     aliases_container = db.database.get_container_client("ToolAliases")
+    admin_logs_container = db.database.get_container_client("AdminActionLogs")
     
     return ToolService(
         tools_container=tools_container,
-        aliases_container=aliases_container
+        aliases_container=aliases_container,
+        admin_logs_container=admin_logs_container
     )
 
 

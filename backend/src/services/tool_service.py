@@ -276,7 +276,14 @@ class ToolService:
             # Sync iteration - no await
             items = self.tools_container.query_items(query=query)
             results = list(items)
-            return results[0] if results else 0
+            if not results:
+                return 0
+            # Handle both plain int and dict response
+            count_value = results[0]
+            if isinstance(count_value, dict):
+                # Extract count from dict (CosmosDB may return {'$1': count})
+                return count_value.get('$1', count_value.get('count', 0))
+            return count_value
         except Exception as e:
             logger.error("Failed to count tools", error=str(e))
             return 0
