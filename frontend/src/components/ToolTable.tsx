@@ -9,6 +9,7 @@ import { useQuery } from '@tanstack/react-query';
 import { Tool, ToolStatus } from '../types';
 import { api } from '../services/api';
 import Pagination from './Pagination';
+import { ToolTableSkeleton } from './ToolTableSkeleton';
 
 interface ToolTableProps {
   adminToken: string;
@@ -81,13 +82,9 @@ export const ToolTable = ({
   const hasNext = data?.pagination?.has_next || false;
   const hasPrev = data?.pagination?.has_prev || false;
 
+  // Show skeleton on initial load
   if (isLoading && tools.length === 0) {
-    return (
-      <div className="flex flex-col items-center py-16 gap-4">
-        <div className="border-4 border-dark-elevated border-t-blue-500 rounded-full w-12 h-12 animate-spin"></div>
-        <p className="text-gray-300">Loading tools...</p>
-      </div>
-    );
+    return <ToolTableSkeleton rows={5} />;
   }
 
   return (

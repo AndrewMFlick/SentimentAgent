@@ -10,6 +10,7 @@
  * - Optional notes field for merge reasoning (T095)
  * - Warning display for vendor/category mismatches (T096)
  * - Success message with sentiment migration count (T100)
+ * - Keyboard shortcut: Esc to close (T113)
  */
 import { useState, useEffect } from 'react';
 
@@ -75,6 +76,23 @@ export const ToolMergeModal = ({
       });
     }
   }, [targetTool]);
+
+  // Keyboard shortcut: Esc to close
+  useEffect(() => {
+    const handleEsc = (e: KeyboardEvent) => {
+      if (e.key === 'Escape' && !isMerging) {
+        onClose();
+      }
+    };
+
+    if (targetTool) {
+      document.addEventListener('keydown', handleEsc);
+    }
+
+    return () => {
+      document.removeEventListener('keydown', handleEsc);
+    };
+  }, [targetTool, isMerging, onClose]);
 
   if (!targetTool) return null;
 

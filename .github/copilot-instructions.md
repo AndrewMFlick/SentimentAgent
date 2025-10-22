@@ -247,4 +247,160 @@ async def test_create_alias_circular_detection(tool_service, mock_containers):
 
 
 <!-- MANUAL ADDITIONS START -->
+
+## Admin Tool Management Patterns (Phase 7-8)
+
+**Tool Merge Operations**:
+
+```python
+# Merge tools with full audit trail
+async def merge_tools(
+    self,
+    target_tool_id: str,
+    source_tool_ids: List[str],
+    target_categories: List[str],
+    target_vendor: str,
+    merged_by: str,
+    notes: Optional[str] = None
+) -> Dict[str, Any]:
+    # 1. Validate merge prerequisites
+    target_tool, source_tools, warnings = await self._validate_merge(
+        target_tool_id, source_tool_ids
+    )
+    
+    # 2. Migrate sentiment data with source attribution
+    sentiment_count = await self._migrate_sentiment_data(
+        source_tool_ids, target_tool_id
+    )
+    
+    # 3. Update target tool metadata
+    target_tool["categories"] = target_categories
+    target_tool["vendor"] = target_vendor
+    
+    # 4. Archive source tools with merged_into reference
+    for source_tool in source_tools:
+        source_tool["status"] = "archived"
+        source_tool["merged_into"] = target_tool_id
+    
+    # 5. Create merge record for audit trail
+    merge_record = {
+        "id": f"merge-{uuid.uuid4()}",
+        "target_tool_id": target_tool_id,
+        "source_tool_ids": source_tool_ids,
+        "merged_at": datetime.now(timezone.utc).isoformat(),
+        "merged_by": merged_by,
+        "sentiment_count": sentiment_count,
+        "notes": notes
+    }
+    
+    # 6. Log admin action
+    await self._log_admin_action(...)
+    
+    return {
+        "merge_record": merge_record,
+        "target_tool": target_tool,
+        "archived_tools": source_tools,
+        "warnings": warnings
+    }
+```
+
+**Modal Components with Keyboard Shortcuts**:
+
+```tsx
+// All modals should support Esc to close
+useEffect(() => {
+  const handleEsc = (e: KeyboardEvent) => {
+    if (e.key === 'Escape' && !isSubmitting) {
+      onClose();
+    }
+  };
+
+  if (isOpen) {
+    document.addEventListener('keydown', handleEsc);
+  }
+
+  return () => {
+    document.removeEventListener('keydown', handleEsc);
+  };
+}, [isOpen, isSubmitting, onClose]);
+```
+
+**Loading States with Skeletons**:
+
+```tsx
+// Use skeletons instead of spinners for better UX
+if (isLoading && data.length === 0) {
+  return <ToolTableSkeleton rows={5} />;
+}
+
+// Overlay spinner for subsequent loads
+if (isLoading && data.length > 0) {
+  return <LoadingOverlay />;
+}
+```
+
+**Error Boundaries**:
+
+```tsx
+// Wrap app in ErrorBoundary
+<ErrorBoundary>
+  <Router>
+    <App />
+  </Router>
+</ErrorBoundary>
+
+// Custom fallback UI
+<ErrorBoundary fallback={<CustomErrorUI />}>
+  <AdminPanel />
+</ErrorBoundary>
+```
+
+**React Query Patterns**:
+
+```tsx
+// Always invalidate cache after mutations
+const mutation = useMutation({
+  mutationFn: api.mergeTool,
+  onSuccess: () => {
+    queryClient.invalidateQueries(['tools']);
+    queryClient.invalidateQueries(['merge-history']);
+    toast.success('Tools merged successfully');
+  },
+  onError: (error) => {
+    toast.error(error.message);
+  }
+});
+```
+
+**Audit Logging Best Practices**:
+
+- Log all admin actions (create, edit, delete, archive, merge)
+- Include before/after states for edit operations
+- Store IP address and user agent for security
+- Use structured logging with consistent fields
+- Create separate audit records for complex operations (merges)
+
+**Performance Monitoring**:
+
+```python
+# Log slow queries
+import time
+
+async def query_with_monitoring(query: str, container):
+    start = time.time()
+    try:
+        result = await container.query_items(query)
+        return result
+    finally:
+        duration = time.time() - start
+        if duration > 3.0:
+            logger.warning(
+                "Slow query detected",
+                query=query,
+                duration=duration,
+                container=container.id
+            )
+```
+
 <!-- MANUAL ADDITIONS END -->
+
