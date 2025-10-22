@@ -26,10 +26,18 @@ async def get_tool_service() -> ToolService:
     aliases_container = db.database.get_container_client("ToolAliases")
     admin_logs_container = db.database.get_container_client("AdminActionLogs")
     
+    # Get sentiment container for cascade delete
+    sentiment_container = None
+    try:
+        sentiment_container = db.database.get_container_client("sentiment_scores")
+    except Exception as e:
+        logger.warning("Sentiment container not available", error=str(e))
+    
     return ToolService(
         tools_container=tools_container,
         aliases_container=aliases_container,
-        admin_logs_container=admin_logs_container
+        admin_logs_container=admin_logs_container,
+        sentiment_container=sentiment_container
     )
 
 
@@ -635,7 +643,14 @@ async def delete_tool(
     tool_service: ToolService = Depends(get_tool_service)
 ):
     """
-    Delete a tool (soft delete - sets status to 'deleted').
+    Permanently delete a tool including all associated sentiment data.
+
+    This is a destructive operation that:
+    1. Validates the tool can be deleted (not referenced by other tools)
+    2. Retrieves sentiment count for confirmation
+    3. Permanently deletes the tool
+    4. Cascade deletes all associated sentiment data
+    5. Logs the deletion action
 
     Requires admin authentication.
 
@@ -644,27 +659,73 @@ async def delete_tool(
         x_admin_token: Admin authentication token
 
     Returns:
-        Success message
+        Deletion result with sentiment count
+
+    Raises:
+        404: Tool not found
+        409: Tool cannot be deleted (referenced by merged tools or in active job)
+        500: Server error
     """
+    admin_user = None
+    
     try:
         # Verify admin access
         admin_user = verify_admin(x_admin_token)
 
-        logger.info("Admin deleting tool", tool_id=tool_id, admin=admin_user)
-
-        # Delete tool (soft delete)
-        success = await tool_service.delete_tool(tool_id, hard_delete=False)
-        if not success:
-            raise HTTPException(status_code=404, detail=f"Tool '{tool_id}' not found")
-
         logger.info(
-            "Tool deleted successfully",
+            "Admin permanently deleting tool",
             tool_id=tool_id,
             admin=admin_user
         )
 
-        return {"message": "Tool deleted successfully"}
+        # Delete tool with hard delete (Phase 6 requirement)
+        result = await tool_service.delete_tool(
+            tool_id=tool_id,
+            deleted_by=admin_user,
+            hard_delete=True,  # Phase 6: always hard delete
+            ip_address=None,  # TODO: Extract from Request
+            user_agent=None   # TODO: Extract from Request
+        )
 
+        logger.info(
+            "Tool permanently deleted",
+            tool_id=tool_id,
+            tool_name=result["tool_name"],
+            sentiment_count=result["sentiment_count"],
+            admin=admin_user
+        )
+
+        return {
+            "message": "Tool permanently deleted",
+            "tool_id": result["tool_id"],
+            "tool_name": result["tool_name"],
+            "sentiment_count": result["sentiment_count"]
+        }
+
+    except ValueError as e:
+        # Validation errors (tool not found, referenced, in use)
+        error_msg = str(e)
+        logger.warning(
+            "Tool deletion validation error",
+            tool_id=tool_id,
+            error=error_msg,
+            admin=admin_user
+        )
+        
+        # T068: Return 409 Conflict if tool is referenced or in active job
+        if "referenced by" in error_msg or "in use" in error_msg:
+            raise HTTPException(
+                status_code=409,
+                detail=error_msg
+            )
+        
+        # 404 if tool not found
+        if "not found" in error_msg:
+            raise HTTPException(status_code=404, detail=error_msg)
+        
+        # Other validation errors
+        raise HTTPException(status_code=400, detail=error_msg)
+        
     except HTTPException:
         raise
     except Exception as e:
@@ -674,7 +735,10 @@ async def delete_tool(
             error=str(e),
             exc_info=True
         )
-        raise HTTPException(status_code=500, detail="Failed to delete tool")
+        raise HTTPException(
+            status_code=500,
+            detail="Failed to delete tool"
+        )
 
 
 @router.put("/tools/{tool_id}/alias")

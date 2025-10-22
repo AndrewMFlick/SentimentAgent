@@ -25,7 +25,8 @@ class ToolService:
         tools_container,
         aliases_container,
         merge_records_container=None,
-        admin_logs_container=None
+        admin_logs_container=None,
+        sentiment_container=None
     ):
         """
         Initialize ToolService.
@@ -35,11 +36,13 @@ class ToolService:
             aliases_container: Cosmos DB container for ToolAliases (sync)
             merge_records_container: Cosmos DB container for ToolMergeRecords
             admin_logs_container: Cosmos DB container for AdminActionLogs
+            sentiment_container: Cosmos DB container for sentiment data (for deletion)
         """
         self.tools_container = tools_container
         self.aliases_container = aliases_container
         self.merge_records_container = merge_records_container
         self.admin_logs_container = admin_logs_container
+        self.sentiment_container = sentiment_container
 
     async def create_tool(self, tool_data: ToolCreateRequest) -> Dict[str, Any]:
         """
@@ -464,40 +467,205 @@ class ToolService:
                 )
                 raise
 
-    async def delete_tool(
-        self,
-        tool_id: str,
-        hard_delete: bool = False
-    ) -> bool:
+    async def get_sentiment_count(self, tool_id: str) -> int:
         """
-        Delete tool (soft delete by default).
+        Get count of sentiment records for a tool.
 
         Args:
             tool_id: Tool UUID
-            hard_delete: If True, permanently delete; else set status='deleted'
 
         Returns:
-            True if deleted, False if not found
+            Count of sentiment records for this tool
+        """
+        # Query sentiment container for this tool
+        # Note: This assumes sentiment records have a tool_id field
+        # Adjust query based on actual sentiment data structure
+        try:
+            query = (
+                "SELECT VALUE COUNT(1) FROM c "
+                "WHERE c.tool_id = @tool_id"
+            )
+            
+            # We need access to sentiment container
+            # For now, return 0 if container not available
+            # This will be updated when sentiment container is passed in
+            if not hasattr(self, 'sentiment_container') or self.sentiment_container is None:
+                logger.warning(
+                    "Sentiment container not available for count",
+                    tool_id=tool_id
+                )
+                return 0
+            
+            items = self.sentiment_container.query_items(
+                query=query,
+                parameters=[{"name": "@tool_id", "value": tool_id}],
+                enable_cross_partition_query=True
+            )
+            
+            results = list(items)
+            if not results:
+                return 0
+            
+            count_value = results[0]
+            if isinstance(count_value, dict):
+                return count_value.get('$1', count_value.get('count', 0))
+            return count_value
+            
+        except Exception as e:
+            logger.error(
+                "Failed to get sentiment count",
+                tool_id=tool_id,
+                error=str(e)
+            )
+            return 0
+
+    async def delete_tool(
+        self,
+        tool_id: str,
+        deleted_by: str,
+        hard_delete: bool = False,
+        ip_address: Optional[str] = None,
+        user_agent: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """
+        Delete tool permanently with validation and cascade.
+
+        Args:
+            tool_id: Tool UUID
+            deleted_by: Admin ID performing deletion
+            hard_delete: If True, permanently delete (default for Phase 6);
+                        else set status='deleted'
+            ip_address: Admin IP address
+            user_agent: Browser/client info
+
+        Returns:
+            Dictionary with deletion result and sentiment_count
+
+        Raises:
+            ValueError: If tool cannot be deleted (referenced or in use)
         """
         tool = await self.get_tool(tool_id)
         if not tool:
-            return False
+            raise ValueError(f"Tool '{tool_id}' not found")
+
+        # T063: Validate tool is not referenced in merged_into
+        query = (
+            "SELECT * FROM Tools t "
+            "WHERE t.merged_into = @tool_id "
+            "AND t.partitionKey = 'TOOL'"
+        )
+        items = self.tools_container.query_items(
+            query=query,
+            parameters=[{"name": "@tool_id", "value": tool_id}]
+        )
+        referencing_tools = list(items)
+        
+        if referencing_tools:
+            tool_names = [t.get('name', 'Unknown') for t in referencing_tools]
+            raise ValueError(
+                f"Cannot delete tool: referenced by {len(referencing_tools)} "
+                f"merged tool(s): {', '.join(tool_names[:3])}"
+                + ("..." if len(tool_names) > 3 else "")
+            )
+
+        # T064: Validate tool is not in active sentiment analysis job
+        # For now, we'll add a placeholder check
+        # In a real implementation, this would check a jobs/tasks container
+        # or a scheduler state
+        # TODO: Implement actual job check when job tracking is available
+        
+        # Get sentiment count before deletion
+        sentiment_count = await self.get_sentiment_count(tool_id)
+        
+        # Store before state for audit log
+        before_state = tool.copy()
+
+        # T065: Log admin action before deletion (after state is null)
+        await self._log_admin_action(
+            admin_id=deleted_by,
+            action_type="delete",
+            tool_id=tool_id,
+            tool_name=tool["name"],
+            before_state=before_state,
+            after_state=None,  # No after state for deletion
+            metadata={
+                "sentiment_count": sentiment_count,
+                "hard_delete": hard_delete
+            },
+            ip_address=ip_address,
+            user_agent=user_agent
+        )
 
         if hard_delete:
-            # Sync operation - no await
+            # T062: Cascade delete sentiment data
+            # Delete sentiment records associated with this tool
+            if hasattr(self, 'sentiment_container') and self.sentiment_container:
+                try:
+                    # Query all sentiment records for this tool
+                    query = "SELECT * FROM c WHERE c.tool_id = @tool_id"
+                    sentiment_items = self.sentiment_container.query_items(
+                        query=query,
+                        parameters=[{"name": "@tool_id", "value": tool_id}],
+                        enable_cross_partition_query=True
+                    )
+                    
+                    # Delete each sentiment record
+                    deleted_sentiment_count = 0
+                    for sentiment in sentiment_items:
+                        try:
+                            self.sentiment_container.delete_item(
+                                item=sentiment['id'],
+                                partition_key=sentiment.get('partitionKey', sentiment['id'])
+                            )
+                            deleted_sentiment_count += 1
+                        except Exception as e:
+                            logger.warning(
+                                "Failed to delete sentiment record",
+                                sentiment_id=sentiment.get('id'),
+                                error=str(e)
+                            )
+                    
+                    logger.info(
+                        "Cascade deleted sentiment records",
+                        tool_id=tool_id,
+                        count=deleted_sentiment_count
+                    )
+                except Exception as e:
+                    logger.error(
+                        "Failed to cascade delete sentiment data",
+                        tool_id=tool_id,
+                        error=str(e)
+                    )
+
+            # Delete the tool itself
             self.tools_container.delete_item(
                 item=tool_id,
-                partition_key="tool"
+                partition_key="TOOL"
             )
-            logger.info("Tool hard deleted", tool_id=tool_id)
+            logger.info(
+                "Tool permanently deleted",
+                tool_id=tool_id,
+                deleted_by=deleted_by,
+                sentiment_count=sentiment_count
+            )
         else:
+            # Soft delete - set status to deleted
             tool["status"] = "deleted"
             tool["updated_at"] = datetime.now(timezone.utc).isoformat()
-            # Sync operation - no await
+            tool["updated_by"] = deleted_by
             self.tools_container.replace_item(item=tool_id, body=tool)
-            logger.info("Tool soft deleted", tool_id=tool_id)
+            logger.info(
+                "Tool soft deleted",
+                tool_id=tool_id,
+                deleted_by=deleted_by
+            )
 
-        return True
+        return {
+            "tool_id": tool_id,
+            "tool_name": tool["name"],
+            "sentiment_count": sentiment_count,
+            "hard_delete": hard_delete
+        }
 
     async def create_alias(
         self,
