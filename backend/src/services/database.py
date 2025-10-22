@@ -520,11 +520,11 @@ class DatabaseService:
             logger.debug(f"Value is dict, keys: {value.keys()}")
             # CosmosDB sometimes wraps results in dict with $1 key
             if "$1" in value:
-                logger.debug(f"Extracting value from dict with $1 key")
+                logger.debug("Extracting value from dict with $1 key")
                 value = value["$1"]
             # Or other numeric keys
             elif len(value) == 1:
-                logger.debug(f"Extracting single value from dict")
+                logger.debug("Extracting single value from dict")
                 value = list(value.values())[0]
 
         logger.debug(f"Returning value: {value}, type: {type(value)}")

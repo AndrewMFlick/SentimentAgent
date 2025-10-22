@@ -7,11 +7,8 @@ from typing import List, Optional, Dict, Any, Tuple
 import structlog
 
 from ..models.tool import (
-    Tool,
-    ToolAlias,
     ToolCreateRequest,
     ToolUpdateRequest,
-    ToolStatus,
 )
 
 logger = structlog.get_logger()
@@ -1051,7 +1048,7 @@ class ToolService:
             raise ValueError(f"Target tool must be active, current status: {target_tool.get('status')}")
 
         if target_tool.get("merged_into"):
-            raise ValueError(f"Target tool has already been merged into another tool")
+            raise ValueError("Target tool has already been merged into another tool")
 
         # Validate source tools
         source_tools = []

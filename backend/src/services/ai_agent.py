@@ -62,7 +62,10 @@ class AIAgent:
                 messages=[
                     {
                         "role": "system",
-                        "content": "You are an AI analyst expert in sentiment analysis of developer tool discussions. Provide clear, data-driven insights based on the provided context.",
+                        "content": (
+                            "You are an AI analyst expert in sentiment analysis of developer tool discussions. "
+                            "Provide clear, data-driven insights based on the provided context."
+                        ),
                     },
                     {"role": "user", "content": prompt},
                 ],
@@ -181,7 +184,7 @@ class AIAgent:
             prompt_parts.append("\nSentiment Statistics:")
             for key, data in context["summary"].items():
                 if key == "overall":
-                    prompt_parts.append(f"\nOverall (all subreddits):")
+                    prompt_parts.append("\nOverall (all subreddits):")
                     prompt_parts.append(f"  Total analyzed: {data.get('total', 0)}")
                     prompt_parts.append(f"  Positive: {data.get('positive', 0)}")
                     prompt_parts.append(f"  Negative: {data.get('negative', 0)}")
@@ -197,7 +200,7 @@ class AIAgent:
 
                     if "last_24h" in data:
                         stats = data["last_24h"]
-                        prompt_parts.append(f"  Last 24 hours:")
+                        prompt_parts.append("  Last 24 hours:")
                         prompt_parts.append(f"    Total: {stats.get('total', 0)}")
                         prompt_parts.append(
                             f"    Positive: {
@@ -220,7 +223,7 @@ class AIAgent:
 
                     if "last_week" in data:
                         stats = data["last_week"]
-                        prompt_parts.append(f"  Last 7 days:")
+                        prompt_parts.append("  Last 7 days:")
                         prompt_parts.append(f"    Total: {stats.get('total', 0)}")
                         prompt_parts.append(
                             f"    Positive: {

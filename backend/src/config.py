@@ -43,7 +43,8 @@ class Settings(BaseSettings):
     # Data Collection
     collection_interval_minutes: int = 30
     subreddits: str = (
-        "Cursor,Bard,GithubCopilot,claude,windsurf,ChatGPTCoding,vibecoding,aws,programming,MachineLearning,artificial,OpenAI,kiroIDE,JulesAgent"
+        "Cursor,Bard,GithubCopilot,claude,windsurf,ChatGPTCoding,"
+        "vibecoding,aws,programming,MachineLearning,artificial,OpenAI,kiroIDE,JulesAgent"
     )
 
     # Data Retention
