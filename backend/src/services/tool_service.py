@@ -65,18 +65,28 @@ class ToolService:
         now = datetime.now(timezone.utc).isoformat()
         tool_id = str(uuid.uuid4())
 
+        # Sanitize description for CosmosDB compatibility
+        description = tool_data.description or ""
+        # Replace literal \n with actual newlines
+        description = description.replace("\\n", "\n")
+        # Replace em-dash and other special chars that cause issues
+        description = description.replace("—", "-").replace("'", "'").replace(""", '"').replace(""", '"')
+        description = description.strip()
+
         tool = {
             "id": tool_id,
             "partitionKey": "tool",
             "name": tool_data.name,
             "slug": tool_data.name.lower().replace(" ", "-"),
             "vendor": tool_data.vendor,
-            "category": tool_data.category,
-            "description": tool_data.description or "",
+            "categories": tool_data.categories,
+            "description": description,
             "status": "active",
             "metadata": tool_data.metadata or {},
             "created_at": now,
-            "updated_at": now
+            "updated_at": now,
+            "created_by": "admin",  # TODO: Get from auth context
+            "updated_by": "admin"
         }
 
         # Sync operation - no await
@@ -85,7 +95,7 @@ class ToolService:
             "Tool created",
             tool_id=tool_id,
             name=tool_data.name,
-            category=tool_data.category
+            categories=tool_data.categories
         )
 
         return tool
