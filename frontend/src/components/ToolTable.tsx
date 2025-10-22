@@ -26,9 +26,9 @@ export const ToolTable = ({ adminToken, onEdit, onDelete, refreshTrigger }: Tool
   const [searchQuery, setSearchQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState<string>('active');
   const [categoryFilter, setCategoryFilter] = useState<string[]>([]);
-  const [vendorFilter, setVendorFilter] = useState('');
-  const [sortBy, setSortBy] = useState('name');
-  const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('asc');
+  const [vendorFilter] = useState('');  // Future feature
+  const [sortBy] = useState('name');    // Future feature
+  const [sortOrder] = useState<'asc' | 'desc'>('asc');  // Future feature
   const [debouncedSearch, setDebouncedSearch] = useState('');
 
   // Debounce search input
@@ -42,7 +42,7 @@ export const ToolTable = ({ adminToken, onEdit, onDelete, refreshTrigger }: Tool
   }, [searchQuery]);
 
   // Fetch tools with React Query
-  const { data, isLoading, error, refetch } = useQuery({
+  const { data, isLoading, error } = useQuery({
     queryKey: ['admin-tools', currentPage, limit, debouncedSearch, statusFilter, categoryFilter, vendorFilter, sortBy, sortOrder, refreshTrigger],
     queryFn: async () => {
       return await api.listAdminTools(

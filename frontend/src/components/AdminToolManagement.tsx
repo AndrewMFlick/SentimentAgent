@@ -21,7 +21,6 @@ export const AdminToolManagement: React.FC<AdminToolManagementProps> = ({
   
   // Edit modal state
   const [editingTool, setEditingTool] = useState<Tool | null>(null);
-  const [isEditModalOpen, setIsEditModalOpen] = useState(false);
   
   // Form state
   const [toolName, setToolName] = useState('');
@@ -78,73 +77,13 @@ export const AdminToolManagement: React.FC<AdminToolManagementProps> = ({
     },
   });
 
-  // Update tool mutation
-  const updateToolMutation = useMutation({
-    mutationFn: async ({ 
-      toolId, 
-      updates, 
-      etag 
-    }: { 
-      toolId: string; 
-      updates: any; 
-      etag?: string;
-    }) => {
-      return await api.updateTool(toolId, updates, adminToken, etag);
-    },
-    onSuccess: (response) => {
-      setMessage(`✓ ${response.message || 'Tool updated successfully'}`);
-      setMessageType('success');
-
-      // Close modal
-      setIsEditModalOpen(false);
-      setEditingTool(null);
-
-      // Invalidate and refetch tools query
-      queryClient.invalidateQueries({ queryKey: ['admin-tools'] });
-
-      // Refresh trigger for ToolTable
-      setRefreshTrigger(prev => prev + 1);
-
-      // Clear message after 3 seconds
-      setTimeout(() => {
-        setMessage('');
-      }, 3000);
-    },
-    onError: (error: any) => {
-      const status = error.response?.status;
-      let errorMessage = error.response?.data?.detail || error.message || 'Failed to update tool';
-      
-      if (status === 409) {
-        // Concurrent modification detected
-        errorMessage = '⚠️ Concurrent modification detected. The tool was updated by another user. Please refresh and try again.';
-      } else if (status === 400) {
-        // Validation error
-        errorMessage = `⚠️ Validation error: ${errorMessage}`;
-      }
-      
-      setMessage(`✗ ${errorMessage}`);
-      setMessageType('error');
-      
-      // Clear error after 5 seconds
-      setTimeout(() => {
-        setMessage('');
-      }, 5000);
-    },
-  });
-
   // Edit handler
   const handleEdit = (tool: Tool) => {
     setEditingTool(tool);
-    setIsEditModalOpen(true);
     setMessage(''); // Clear any existing messages
   };
 
-  // Save edit handler
-  const handleSaveEdit = async (toolId: string, updates: any, etag: string) => {
-    await updateToolMutation.mutateAsync({ toolId, updates, etag });
-  };
-
-  // Handle edit conflict (409)
+  // Edit conflict handler
   const handleEditConflict = (conflictMessage: string) => {
     setMessage(`⚠️ ${conflictMessage}`);
     setMessageType('error');
@@ -396,13 +335,11 @@ export const AdminToolManagement: React.FC<AdminToolManagementProps> = ({
         tool={editingTool}
         adminToken={adminToken}
         onClose={() => {
-          setIsEditModalOpen(false);
           setEditingTool(null);
         }}
         onSuccess={(message) => {
           setMessage(`✓ ${message || 'Tool updated successfully'}`);
           setMessageType('success');
-          setIsEditModalOpen(false);
           setEditingTool(null);
           queryClient.invalidateQueries({ queryKey: ['admin-tools'] });
           setRefreshTrigger(prev => prev + 1);

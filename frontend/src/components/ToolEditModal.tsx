@@ -4,7 +4,7 @@
  * Glass-themed modal for editing tool details with multi-category support
  */
 import { useState, useEffect } from 'react';
-import { Tool, ToolCategory } from '../types';
+import { Tool } from '../types';
 
 interface ToolEditModalProps {
   tool: Tool | null;
