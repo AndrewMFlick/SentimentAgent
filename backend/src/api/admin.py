@@ -677,6 +677,151 @@ async def delete_tool(
         raise HTTPException(status_code=500, detail="Failed to delete tool")
 
 
+@router.post("/tools/{tool_id}/archive")
+async def archive_tool(
+    tool_id: str,
+    x_admin_token: Optional[str] = Header(None),
+    tool_service: ToolService = Depends(get_tool_service)
+):
+    """
+    Archive a tool (set status to 'archived').
+    
+    This preserves historical sentiment data while removing the tool
+    from the active list.
+
+    Requires admin authentication.
+
+    Args:
+        tool_id: Tool UUID
+        x_admin_token: Admin authentication token
+
+    Returns:
+        Updated tool record
+
+    Raises:
+        404: Tool not found
+        409: Tool cannot be archived (e.g., has tools merged into it)
+        500: Server error
+    """
+    admin_user = None
+
+    try:
+        # Verify admin access
+        admin_user = verify_admin(x_admin_token)
+
+        logger.info("Admin archiving tool", tool_id=tool_id, admin=admin_user)
+
+        # Archive tool
+        tool = await tool_service.archive_tool(
+            tool_id=tool_id,
+            archived_by=admin_user,
+            ip_address=None,
+            user_agent=None
+        )
+
+        if not tool:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Tool '{tool_id}' not found"
+            )
+
+        logger.info(
+            "Tool archived successfully",
+            tool_id=tool_id,
+            tool_name=tool.get("name"),
+            admin=admin_user
+        )
+
+        return {"tool": tool, "message": "Tool archived successfully"}
+
+    except ValueError as e:
+        # Validation errors (e.g., tool has merged tools)
+        logger.warning(
+            "Tool archive validation error",
+            tool_id=tool_id,
+            error=str(e),
+            admin=admin_user
+        )
+        raise HTTPException(status_code=409, detail=str(e))
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(
+            "Failed to archive tool",
+            tool_id=tool_id,
+            error=str(e),
+            exc_info=True
+        )
+        raise HTTPException(status_code=500, detail="Failed to archive tool")
+
+
+@router.post("/tools/{tool_id}/unarchive")
+async def unarchive_tool(
+    tool_id: str,
+    x_admin_token: Optional[str] = Header(None),
+    tool_service: ToolService = Depends(get_tool_service)
+):
+    """
+    Unarchive a tool (set status to 'active').
+    
+    This restores a previously archived tool to the active list.
+
+    Requires admin authentication.
+
+    Args:
+        tool_id: Tool UUID
+        x_admin_token: Admin authentication token
+
+    Returns:
+        Updated tool record
+
+    Raises:
+        404: Tool not found
+        500: Server error
+    """
+    admin_user = None
+
+    try:
+        # Verify admin access
+        admin_user = verify_admin(x_admin_token)
+
+        logger.info("Admin unarchiving tool", tool_id=tool_id, admin=admin_user)
+
+        # Unarchive tool
+        tool = await tool_service.unarchive_tool(
+            tool_id=tool_id,
+            unarchived_by=admin_user,
+            ip_address=None,
+            user_agent=None
+        )
+
+        if not tool:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Tool '{tool_id}' not found"
+            )
+
+        logger.info(
+            "Tool unarchived successfully",
+            tool_id=tool_id,
+            tool_name=tool.get("name"),
+            admin=admin_user
+        )
+
+        return {"tool": tool, "message": "Tool unarchived successfully"}
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(
+            "Failed to unarchive tool",
+            tool_id=tool_id,
+            error=str(e),
+            exc_info=True
+        )
+        raise HTTPException(status_code=500, detail="Failed to unarchive tool")
+
+
 @router.put("/tools/{tool_id}/alias")
 async def link_alias(
     tool_id: str,
