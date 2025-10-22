@@ -495,7 +495,7 @@ class ToolService:
                 "SELECT VALUE COUNT(1) FROM c "
                 "WHERE c.tool_id = @tool_id"
             )
-            
+
             # We need access to sentiment container
             # For now, return 0 if container not available
             # This will be updated when sentiment container is passed in
@@ -505,22 +505,22 @@ class ToolService:
                     tool_id=tool_id
                 )
                 return 0
-            
+
             items = self.sentiment_container.query_items(
                 query=query,
                 parameters=[{"name": "@tool_id", "value": tool_id}],
                 enable_cross_partition_query=True
             )
-            
+
             results = list(items)
             if not results:
                 return 0
-            
+
             count_value = results[0]
             if isinstance(count_value, dict):
                 return count_value.get('$1', count_value.get('count', 0))
             return count_value
-            
+
         except Exception as e:
             logger.error(
                 "Failed to get sentiment count",
@@ -569,7 +569,7 @@ class ToolService:
             parameters=[{"name": "@tool_id", "value": tool_id}]
         )
         referencing_tools = list(items)
-        
+
         if referencing_tools:
             tool_names = [t.get('name', 'Unknown') for t in referencing_tools]
             raise ValueError(
@@ -583,10 +583,10 @@ class ToolService:
         # In a real implementation, this would check a jobs/tasks container
         # or a scheduler state
         # TODO: Implement actual job check when job tracking is available
-        
+
         # Get sentiment count before deletion
         sentiment_count = await self.get_sentiment_count(tool_id)
-        
+
         # Store before state for audit log
         before_state = tool.copy()
 
@@ -618,7 +618,7 @@ class ToolService:
                         parameters=[{"name": "@tool_id", "value": tool_id}],
                         enable_cross_partition_query=True
                     )
-                    
+
                     # Delete each sentiment record
                     deleted_sentiment_count = 0
                     for sentiment in sentiment_items:
@@ -634,7 +634,7 @@ class ToolService:
                                 sentiment_id=sentiment.get('id'),
                                 error=str(e)
                             )
-                    
+
                     logger.info(
                         "Cascade deleted sentiment records",
                         tool_id=tool_id,
@@ -688,7 +688,7 @@ class ToolService:
     ) -> Optional[Dict[str, Any]]:
         """
         Archive a tool (set status to 'archived').
-        
+
         This preserves historical sentiment data while removing the tool
         from the active list.
 
@@ -780,7 +780,7 @@ class ToolService:
     ) -> Optional[Dict[str, Any]]:
         """
         Unarchive a tool (set status to 'active').
-        
+
         This restores a previously archived tool to the active list.
 
         Args:
@@ -804,10 +804,10 @@ class ToolService:
                 parameters=[{"name": "@id", "value": tool_id}]
             )
             results = list(items)
-            
+
             if not results:
                 return None
-            
+
             tool = results[0]
 
             # Store before state for audit log
@@ -1046,10 +1046,10 @@ class ToolService:
         target_tool = await self.get_tool(target_tool_id)
         if not target_tool:
             raise ValueError(f"Target tool '{target_tool_id}' not found")
-        
+
         if target_tool.get("status") != "active":
             raise ValueError(f"Target tool must be active, current status: {target_tool.get('status')}")
-        
+
         if target_tool.get("merged_into"):
             raise ValueError(f"Target tool has already been merged into another tool")
 
@@ -1059,22 +1059,22 @@ class ToolService:
             # Prevent circular merge
             if source_id == target_tool_id:
                 raise ValueError("Cannot merge tool into itself")
-            
+
             source_tool = await self.get_tool(source_id)
             if not source_tool:
                 raise ValueError(f"Source tool '{source_id}' not found")
-            
+
             if source_tool.get("status") != "active":
                 raise ValueError(f"Source tool '{source_tool['name']}' must be active")
-            
+
             if source_tool.get("merged_into"):
                 raise ValueError(f"Source tool '{source_tool['name']}' has already been merged")
-            
+
             source_tools.append(source_tool)
 
         # Generate warnings for metadata differences
         warnings = []
-        
+
         # Check vendor mismatches
         source_vendors = list(set([t.get("vendor", "") for t in source_tools]))
         target_vendor = target_tool.get("vendor", "")
@@ -1128,7 +1128,7 @@ class ToolService:
                         sentiment['original_tool_id'] = source_id
                         sentiment['tool_id'] = target_tool_id
                         sentiment['migrated_at'] = datetime.now(timezone.utc).isoformat()
-                        
+
                         # Update the sentiment record
                         self.sentiment_container.upsert_item(body=sentiment)
                         total_migrated += 1
@@ -1139,7 +1139,7 @@ class ToolService:
                             source_tool_id=source_id,
                             error=str(e)
                         )
-                
+
                 logger.info(
                     "Migrated sentiment data",
                     source_tool_id=source_id,

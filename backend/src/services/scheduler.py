@@ -336,7 +336,7 @@ class CollectionScheduler:
                         memory_start_mb:.2f}MB, memory_end={
                             memory_end_mb:.2f}MB, "
                 f"memory_delta={
-                                memory_delta_mb:.2f}MB"
+                    memory_delta_mb:.2f}MB"
             )
 
         except Exception as e:

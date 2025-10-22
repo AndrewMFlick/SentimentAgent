@@ -71,12 +71,12 @@ def monitor_query_performance(
 ) -> Callable:
     """
     Decorator to monitor database query performance.
-    
+
     Logs warnings for queries exceeding the threshold duration.
-    
+
     Args:
         slow_query_threshold: Time in seconds to consider a query slow (default 3.0s)
-        
+
     Example:
         @monitor_query_performance(slow_query_threshold=2.0)
         async def my_query_method(self, ...):
@@ -87,11 +87,11 @@ def monitor_query_performance(
         async def async_wrapper(*args, **kwargs):
             start_time = time.time()
             container_name = kwargs.get('container_name', 'unknown')
-            
+
             try:
                 result = await func(*args, **kwargs)
                 duration = time.time() - start_time
-                
+
                 if duration > slow_query_threshold:
                     logger.warning(
                         "Slow query detected",
@@ -107,7 +107,7 @@ def monitor_query_performance(
                         duration=f"{duration:.3f}s",
                         container=container_name
                     )
-                    
+
                 return result
             except Exception as e:
                 duration = time.time() - start_time
@@ -120,16 +120,16 @@ def monitor_query_performance(
                     exc_info=True
                 )
                 raise
-        
+
         @wraps(func)
         def sync_wrapper(*args, **kwargs):
             start_time = time.time()
             container_name = kwargs.get('container_name', 'unknown')
-            
+
             try:
                 result = func(*args, **kwargs)
                 duration = time.time() - start_time
-                
+
                 if duration > slow_query_threshold:
                     logger.warning(
                         "Slow query detected",
@@ -145,7 +145,7 @@ def monitor_query_performance(
                         duration=f"{duration:.3f}s",
                         container=container_name
                     )
-                    
+
                 return result
             except Exception as e:
                 duration = time.time() - start_time
@@ -158,12 +158,12 @@ def monitor_query_performance(
                     exc_info=True
                 )
                 raise
-        
+
         # Return appropriate wrapper based on function type
         if asyncio.iscoroutinefunction(func):
             return async_wrapper
         return sync_wrapper
-    
+
     return decorator
 
 
@@ -274,7 +274,7 @@ class DatabaseService:
             self._create_container(settings.cosmos_container_comments, "/post_id")
             self._create_container(settings.cosmos_container_sentiment, "/subreddit")
             self._create_container(settings.cosmos_container_trending, "/id")
-            
+
             # Create tool management containers
             self._create_container("Tools", "/id")
             self._create_container("ToolAliases", "/id")
@@ -293,7 +293,7 @@ class DatabaseService:
             self.trending_container = self.database.get_container_client(
                 settings.cosmos_container_trending
             )
-            
+
             # Tool management containers
             self.tools_container = self.database.get_container_client("Tools")
             self.aliases_container = self.database.get_container_client(
@@ -536,16 +536,16 @@ class DatabaseService:
     async def _resolve_tool_alias(self, tool_id: str) -> str:
         """
         Resolve a tool ID to its primary tool ID if it's an alias.
-        
+
         Args:
             tool_id: Tool ID (may be alias or primary)
-            
+
         Returns:
             Primary tool ID (same as input if not an alias)
         """
         if not self.aliases_container:
             return tool_id
-            
+
         try:
             query = (
                 "SELECT * FROM ToolAliases ta "
@@ -555,31 +555,31 @@ class DatabaseService:
                 query=query,
                 parameters=[{"name": "@id", "value": tool_id}]
             )
-            
+
             results = []
             async for item in items:
                 results.append(item)
-                
+
             return results[0]["primary_tool_id"] if results else tool_id
         except Exception as e:
             logger.error(f"Error resolving tool alias {tool_id}: {e}")
             return tool_id
-    
+
     async def _get_tool_ids_for_aggregation(self, primary_tool_id: str) -> List[str]:
         """
         Get all tool IDs that should be aggregated together (primary + aliases).
-        
+
         Args:
             primary_tool_id: Primary tool ID
-            
+
         Returns:
             List of tool IDs including primary and all its aliases
         """
         tool_ids = [primary_tool_id]
-        
+
         if not self.aliases_container:
             return tool_ids
-            
+
         try:
             # Find all aliases pointing to this primary tool
             query = (
@@ -590,10 +590,10 @@ class DatabaseService:
                 query=query,
                 parameters=[{"name": "@id", "value": primary_tool_id}]
             )
-            
+
             async for item in items:
                 tool_ids.append(item["alias_tool_id"])
-                
+
             logger.debug(f"Tool IDs for aggregation (primary {primary_tool_id}): {tool_ids}")
             return tool_ids
         except Exception as e:
@@ -886,7 +886,7 @@ class DatabaseService:
 
         Query Pattern #1: Aggregate time_period_aggregates table.
         Resolves aliases to consolidate data under primary tool.
-        
+
         NOTE: Currently returns zero data as sentiment aggregation
         is not yet implemented. This prevents dashboard errors.
         """
@@ -897,7 +897,7 @@ class DatabaseService:
                 f"Sentiment data not yet available - tool_id={tool_id}, "
                 f"hours={hours}, start={start_date}, end={end_date}"
             )
-            
+
             return {
                 "total_mentions": 0,
                 "positive_count": 0,

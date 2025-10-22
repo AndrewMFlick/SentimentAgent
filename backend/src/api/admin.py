@@ -25,18 +25,18 @@ async def get_tool_service() -> ToolService:
     """Get ToolService instance from database containers."""
     if not db.client or not db.database:
         raise HTTPException(status_code=500, detail="Database not initialized")
-    
+
     tools_container = db.database.get_container_client("Tools")
     aliases_container = db.database.get_container_client("ToolAliases")
     admin_logs_container = db.database.get_container_client("AdminActionLogs")
-    
+
     # Get sentiment container for cascade delete
     sentiment_container = None
     try:
         sentiment_container = db.database.get_container_client("sentiment_scores")
     except Exception as e:
         logger.warning("Sentiment container not available", error=str(e))
-    
+
     return ToolService(
         tools_container=tools_container,
         aliases_container=aliases_container,
@@ -671,7 +671,7 @@ async def delete_tool(
         500: Server error
     """
     admin_user = None
-    
+
     try:
         # Verify admin access
         admin_user = verify_admin(x_admin_token)
@@ -715,21 +715,21 @@ async def delete_tool(
             error=error_msg,
             admin=admin_user
         )
-        
+
         # T068: Return 409 Conflict if tool is referenced or in active job
         if "referenced by" in error_msg or "in use" in error_msg:
             raise HTTPException(
                 status_code=409,
                 detail=error_msg
             )
-        
+
         # 404 if tool not found
         if "not found" in error_msg:
             raise HTTPException(status_code=404, detail=error_msg)
-        
+
         # Other validation errors
         raise HTTPException(status_code=400, detail=error_msg)
-        
+
     except HTTPException:
         raise
     except Exception as e:
@@ -753,7 +753,7 @@ async def archive_tool(
 ):
     """
     Archive a tool (set status to 'archived').
-    
+
     This preserves historical sentiment data while removing the tool
     from the active list.
 
@@ -831,7 +831,7 @@ async def unarchive_tool(
 ):
     """
     Unarchive a tool (set status to 'active').
-    
+
     This restores a previously archived tool to the active list.
 
     Requires admin authentication.
@@ -988,7 +988,7 @@ async def unlink_alias(
             "SELECT * FROM ToolAliases ta "
             "WHERE ta.alias_tool_id = @id AND ta.partitionKey = 'alias'"
         )
-        
+
         aliases_container = db.database.get_container_client("ToolAliases")
         items = aliases_container.query_items(
             query=query,
@@ -1159,7 +1159,7 @@ async def merge_tools(
         # Validation errors from ToolService
         error_msg = str(e)
         admin_user = verify_admin(x_admin_token)  # Get admin for logging
-        
+
         # Determine appropriate status code
         if "not found" in error_msg.lower():
             status_code = 404
