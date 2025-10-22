@@ -4,6 +4,7 @@ import { api } from '../services/api';
 import { ToolTable } from './ToolTable';
 import { ToolEditModal } from './ToolEditModal';
 import { DeleteConfirmationDialog } from './DeleteConfirmationDialog';
+import { ArchiveConfirmationDialog } from './ArchiveConfirmationDialog';
 import { Tool } from '../types';
 
 interface AdminToolManagementProps {
@@ -25,6 +26,8 @@ export const AdminToolManagement: React.FC<AdminToolManagementProps> = ({
   
   // Delete modal state
   const [deletingTool, setDeletingTool] = useState<Tool | null>(null);
+  // Archive modal state
+  const [archivingTool, setArchivingTool] = useState<Tool | null>(null);
   
   // Form state
   const [toolName, setToolName] = useState('');
@@ -127,6 +130,47 @@ export const AdminToolManagement: React.FC<AdminToolManagementProps> = ({
     }, 3000);
   };
 
+  // Archive handler
+  const handleArchive = (tool: Tool) => {
+    setArchivingTool(tool);
+    setMessage(''); // Clear any existing messages
+  };
+
+  // Unarchive handler
+  const handleUnarchive = async (tool: Tool) => {
+    setMessage('');
+    
+    try {
+      await api.unarchiveTool(tool.id, adminToken);
+      setMessage(`✓ Tool "${tool.name}" has been unarchived successfully`);
+      setMessageType('success');
+      
+      // Invalidate and refetch tools query
+      queryClient.invalidateQueries({ queryKey: ['admin-tools'] });
+      setRefreshTrigger(prev => prev + 1);
+      
+      // Clear message after 3 seconds
+      setTimeout(() => setMessage(''), 3000);
+    } catch (error: any) {
+      const errorMessage = error.response?.data?.detail || error.message || 'Failed to unarchive tool';
+      setMessage(`✗ ${errorMessage}`);
+      setMessageType('error');
+    }
+  };
+
+  // Archive success callback
+  const handleArchiveSuccess = () => {
+    setMessage(`✓ Tool has been archived successfully`);
+    setMessageType('success');
+    
+    // Invalidate and refetch tools query
+    queryClient.invalidateQueries({ queryKey: ['admin-tools'] });
+    setRefreshTrigger(prev => prev + 1);
+    
+    // Clear message after 3 seconds
+    setTimeout(() => setMessage(''), 3000);
+  };
+
   // Category toggle handler
   const toggleCategory = (category: string) => {
     setCategories(prev => {
@@ -204,6 +248,8 @@ export const AdminToolManagement: React.FC<AdminToolManagementProps> = ({
             adminToken={adminToken}
             onEdit={handleEdit}
             onDelete={handleDelete}
+            onArchive={handleArchive}
+            onUnarchive={handleUnarchive}
             refreshTrigger={refreshTrigger}
           />
         </div>
@@ -378,6 +424,12 @@ export const AdminToolManagement: React.FC<AdminToolManagementProps> = ({
           setDeletingTool(null);
         }}
         onSuccess={handleDeleteSuccess}
+      {/* Archive Confirmation Dialog */}
+      <ArchiveConfirmationDialog
+        tool={archivingTool}
+        adminToken={adminToken}
+        onClose={() => setArchivingTool(null)}
+        onSuccess={handleArchiveSuccess}
       />
     </div>
   );

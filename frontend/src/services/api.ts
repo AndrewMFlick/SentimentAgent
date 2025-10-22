@@ -383,5 +383,41 @@ export const api = {
       }
     );
     return response.data;
+  },
+
+  /**
+   * Archive a tool (set status to 'archived')
+   * @param toolId - Tool identifier
+   * @param adminToken - Admin authentication token
+   */
+  archiveTool: async (toolId: string, adminToken: string): Promise<{ tool: any; message: string }> => {
+    const response = await axios.post(
+      `${API_BASE_URL}/admin/tools/${toolId}/archive`,
+      {},
+      {
+        headers: {
+          'X-Admin-Token': adminToken
+        }
+      }
+    );
+    return response.data;
+  },
+
+  /**
+   * Unarchive a tool (set status to 'active')
+   * @param toolId - Tool identifier
+   * @param adminToken - Admin authentication token
+   */
+  unarchiveTool: async (toolId: string, adminToken: string): Promise<{ tool: any; message: string }> => {
+    const response = await axios.post(
+      `${API_BASE_URL}/admin/tools/${toolId}/unarchive`,
+      {},
+      {
+        headers: {
+          'X-Admin-Token': adminToken
+        }
+      }
+    );
+    return response.data;
   }
 };
