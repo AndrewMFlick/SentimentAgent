@@ -23,7 +23,9 @@ class ToolService:
     def __init__(
         self,
         tools_container,
-        aliases_container
+        aliases_container,
+        merge_records_container=None,
+        admin_logs_container=None
     ):
         """
         Initialize ToolService.
@@ -31,9 +33,13 @@ class ToolService:
         Args:
             tools_container: Cosmos DB container for Tools (sync)
             aliases_container: Cosmos DB container for ToolAliases (sync)
+            merge_records_container: Cosmos DB container for ToolMergeRecords
+            admin_logs_container: Cosmos DB container for AdminActionLogs
         """
         self.tools_container = tools_container
         self.aliases_container = aliases_container
+        self.merge_records_container = merge_records_container
+        self.admin_logs_container = admin_logs_container
 
     async def create_tool(self, tool_data: ToolCreateRequest) -> Dict[str, Any]:
         """
