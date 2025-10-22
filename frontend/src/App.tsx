@@ -1,7 +1,7 @@
 import { BrowserRouter as Router, Routes, Route, Link } from 'react-router-dom';
 import { Dashboard } from './components/Dashboard';
 import { HotTopics } from './components/HotTopics';
-import { AdminToolApproval } from './components/AdminToolApproval';
+import { AdminPanel } from './components/AdminPanel';
 
 function App() {
   return (
@@ -44,7 +44,7 @@ function App() {
         <Routes>
           <Route path="/" element={<Dashboard />} />
           <Route path="/hot-topics" element={<HotTopics />} />
-          <Route path="/admin" element={<AdminToolApproval />} />
+          <Route path="/admin" element={<AdminPanel />} />
         </Routes>
       </div>
     </Router>

@@ -130,3 +130,76 @@ export interface LastUpdated {
   last_aggregation: string;
   last_detection: string;
 }
+
+// Tool Management Feature Types (Admin)
+export enum ToolCategory {
+  CODE_ASSISTANT = 'code_assistant',
+  CHATBOT = 'chatbot',
+  IMAGE_GENERATION = 'image_generation',
+  WRITING = 'writing',
+  PRODUCTIVITY = 'productivity',
+  OTHER = 'other'
+}
+
+export enum ToolStatus {
+  ACTIVE = 'active',
+  INACTIVE = 'inactive',
+  DELETED = 'deleted'
+}
+
+export interface Tool {
+  id: string;
+  partitionKey: string;
+  name: string;
+  slug: string;
+  vendor: string;
+  category: ToolCategory;
+  description: string;
+  status: ToolStatus;
+  metadata: Record<string, any>;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface ToolAlias {
+  id: string;
+  partitionKey: string;
+  alias_tool_id: string;
+  primary_tool_id: string;
+  created_at: string;
+  created_by: string;
+}
+
+export interface ToolCreateRequest {
+  name: string;
+  vendor: string;
+  category: ToolCategory;
+  description?: string;
+  metadata?: Record<string, any>;
+}
+
+export interface ToolUpdateRequest {
+  name?: string;
+  vendor?: string;
+  category?: ToolCategory;
+  description?: string;
+  status?: ToolStatus;
+  metadata?: Record<string, any>;
+}
+
+export interface AliasLinkRequest {
+  alias_tool_id: string;
+  primary_tool_id: string;
+}
+
+export interface ToolResponse {
+  tool: Tool;
+  aliases: ToolAlias[];
+}
+
+export interface ToolListResponse {
+  tools: Tool[];
+  total: number;
+  page: number;
+  limit: number;
+}

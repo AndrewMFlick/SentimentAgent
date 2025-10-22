@@ -4,13 +4,19 @@
  * Admin panel for reviewing and approving/rejecting auto-detected AI tools
  */
 import { useState } from 'react';
-import { usePendingTools, useApproveTool, useRejectTool } from '../services/toolApi';
+import { usePendingTools, useApproveTool, useRejectTool, useLinkAlias, useAllToolsAdmin } from '../services/toolApi';
+import { AliasLinkModal } from './AliasLinkModal';
+import { AITool } from '../types';
 
 export const AdminToolApproval = () => {
   const [adminToken, setAdminToken] = useState<string>('');
   const [isTokenSet, setIsTokenSet] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
   const [actionSuccess, setActionSuccess] = useState<string | null>(null);
+  
+  // Alias linking state
+  const [showAliasModal, setShowAliasModal] = useState(false);
+  const [selectedToolForAlias, setSelectedToolForAlias] = useState<AITool | null>(null);
 
   // Fetch pending tools (only if token is set)
   const {
@@ -19,10 +25,18 @@ export const AdminToolApproval = () => {
     error: pendingError,
     refetch: refetchPending
   } = usePendingTools(isTokenSet ? adminToken : null);
+  
+  // Fetch all approved tools for alias management
+  const {
+    data: toolsData,
+    isLoading: isLoadingTools,
+    refetch: refetchTools
+  } = useAllToolsAdmin(isTokenSet ? adminToken : null);
 
   // Approval/rejection hooks
   const { approveTool, isLoading: isApproving } = useApproveTool(adminToken);
   const { rejectTool, isLoading: isRejecting } = useRejectTool(adminToken);
+  const { linkAlias, isLoading: isLinking } = useLinkAlias(adminToken);
 
   const handleSetToken = (e: React.FormEvent) => {
     e.preventDefault();
@@ -70,6 +84,55 @@ export const AdminToolApproval = () => {
     setIsTokenSet(false);
     setActionError(null);
     setActionSuccess(null);
+  };
+  
+  const handleOpenAliasModal = (tool: AITool) => {
+    setSelectedToolForAlias(tool);
+    setShowAliasModal(true);
+    setActionError(null);
+    setActionSuccess(null);
+  };
+  
+  const handleLinkAlias = async (primaryToolId: string) => {
+    if (!selectedToolForAlias) return;
+    
+    setActionError(null);
+    setActionSuccess(null);
+    
+    try {
+      await linkAlias(selectedToolForAlias.id, primaryToolId);
+      setActionSuccess(`Successfully linked "${selectedToolForAlias.name}" as alias`);
+      setShowAliasModal(false);
+      setSelectedToolForAlias(null);
+      // Refetch tools to show updated alias relationships
+      await refetchTools();
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Failed to link alias';
+      setActionError(message);
+    }
+  };
+
+  // Tool management handlers
+  const handleEditTool = (tool: Tool) => {
+    setEditingTool(tool);
+    setActionError(null);
+    setActionSuccess(null);
+  };
+
+  const handleDeleteTool = (tool: Tool) => {
+    setDeletingTool(tool);
+    setActionError(null);
+    setActionSuccess(null);
+  };
+
+  const handleEditSuccess = () => {
+    setActionSuccess('Tool updated successfully');
+    setRefreshTrigger(prev => prev + 1);
+  };
+
+  const handleDeleteSuccess = () => {
+    setActionSuccess('Tool deleted successfully');
+    setRefreshTrigger(prev => prev + 1);
   };
 
   // Token input form
@@ -162,9 +225,11 @@ export const AdminToolApproval = () => {
         <div className="glass-card p-8">
           <div className="flex justify-between items-start mb-6">
             <div>
-              <h1 className="text-4xl mb-3 text-white font-bold">Admin Tool Approval</h1>
+              <h1 className="text-4xl mb-3 text-white font-bold">Admin Tool Management</h1>
               <p className="text-gray-400 text-sm">
-                Review and approve auto-detected AI tools ({pendingTools.length} pending)
+                {activeTab === 'pending' 
+                  ? `Review and approve auto-detected AI tools (${pendingTools.length} pending)`
+                  : 'Manage all AI tools in the system'}
               </p>
             </div>
             <button onClick={handleClearToken} className="glass-button">
@@ -184,15 +249,42 @@ export const AdminToolApproval = () => {
             </div>
           )}
 
-          {/* Pending tools table */}
-          {pendingTools.length === 0 ? (
-            <div className="text-center py-20 px-5">
-              <p className="text-xl text-gray-300 mb-2">No pending tools</p>
-              <p className="text-sm text-gray-500">
-                All auto-detected tools have been reviewed
-              </p>
-            </div>
-          ) : (
+          {/* Tab Navigation */}
+          <div className="flex gap-2 border-b border-glass-border mb-6">
+            <button
+              onClick={() => setActiveTab('pending')}
+              className={`px-6 py-3 font-bold text-sm transition-all ${
+                activeTab === 'pending'
+                  ? 'border-b-2 border-blue-500 text-blue-400'
+                  : 'text-gray-400 hover:text-gray-200'
+              }`}
+            >
+              Pending Approvals {pendingTools.length > 0 && `(${pendingTools.length})`}
+            </button>
+            <button
+              onClick={() => setActiveTab('manage')}
+              className={`px-6 py-3 font-bold text-sm transition-all ${
+                activeTab === 'manage'
+                  ? 'border-b-2 border-blue-500 text-blue-400'
+                  : 'text-gray-400 hover:text-gray-200'
+              }`}
+            >
+              Manage Tools
+            </button>
+          </div>
+
+          {/* Tab Content */}
+          {activeTab === 'pending' && (
+            <>
+              {/* Pending tools table */}
+              {pendingTools.length === 0 ? (
+                <div className="text-center py-20 px-5">
+                  <p className="text-xl text-gray-300 mb-2">No pending tools</p>
+                  <p className="text-sm text-gray-500">
+                    All auto-detected tools have been reviewed
+                  </p>
+                </div>
+              ) : (
             <div className="overflow-x-auto mt-6">
               <table className="w-full border-collapse">
                 <thead>
@@ -258,8 +350,83 @@ export const AdminToolApproval = () => {
               dashboard.
             </p>
           </div>
+
+          {/* Tool Alias Management Section */}
+          <div className="mt-12">
+            <h2 className="text-2xl font-bold text-white mb-4">Tool Alias Management</h2>
+            <p className="text-sm text-gray-400 mb-6">
+              Link tools as aliases to consolidate sentiment data (e.g., "Codex" → "OpenAI")
+            </p>
+
+            {isLoadingTools ? (
+              <div className="flex items-center justify-center py-10">
+                <div className="border-4 border-dark-elevated border-t-blue-500 rounded-full w-10 h-10 animate-spin"></div>
+              </div>
+            ) : (
+              <div className="overflow-x-auto">
+                <table className="w-full border-collapse">
+                  <thead>
+                    <tr>
+                      <th className="text-left p-4 bg-dark-elevated/70 border-b-2 border-glass-border-strong text-sm font-bold text-gray-200">Tool Name</th>
+                      <th className="text-left p-4 bg-dark-elevated/70 border-b-2 border-glass-border-strong text-sm font-bold text-gray-200">Vendor</th>
+                      <th className="text-left p-4 bg-dark-elevated/70 border-b-2 border-glass-border-strong text-sm font-bold text-gray-200">Category</th>
+                      <th className="text-left p-4 bg-dark-elevated/70 border-b-2 border-glass-border-strong text-sm font-bold text-gray-200">Status</th>
+                      <th className="text-left p-4 bg-dark-elevated/70 border-b-2 border-glass-border-strong text-sm font-bold text-gray-200">Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {toolsData?.tools?.map((tool) => (
+                      <tr key={tool.id} className="border-b border-glass-border hover:bg-dark-elevated/30 transition-colors">
+                        <td className="p-4 text-sm">
+                          <strong className="text-white">{tool.name}</strong>
+                          {tool.description && (
+                            <div className="text-xs text-gray-500 mt-1">{tool.description}</div>
+                          )}
+                        </td>
+                        <td className="p-4 text-sm text-gray-300">{tool.vendor}</td>
+                        <td className="p-4 text-sm text-gray-300">{tool.category}</td>
+                        <td className="p-4 text-sm">
+                          <span className={`inline-block px-2 py-1 rounded text-xs font-bold ${
+                            tool.status === 'active' 
+                              ? 'bg-emerald-900/40 text-emerald-300 border border-emerald-700/50'
+                              : 'bg-gray-800/40 text-gray-400 border border-gray-700/50'
+                          }`}>
+                            {tool.status}
+                          </span>
+                        </td>
+                        <td className="p-4 text-sm">
+                          <button
+                            onClick={() => handleOpenAliasModal(tool)}
+                            disabled={isLinking}
+                            className="px-3 py-1.5 text-xs font-bold bg-blue-900/40 text-blue-300 border border-blue-700/50 rounded-lg transition-all hover:bg-blue-900/60 hover:border-blue-600/60 disabled:opacity-50 disabled:cursor-not-allowed"
+                            title="Link this tool as an alias"
+                          >
+                            🔗 Link Alias
+                          </button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
         </div>
       </div>
+
+      {/* Alias Link Modal */}
+      {showAliasModal && selectedToolForAlias && (
+        <AliasLinkModal
+          aliasToolName={selectedToolForAlias.name}
+          aliasToolId={selectedToolForAlias.id}
+          tools={toolsData?.tools || []}
+          onLink={handleLinkAlias}
+          onClose={() => {
+            setShowAliasModal(false);
+            setSelectedToolForAlias(null);
+          }}
+        />
+      )}
     </div>
   );
 };

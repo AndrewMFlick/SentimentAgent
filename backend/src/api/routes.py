@@ -12,11 +12,15 @@ from ..models import RedditPost, TrendingTopic
 from ..services import ai_agent, db
 from ..services.health import app_state
 from .tools import router as tools_router
+from .admin import router as admin_router
 
 router = APIRouter()
 
 # Include AI Tools router
 router.include_router(tools_router)
+
+# Include Admin router (already has /admin prefix)
+router.include_router(admin_router)
 
 
 class QueryRequest(BaseModel):

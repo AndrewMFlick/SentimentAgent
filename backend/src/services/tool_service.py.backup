@@ -1,0 +1,466 @@
+"""Tool management service for CRUD operations and alias resolution."""
+
+from azure.cosmos import exceptions
+import uuid
+from datetime import datetime, timezone
+from typing import List, Optional, Dict, Any
+import structlog
+
+from ..models.tool import (
+    Tool,
+    ToolAlias,
+    ToolCreateRequest,
+    ToolUpdateRequest,
+    ToolStatus,
+)
+
+logger = structlog.get_logger()
+
+
+class ToolService:
+    """Service for managing AI tools and their aliases."""
+
+    def __init__(
+        self,
+        tools_container,
+        aliases_container
+    ):
+        """
+        Initialize ToolService.
+
+        Args:
+            tools_container: Cosmos DB container for Tools
+            aliases_container: Cosmos DB container for ToolAliases
+        """
+        self.tools_container = tools_container
+        self.aliases_container = aliases_container
+
+    async def create_tool(self, tool_data: ToolCreateRequest) -> Dict[str, Any]:
+        """
+        Create a new tool.
+
+        Args:
+            tool_data: Tool creation request data
+
+        Returns:
+            Created tool document
+
+        Raises:
+            ValueError: If tool name already exists
+        """
+        # Check for duplicate name
+        existing = await self.get_tool_by_name(tool_data.name)
+        if existing:
+            raise ValueError(f"Tool name '{tool_data.name}' already exists")
+
+        now = datetime.now(timezone.utc).isoformat()
+        tool_id = str(uuid.uuid4())
+
+        tool = {
+            "id": tool_id,
+            "partitionKey": "tool",
+            "name": tool_data.name,
+            "slug": tool_data.name.lower().replace(" ", "-"),
+            "vendor": tool_data.vendor,
+            "category": tool_data.category,
+            "description": tool_data.description or "",
+            "status": "active",
+            "metadata": tool_data.metadata or {},
+            "created_at": now,
+            "updated_at": now
+        }
+
+        self.tools_container.create_item(body=tool)
+        logger.info(
+            "Tool created",
+            tool_id=tool_id,
+            name=tool_data.name,
+            category=tool_data.category
+        )
+
+        return tool
+
+    async def get_tool(self, tool_id: str) -> Optional[Dict[str, Any]]:
+        """
+        Get tool by ID.
+
+        Args:
+            tool_id: Tool UUID
+
+        Returns:
+            Tool document or None if not found
+        """
+        try:
+            query = (
+                "SELECT * FROM Tools t "
+                "WHERE t.id = @id AND t.partitionKey = 'tool' "
+                "AND t.status != 'deleted'"
+            )
+            items = self.tools_container.query_items(
+                query=query,
+                parameters=[{"name": "@id", "value": tool_id}]
+            )
+
+            results = list(items)
+
+            return results[0] if results else None
+        except Exception as e:
+            logger.error("Failed to get tool", tool_id=tool_id, error=str(e))
+            return None
+
+    async def get_tool_by_name(self, name: str) -> Optional[Dict[str, Any]]:
+        """
+        Get tool by name.
+
+        Args:
+            name: Tool name
+
+        Returns:
+            Tool document or None if not found
+        """
+        try:
+            query = (
+                "SELECT * FROM Tools t "
+                "WHERE t.name = @name AND t.partitionKey = 'tool' "
+                "AND t.status != 'deleted'"
+            )
+            items = self.tools_container.query_items(
+                query=query,
+                parameters=[{"name": "@name", "value": name}]
+            )
+
+            results = list(items)
+
+            return results[0] if results else None
+        except Exception as e:
+            logger.error("Failed to get tool by name", name=name, error=str(e))
+            return None
+
+    async def list_tools(
+        self,
+        page: int = 1,
+        limit: int = 20,
+        search: str = "",
+        category: Optional[str] = None
+    ) -> List[Dict[str, Any]]:
+        """
+        List all tools with pagination and filtering.
+
+        Args:
+            page: Page number (1-indexed)
+            limit: Results per page
+            search: Search query for tool name
+            category: Filter by category
+
+        Returns:
+            List of tool documents
+        """
+        offset = (page - 1) * limit
+
+        # Build query
+        query = (
+            "SELECT * FROM Tools t "
+            "WHERE t.partitionKey = 'tool' AND t.status = 'active'"
+        )
+
+        if search:
+            query += f" AND CONTAINS(LOWER(t.name), LOWER('{search}'))"
+
+        if category:
+            query += f" AND t.category = '{category}'"
+
+        query += f" ORDER BY t.name OFFSET {offset} LIMIT {limit}"
+
+        try:
+            items = self.tools_container.query_items(query=query)
+            results = []
+            async for item in items:
+                results.append(item)
+
+            logger.info(
+                "Tools listed",
+                count=len(results),
+                page=page,
+                search=search,
+                category=category
+            )
+            return results
+        except Exception as e:
+            logger.error("Failed to list tools", error=str(e))
+            return []
+
+    async def count_tools(
+        self,
+        search: str = "",
+        category: Optional[str] = None
+    ) -> int:
+        """
+        Count total tools matching filters.
+
+        Args:
+            search: Search query
+            category: Category filter
+
+        Returns:
+            Total count
+        """
+        query = (
+            "SELECT VALUE COUNT(1) FROM Tools t "
+            "WHERE t.partitionKey = 'tool' AND t.status = 'active'"
+        )
+
+        if search:
+            query += f" AND CONTAINS(LOWER(t.name), LOWER('{search}'))"
+
+        if category:
+            query += f" AND t.category = '{category}'"
+
+        try:
+            items = self.tools_container.query_items(query=query)
+            results = []
+            async for item in items:
+                results.append(item)
+            return results[0] if results else 0
+        except Exception as e:
+            logger.error("Failed to count tools", error=str(e))
+            return 0
+
+    async def update_tool(
+        self,
+        tool_id: str,
+        updates: ToolUpdateRequest
+    ) -> Optional[Dict[str, Any]]:
+        """
+        Update tool details.
+
+        Args:
+            tool_id: Tool UUID
+            updates: Fields to update
+
+        Returns:
+            Updated tool document or None if not found
+        """
+        tool = await self.get_tool(tool_id)
+        if not tool:
+            return None
+
+        # Apply updates
+        update_dict = updates.dict(exclude_unset=True)
+        for key, value in update_dict.items():
+            if value is not None:
+                tool[key] = value
+
+        # Update slug if name changed
+        if "name" in update_dict:
+            tool["slug"] = update_dict["name"].lower().replace(" ", "-")
+
+        tool["updated_at"] = datetime.now(timezone.utc).isoformat()
+
+        await self.tools_container.replace_item(item=tool_id, body=tool)
+        logger.info("Tool updated", tool_id=tool_id, updates=update_dict)
+
+        return tool
+
+    async def delete_tool(self, tool_id: str, hard_delete: bool = False) -> bool:
+        """
+        Delete tool (soft delete by default).
+
+        Args:
+            tool_id: Tool UUID
+            hard_delete: If True, permanently delete; else set status='deleted'
+
+        Returns:
+            True if deleted, False if not found
+        """
+        tool = await self.get_tool(tool_id)
+        if not tool:
+            return False
+
+        if hard_delete:
+            await self.tools_container.delete_item(
+                item=tool_id,
+                partition_key="tool"
+            )
+            logger.info("Tool hard deleted", tool_id=tool_id)
+        else:
+            tool["status"] = "deleted"
+            tool["updated_at"] = datetime.now(timezone.utc).isoformat()
+            await self.tools_container.replace_item(item=tool_id, body=tool)
+            logger.info("Tool soft deleted", tool_id=tool_id)
+
+        return True
+
+    async def create_alias(
+        self,
+        alias_tool_id: str,
+        primary_tool_id: str,
+        created_by: str
+    ) -> Dict[str, Any]:
+        """
+        Create alias relationship.
+
+        Args:
+            alias_tool_id: Tool ID to set as alias
+            primary_tool_id: Primary tool ID
+            created_by: Admin user ID
+
+        Returns:
+            Created alias document
+
+        Raises:
+            ValueError: If validation fails
+        """
+        # Validate both tools exist
+        alias_tool = await self.get_tool(alias_tool_id)
+        primary_tool = await self.get_tool(primary_tool_id)
+
+        if not alias_tool or not primary_tool:
+            raise ValueError("Tool not found")
+
+        # Prevent self-referencing
+        if alias_tool_id == primary_tool_id:
+            raise ValueError("Tool cannot be alias of itself")
+
+        # Check for circular aliases
+        if await self.has_circular_alias(alias_tool_id, primary_tool_id):
+            raise ValueError("Circular alias detected")
+
+        # Create alias
+        alias_id = str(uuid.uuid4())
+        alias = {
+            "id": alias_id,
+            "partitionKey": "alias",
+            "alias_tool_id": alias_tool_id,
+            "primary_tool_id": primary_tool_id,
+            "created_at": datetime.now(timezone.utc).isoformat(),
+            "created_by": created_by
+        }
+
+        await self.aliases_container.create_item(body=alias)
+        logger.info(
+            "Alias created",
+            alias_id=alias_id,
+            alias_tool=alias_tool["name"],
+            primary_tool=primary_tool["name"]
+        )
+
+        return alias
+
+    async def get_aliases(
+        self,
+        primary_tool_id: str
+    ) -> List[Dict[str, Any]]:
+        """
+        Get all aliases for a primary tool.
+
+        Args:
+            primary_tool_id: Primary tool ID
+
+        Returns:
+            List of alias documents
+        """
+        query = (
+            "SELECT * FROM ToolAliases ta "
+            "WHERE ta.primary_tool_id = @id AND ta.partitionKey = 'alias'"
+        )
+        items = self.aliases_container.query_items(
+            query=query,
+            parameters=[{"name": "@id", "value": primary_tool_id}]
+        )
+
+        results = []
+        async for item in items:
+            results.append(item)
+
+        return results
+
+    async def remove_alias(self, alias_id: str) -> bool:
+        """
+        Remove alias relationship.
+
+        Args:
+            alias_id: Alias document ID
+
+        Returns:
+            True if removed, False if not found
+        """
+        try:
+            await self.aliases_container.delete_item(
+                item=alias_id,
+                partition_key="alias"
+            )
+            logger.info("Alias removed", alias_id=alias_id)
+            return True
+        except exceptions.CosmosResourceNotFoundError:
+            return False
+
+    async def resolve_tool_id(self, tool_id: str) -> str:
+        """
+        Resolve tool ID to primary tool ID (follows aliases).
+
+        Args:
+            tool_id: Tool ID (may be alias or primary)
+
+        Returns:
+            Primary tool ID
+        """
+        query = (
+            "SELECT * FROM ToolAliases ta "
+            "WHERE ta.alias_tool_id = @id AND ta.partitionKey = 'alias'"
+        )
+        items = self.aliases_container.query_items(
+            query=query,
+            parameters=[{"name": "@id", "value": tool_id}]
+        )
+
+        results = []
+        async for item in items:
+            results.append(item)
+
+        return results[0]["primary_tool_id"] if results else tool_id
+
+    async def has_circular_alias(
+        self,
+        alias_tool_id: str,
+        primary_tool_id: str
+    ) -> bool:
+        """
+        Check if creating alias would create circular reference.
+
+        Args:
+            alias_tool_id: Proposed alias tool ID
+            primary_tool_id: Proposed primary tool ID
+
+        Returns:
+            True if circular reference detected
+        """
+        visited = set()
+        current_id = primary_tool_id
+
+        # Traverse alias chain
+        while current_id:
+            if current_id in visited:
+                return True  # Circular reference
+
+            visited.add(current_id)
+
+            # Check if current_id is an alias of something
+            query = (
+                "SELECT * FROM ToolAliases ta "
+                "WHERE ta.alias_tool_id = @id AND ta.partitionKey = 'alias'"
+            )
+            items = self.aliases_container.query_items(
+                query=query,
+                parameters=[{"name": "@id", "value": current_id}]
+            )
+
+            results = []
+            async for item in items:
+                results.append(item)
+
+            if results:
+                current_id = results[0]["primary_tool_id"]
+            else:
+                break
+
+        return alias_tool_id in visited

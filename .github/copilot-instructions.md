@@ -130,10 +130,120 @@ app = FastAPI(lifespan=lifespan)
 
 ## Recent Changes
 
+- 010-admin-tool-management: Added admin tool CRUD operations, alias linking, tool management dashboard
 - 009-glass-ui-redesign: Added TailwindCSS 3.4+, PostCSS 8+, glass morphism design system
 - 008-dashboard-ui-with: Added Python 3.13.3 (backend), TypeScript 5.3.3/React 18.2.0 (frontend)
 - 005-fix-cosmosdb-sql: Added Python 3.13.3 + Azure Cosmos SDK 4.5.1, FastAPI 0.109.2, pytest 8.0.0, structlog 24.1.0
 - 004-fix-the-cosmosdb: Added Python 3.13.3 + Azure Cosmos SDK 4.5.1, FastAPI 0.109.2, structlog 24.1.0
+
+## Admin Tool Management Patterns (Feature 010)
+
+**Service Layer Architecture**:
+
+```python
+# ToolService handles all business logic
+class ToolService:
+    def __init__(self, tools_container, aliases_container):
+        self.tools_container = tools_container
+        self.aliases_container = aliases_container
+    
+    async def create_tool(self, tool_data: ToolCreateRequest):
+        # 1. Validate duplicate names
+        # 2. Generate slug from name
+        # 3. Create with default status='active'
+        # 4. Log operation
+    
+    async def create_alias(self, alias_tool_id, primary_tool_id, created_by):
+        # 1. Validate both tools exist
+        # 2. Prevent self-reference
+        # 3. Check circular aliases
+        # 4. Create alias relationship
+```
+
+**Admin API Patterns**:
+
+```python
+# Dependency injection for ToolService
+async def get_tool_service() -> ToolService:
+    tools_container = db.database.get_container_client("Tools")
+    aliases_container = db.database.get_container_client("ToolAliases")
+    return ToolService(tools_container, aliases_container)
+
+# Endpoint with authentication
+@router.post("/admin/tools")
+async def create_tool(
+    tool_data: ToolCreateRequest,
+    x_admin_token: Optional[str] = Header(None),
+    tool_service: ToolService = Depends(get_tool_service)
+):
+    admin_user = verify_admin(x_admin_token)
+    try:
+        tool = await tool_service.create_tool(tool_data)
+        logger.info("Tool created", tool_id=tool["id"], admin=admin_user)
+        return {"tool": tool, "message": "Tool created successfully"}
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        logger.error("Failed to create tool", error=str(e), exc_info=True)
+        raise HTTPException(status_code=500, detail="Failed to create tool")
+```
+
+**Frontend Admin Components**:
+
+```tsx
+// Admin tool management component
+export default function AdminToolManagement() {
+  const [formData, setFormData] = useState<ToolCreateRequest>({
+    name: '',
+    vendor: '',
+    category: ToolCategory.CODE_ASSISTANT
+  });
+  
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    try {
+      const result = await api.createTool(formData, adminToken);
+      toast.success(result.message);
+      // Invalidate cache and refresh list
+      queryClient.invalidateQueries(['tools']);
+    } catch (error) {
+      toast.error(error.message);
+    }
+  };
+  
+  return (
+    <div className="glass-card p-6">
+      <form onSubmit={handleSubmit}>
+        {/* Form fields with validation */}
+      </form>
+    </div>
+  );
+}
+```
+
+**Alias Management Best Practices**:
+
+- Always validate for self-reference (`alias_tool_id !== primary_tool_id`)
+- Check circular aliases before creating (traverse alias chain)
+- Use soft delete for tools with sentiment data
+- Resolve aliases in sentiment aggregation queries
+- Visual indicators in UI for alias relationships (`Tool A → Tool B`)
+
+**Testing Patterns**:
+
+```python
+# Unit tests with async mocks
+@pytest.mark.asyncio
+async def test_create_alias_circular_detection(tool_service, mock_containers):
+    # Mock existing alias chain
+    async def alias_iter():
+        yield {"alias_tool_id": "b", "primary_tool_id": "a"}
+    aliases_container.query_items.return_value = alias_iter()
+    
+    # Try to create circular alias
+    with pytest.raises(ValueError, match="Circular alias"):
+        await tool_service.create_alias("a", "b", "admin")
+```
 
 
 <!-- MANUAL ADDITIONS START -->
