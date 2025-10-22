@@ -802,16 +802,26 @@ class DatabaseService:
     # AI Tools Feature Methods
 
     async def get_approved_tools(self) -> List[Dict[str, Any]]:
-        """Get all approved AI tools."""
+        """Get all approved/active AI tools for public dashboard."""
         try:
-            query = "SELECT * FROM c WHERE c.status = 'approved'"
-
-            items = list(
-                self.client.get_database_client(settings.cosmos_database)
-                .get_container_client("ai_tools")
-                .query_items(query=query, enable_cross_partition_query=True)
+            # Query the Tools container for active tools
+            query = (
+                "SELECT * FROM Tools t "
+                "WHERE t.partitionKey = 'tool' AND t.status = 'active'"
             )
 
+            if not self.tools_container:
+                logger.warning("Tools container not initialized")
+                return []
+
+            items = list(
+                self.tools_container.query_items(
+                    query=query,
+                    enable_cross_partition_query=True
+                )
+            )
+
+            logger.info(f"Retrieved {len(items)} active tools for dashboard")
             return items
         except Exception as e:
             logger.error(f"Error getting approved tools: {e}")

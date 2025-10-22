@@ -178,7 +178,7 @@ class ToolService:
         offset = (page - 1) * limit
 
         # Build query
-        query = "SELECT * FROM Tools t WHERE t.partitionKey = 'TOOL'"
+        query = "SELECT * FROM Tools t WHERE t.partitionKey = 'tool'"
 
         # Status filter (default to active only)
         if status and status != "all":
@@ -251,7 +251,7 @@ class ToolService:
         """
         query = (
             "SELECT VALUE COUNT(1) FROM Tools t "
-            "WHERE t.partitionKey = 'TOOL'"
+            "WHERE t.partitionKey = 'tool'"
         )
 
         # Status filter (default to active only)
@@ -552,7 +552,7 @@ class ToolService:
         query = (
             "SELECT * FROM Tools t "
             "WHERE t.merged_into = @tool_id "
-            "AND t.partitionKey = 'TOOL'"
+            "AND t.partitionKey = 'tool'"
         )
         items = self.tools_container.query_items(
             query=query,
@@ -703,7 +703,7 @@ class ToolService:
         # (tools that were merged into this one should not allow archiving)
         query = (
             "SELECT * FROM Tools t "
-            "WHERE t.partitionKey = 'TOOL' "
+            "WHERE t.partitionKey = 'tool' "
             "AND t.merged_into = @tool_id "
             "AND t.status != 'deleted'"
         )
@@ -785,7 +785,7 @@ class ToolService:
         try:
             query = (
                 "SELECT * FROM Tools t "
-                "WHERE t.id = @id AND t.partitionKey = 'TOOL'"
+                "WHERE t.id = @id AND t.partitionKey = 'tool'"
             )
             items = self.tools_container.query_items(
                 query=query,
