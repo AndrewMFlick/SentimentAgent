@@ -3,6 +3,7 @@ import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { api } from '../services/api';
 import { ToolTable } from './ToolTable';
 import { ToolEditModal } from './ToolEditModal';
+import { DeleteConfirmationDialog } from './DeleteConfirmationDialog';
 import { Tool } from '../types';
 
 interface AdminToolManagementProps {
@@ -21,6 +22,9 @@ export const AdminToolManagement: React.FC<AdminToolManagementProps> = ({
   
   // Edit modal state
   const [editingTool, setEditingTool] = useState<Tool | null>(null);
+  
+  // Delete modal state
+  const [deletingTool, setDeletingTool] = useState<Tool | null>(null);
   
   // Form state
   const [toolName, setToolName] = useState('');
@@ -101,9 +105,26 @@ export const AdminToolManagement: React.FC<AdminToolManagementProps> = ({
   };
 
   const handleDelete = (tool: Tool) => {
-    console.log('Delete tool:', tool);
-    // TODO: Implement delete confirmation (User Story 4)
-    alert(`Delete functionality will be implemented in User Story 4.\nTool: ${tool.name}`);
+    // T073: Show DeleteConfirmationDialog
+    setDeletingTool(tool);
+    setMessage(''); // Clear any existing messages
+  };
+
+  // T076, T077: Handle successful deletion
+  const handleDeleteSuccess = () => {
+    // T076: Invalidate cache and refresh list
+    queryClient.invalidateQueries({ queryKey: ['admin-tools'] });
+    setRefreshTrigger(prev => prev + 1);
+    
+    // T077: Success message will be shown by the dialog
+    // We'll show a message here after the dialog closes
+    setMessage(`✓ Tool permanently deleted`);
+    setMessageType('success');
+    
+    // Clear message after 3 seconds
+    setTimeout(() => {
+      setMessage('');
+    }, 3000);
   };
 
   // Category toggle handler
@@ -347,6 +368,16 @@ export const AdminToolManagement: React.FC<AdminToolManagementProps> = ({
         }}
         onConflict={handleEditConflict}
         onValidationError={handleEditValidationError}
+      />
+
+      {/* Delete Confirmation Dialog */}
+      <DeleteConfirmationDialog
+        tool={deletingTool}
+        adminToken={adminToken}
+        onClose={() => {
+          setDeletingTool(null);
+        }}
+        onSuccess={handleDeleteSuccess}
       />
     </div>
   );
