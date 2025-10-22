@@ -5,11 +5,15 @@ from typing import Optional
 import structlog
 from fastapi import APIRouter, Header, HTTPException, Query, Depends
 
-from ..models.tool import ToolCreateRequest, ToolUpdateRequest, AliasLinkRequest
+from ..models.tool import (
+    ToolCreateRequest,
+    ToolUpdateRequest,
+    AliasLinkRequest,
+    ToolMergeRequest,
+)
 from ..services.database import db
 from ..services.tool_manager import tool_manager
 from ..services.tool_service import ToolService
-from ..models.tool import ToolCreateRequest, ToolUpdateRequest, AliasLinkRequest
 
 logger = structlog.get_logger(__name__)
 
@@ -24,10 +28,20 @@ async def get_tool_service() -> ToolService:
     
     tools_container = db.database.get_container_client("Tools")
     aliases_container = db.database.get_container_client("ToolAliases")
+    admin_logs_container = db.database.get_container_client("AdminActionLogs")
+    
+    # Get sentiment container for cascade delete
+    sentiment_container = None
+    try:
+        sentiment_container = db.database.get_container_client("sentiment_scores")
+    except Exception as e:
+        logger.warning("Sentiment container not available", error=str(e))
     
     return ToolService(
         tools_container=tools_container,
-        aliases_container=aliases_container
+        aliases_container=aliases_container,
+        admin_logs_container=admin_logs_container,
+        sentiment_container=sentiment_container
     )
 
 
@@ -325,37 +339,70 @@ async def create_tool(
 @router.get("/tools")
 async def list_tools(
     page: int = Query(default=1, ge=1, description="Page number"),
-    limit: int = Query(default=20, ge=1, le=100, description="Results per page"),
+    limit: int = Query(
+        default=20, ge=1, le=100, description="Results per page"
+    ),
     search: str = Query(default="", description="Search by tool name"),
-    category: Optional[str] = Query(default=None, description="Filter by category"),
+    status: Optional[str] = Query(
+        default=None,
+        description="Filter by status: active, archived, or all"
+    ),
+    category: Optional[str] = Query(
+        default=None,
+        description="Filter by category (can repeat for multiple)"
+    ),
+    vendor: Optional[str] = Query(
+        default=None,
+        description="Filter by vendor name"
+    ),
+    sort_by: str = Query(
+        default="name",
+        description="Sort by field: name, vendor, or updated_at"
+    ),
+    sort_order: str = Query(
+        default="asc",
+        description="Sort order: asc or desc"
+    ),
     x_admin_token: Optional[str] = Header(None),
     tool_service: ToolService = Depends(get_tool_service)
 ):
     """
-    List all tools with pagination and filtering.
+    List all tools with pagination, filtering, search, and sorting.
 
     Requires admin authentication.
 
-    Args:
+    Query Parameters:
         page: Page number (1-indexed)
-        limit: Results per page
-        search: Search query
-        category: Category filter
-        x_admin_token: Admin authentication token
+        limit: Results per page (max 100)
+        search: Search query for tool name (case-insensitive)
+        status: Filter by status (active, archived, or all)
+        category: Filter by category (supports multiple)
+        vendor: Filter by vendor name
+        sort_by: Sort field (name, vendor, updated_at)
+        sort_order: Sort order (asc or desc)
 
     Returns:
-        Paginated list of tools
+        Paginated list of tools with metadata
     """
     try:
         # Verify admin access
         admin_user = verify_admin(x_admin_token)
+
+        # Parse categories (if provided as comma-separated)
+        categories = None
+        if category:
+            categories = [c.strip() for c in category.split(",")]
 
         logger.info(
             "Admin listing tools",
             page=page,
             limit=limit,
             search=search,
-            category=category,
+            status=status,
+            categories=categories,
+            vendor=vendor,
+            sort_by=sort_by,
+            sort_order=sort_order,
             admin=admin_user
         )
 
@@ -364,18 +411,41 @@ async def list_tools(
             page=page,
             limit=limit,
             search=search,
-            category=category
+            status=status,
+            categories=categories,
+            vendor=vendor,
+            sort_by=sort_by,
+            sort_order=sort_order
         )
-        
+
         total = await tool_service.count_tools(
             search=search,
-            category=category
+            status=status,
+            categories=categories,
+            vendor=vendor
         )
+
+        # Calculate pagination metadata
+        total_pages = (total + limit - 1) // limit  # Ceiling division
+        has_next = page < total_pages
+        has_prev = page > 1
+
+        # Build filters_applied metadata
+        filters_applied = {}
+        if status:
+            filters_applied["status"] = status
+        if categories:
+            filters_applied["categories"] = categories
+        if vendor:
+            filters_applied["vendor"] = vendor
+        if search:
+            filters_applied["search"] = search
 
         logger.info(
             "Tools listed successfully",
             count=len(tools),
             total=total,
+            total_pages=total_pages,
             admin=admin_user
         )
 
@@ -383,7 +453,11 @@ async def list_tools(
             "tools": tools,
             "total": total,
             "page": page,
-            "limit": limit
+            "limit": limit,
+            "total_pages": total_pages,
+            "has_next": has_next,
+            "has_prev": has_prev,
+            "filters_applied": filters_applied
         }
 
     except HTTPException:
@@ -455,10 +529,11 @@ async def update_tool(
     tool_id: str,
     updates: ToolUpdateRequest,
     x_admin_token: Optional[str] = Header(None),
+    if_match: Optional[str] = Header(None),
     tool_service: ToolService = Depends(get_tool_service)
 ):
     """
-    Update tool details.
+    Update tool details with optimistic concurrency control.
 
     Requires admin authentication.
 
@@ -466,10 +541,21 @@ async def update_tool(
         tool_id: Tool UUID
         updates: Fields to update
         x_admin_token: Admin authentication token
+        if_match: ETag value for optimistic concurrency (optional)
 
     Returns:
         Updated tool record
+
+    Raises:
+        400: Validation error (duplicate name, invalid categories)
+        404: Tool not found
+        409: Concurrent modification detected (ETag mismatch)
+        500: Server error
     """
+    from azure.cosmos import exceptions
+
+    admin_user = None
+
     try:
         # Verify admin access
         admin_user = verify_admin(x_admin_token)
@@ -478,13 +564,27 @@ async def update_tool(
             "Admin updating tool",
             tool_id=tool_id,
             updates=updates.dict(exclude_unset=True),
-            admin=admin_user
+            admin=admin_user,
+            has_etag=bool(if_match)
         )
 
-        # Update tool
-        tool = await tool_service.update_tool(tool_id, updates)
+        # Update tool with ETag-based concurrency control
+        tool = await tool_service.update_tool(
+            tool_id=tool_id,
+            updates=updates,
+            updated_by=admin_user,
+            etag=if_match,
+            # Note: FastAPI doesn't provide easy access to client IP/UA
+            # In production, you'd extract these from Request object
+            ip_address=None,
+            user_agent=None
+        )
+
         if not tool:
-            raise HTTPException(status_code=404, detail=f"Tool '{tool_id}' not found")
+            raise HTTPException(
+                status_code=404,
+                detail=f"Tool '{tool_id}' not found"
+            )
 
         logger.info(
             "Tool updated successfully",
@@ -494,6 +594,40 @@ async def update_tool(
 
         return {"tool": tool, "message": "Tool updated successfully"}
 
+    except ValueError as e:
+        # Validation errors (duplicate name, invalid categories)
+        logger.warning(
+            "Tool update validation error",
+            tool_id=tool_id,
+            error=str(e),
+            admin=admin_user
+        )
+        raise HTTPException(status_code=400, detail=str(e))
+    except exceptions.CosmosHttpResponseError as e:
+        if e.status_code == 412:
+            # Precondition failed - ETag mismatch
+            logger.warning(
+                "Concurrent modification detected",
+                tool_id=tool_id,
+                admin=admin_user
+            )
+            raise HTTPException(
+                status_code=409,
+                detail="Concurrent modification detected. "
+                "Please refresh and try again."
+            )
+        else:
+            logger.error(
+                "Cosmos DB error during tool update",
+                tool_id=tool_id,
+                status_code=e.status_code,
+                error=str(e),
+                exc_info=True
+            )
+            raise HTTPException(
+                status_code=500,
+                detail="Database error occurred"
+            )
     except HTTPException:
         raise
     except Exception as e:
@@ -513,7 +647,14 @@ async def delete_tool(
     tool_service: ToolService = Depends(get_tool_service)
 ):
     """
-    Delete a tool (soft delete - sets status to 'deleted').
+    Permanently delete a tool including all associated sentiment data.
+
+    This is a destructive operation that:
+    1. Validates the tool can be deleted (not referenced by other tools)
+    2. Retrieves sentiment count for confirmation
+    3. Permanently deletes the tool
+    4. Cascade deletes all associated sentiment data
+    5. Logs the deletion action
 
     Requires admin authentication.
 
@@ -522,27 +663,73 @@ async def delete_tool(
         x_admin_token: Admin authentication token
 
     Returns:
-        Success message
+        Deletion result with sentiment count
+
+    Raises:
+        404: Tool not found
+        409: Tool cannot be deleted (referenced by merged tools or in active job)
+        500: Server error
     """
+    admin_user = None
+    
     try:
         # Verify admin access
         admin_user = verify_admin(x_admin_token)
 
-        logger.info("Admin deleting tool", tool_id=tool_id, admin=admin_user)
-
-        # Delete tool (soft delete)
-        success = await tool_service.delete_tool(tool_id, hard_delete=False)
-        if not success:
-            raise HTTPException(status_code=404, detail=f"Tool '{tool_id}' not found")
-
         logger.info(
-            "Tool deleted successfully",
+            "Admin permanently deleting tool",
             tool_id=tool_id,
             admin=admin_user
         )
 
-        return {"message": "Tool deleted successfully"}
+        # Delete tool with hard delete (Phase 6 requirement)
+        result = await tool_service.delete_tool(
+            tool_id=tool_id,
+            deleted_by=admin_user,
+            hard_delete=True,  # Phase 6: always hard delete
+            ip_address=None,  # TODO: Extract from Request
+            user_agent=None   # TODO: Extract from Request
+        )
 
+        logger.info(
+            "Tool permanently deleted",
+            tool_id=tool_id,
+            tool_name=result["tool_name"],
+            sentiment_count=result["sentiment_count"],
+            admin=admin_user
+        )
+
+        return {
+            "message": "Tool permanently deleted",
+            "tool_id": result["tool_id"],
+            "tool_name": result["tool_name"],
+            "sentiment_count": result["sentiment_count"]
+        }
+
+    except ValueError as e:
+        # Validation errors (tool not found, referenced, in use)
+        error_msg = str(e)
+        logger.warning(
+            "Tool deletion validation error",
+            tool_id=tool_id,
+            error=error_msg,
+            admin=admin_user
+        )
+        
+        # T068: Return 409 Conflict if tool is referenced or in active job
+        if "referenced by" in error_msg or "in use" in error_msg:
+            raise HTTPException(
+                status_code=409,
+                detail=error_msg
+            )
+        
+        # 404 if tool not found
+        if "not found" in error_msg:
+            raise HTTPException(status_code=404, detail=error_msg)
+        
+        # Other validation errors
+        raise HTTPException(status_code=400, detail=error_msg)
+        
     except HTTPException:
         raise
     except Exception as e:
@@ -552,7 +739,155 @@ async def delete_tool(
             error=str(e),
             exc_info=True
         )
-        raise HTTPException(status_code=500, detail="Failed to delete tool")
+        raise HTTPException(
+            status_code=500,
+            detail="Failed to delete tool"
+        )
+
+
+@router.post("/tools/{tool_id}/archive")
+async def archive_tool(
+    tool_id: str,
+    x_admin_token: Optional[str] = Header(None),
+    tool_service: ToolService = Depends(get_tool_service)
+):
+    """
+    Archive a tool (set status to 'archived').
+    
+    This preserves historical sentiment data while removing the tool
+    from the active list.
+
+    Requires admin authentication.
+
+    Args:
+        tool_id: Tool UUID
+        x_admin_token: Admin authentication token
+
+    Returns:
+        Updated tool record
+
+    Raises:
+        404: Tool not found
+        409: Tool cannot be archived (e.g., has tools merged into it)
+        500: Server error
+    """
+    admin_user = None
+
+    try:
+        # Verify admin access
+        admin_user = verify_admin(x_admin_token)
+
+        logger.info("Admin archiving tool", tool_id=tool_id, admin=admin_user)
+
+        # Archive tool
+        tool = await tool_service.archive_tool(
+            tool_id=tool_id,
+            archived_by=admin_user,
+            ip_address=None,
+            user_agent=None
+        )
+
+        if not tool:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Tool '{tool_id}' not found"
+            )
+
+        logger.info(
+            "Tool archived successfully",
+            tool_id=tool_id,
+            tool_name=tool.get("name"),
+            admin=admin_user
+        )
+
+        return {"tool": tool, "message": "Tool archived successfully"}
+
+    except ValueError as e:
+        # Validation errors (e.g., tool has merged tools)
+        logger.warning(
+            "Tool archive validation error",
+            tool_id=tool_id,
+            error=str(e),
+            admin=admin_user
+        )
+        raise HTTPException(status_code=409, detail=str(e))
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(
+            "Failed to archive tool",
+            tool_id=tool_id,
+            error=str(e),
+            exc_info=True
+        )
+        raise HTTPException(status_code=500, detail="Failed to archive tool")
+
+
+@router.post("/tools/{tool_id}/unarchive")
+async def unarchive_tool(
+    tool_id: str,
+    x_admin_token: Optional[str] = Header(None),
+    tool_service: ToolService = Depends(get_tool_service)
+):
+    """
+    Unarchive a tool (set status to 'active').
+    
+    This restores a previously archived tool to the active list.
+
+    Requires admin authentication.
+
+    Args:
+        tool_id: Tool UUID
+        x_admin_token: Admin authentication token
+
+    Returns:
+        Updated tool record
+
+    Raises:
+        404: Tool not found
+        500: Server error
+    """
+    admin_user = None
+
+    try:
+        # Verify admin access
+        admin_user = verify_admin(x_admin_token)
+
+        logger.info("Admin unarchiving tool", tool_id=tool_id, admin=admin_user)
+
+        # Unarchive tool
+        tool = await tool_service.unarchive_tool(
+            tool_id=tool_id,
+            unarchived_by=admin_user,
+            ip_address=None,
+            user_agent=None
+        )
+
+        if not tool:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Tool '{tool_id}' not found"
+            )
+
+        logger.info(
+            "Tool unarchived successfully",
+            tool_id=tool_id,
+            tool_name=tool.get("name"),
+            admin=admin_user
+        )
+
+        return {"tool": tool, "message": "Tool unarchived successfully"}
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(
+            "Failed to unarchive tool",
+            tool_id=tool_id,
+            error=str(e),
+            exc_info=True
+        )
+        raise HTTPException(status_code=500, detail="Failed to unarchive tool")
 
 
 @router.put("/tools/{tool_id}/alias")
@@ -695,3 +1030,377 @@ async def unlink_alias(
             exc_info=True
         )
         raise HTTPException(status_code=500, detail="Failed to unlink alias")
+
+
+@router.post("/tools/merge")
+async def merge_tools(
+    merge_request: ToolMergeRequest,
+    x_admin_token: Optional[str] = Header(None),
+    tool_service: ToolService = Depends(get_tool_service)
+):
+    """
+    Merge multiple tools into a single primary tool.
+
+    This operation:
+    - Validates all tools exist and are active
+    - Migrates sentiment data with source attribution
+    - Updates target tool with new categories/vendor
+    - Archives source tools with merged_into reference
+    - Creates merge record and audit log
+
+    Requires admin authentication.
+
+    Args:
+        merge_request: Merge request with target, sources, categories, vendor, notes
+        x_admin_token: Admin authentication token
+
+    Returns:
+        merge_record: Full merge metadata
+        target_tool: Updated target tool
+        archived_tools: List of archived source tools
+        warnings: List of metadata conflict warnings (if any)
+        message: Success message with counts
+
+    Raises:
+        400: Validation error (invalid request, circular merge, etc.)
+        404: One or more tools not found
+        409: Conflict (tool already merged, not active, etc.)
+        500: Server error
+    """
+    try:
+        # Verify admin access
+        admin_user = verify_admin(x_admin_token)
+
+        logger.info(
+            "Admin initiating tool merge",
+            target_tool_id=merge_request.target_tool_id,
+            source_tool_count=len(merge_request.source_tool_ids),
+            admin=admin_user
+        )
+
+        # Validate merge request
+        if len(merge_request.source_tool_ids) > 10:
+            raise HTTPException(
+                status_code=400,
+                detail="Cannot merge more than 10 source tools at once"
+            )
+
+        if len(set(merge_request.source_tool_ids)) != len(
+            merge_request.source_tool_ids
+        ):
+            raise HTTPException(
+                status_code=400,
+                detail="Source tool IDs must be unique"
+            )
+
+        if merge_request.target_tool_id in merge_request.source_tool_ids:
+            raise HTTPException(
+                status_code=400,
+                detail="Cannot merge tool into itself"
+            )
+
+        # Validate categories are valid enum values
+        try:
+            # Convert request categories to strings for the service
+            target_categories = [
+                cat.value if hasattr(cat, 'value') else cat
+                for cat in merge_request.final_categories
+            ]
+        except Exception as e:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Invalid category values: {str(e)}"
+            )
+
+        # Perform merge
+        result = await tool_service.merge_tools(
+            target_tool_id=merge_request.target_tool_id,
+            source_tool_ids=merge_request.source_tool_ids,
+            target_categories=target_categories,
+            target_vendor=merge_request.final_vendor,
+            merged_by=admin_user,
+            notes=merge_request.notes
+        )
+
+        sentiment_count = result["merge_record"]["sentiment_count"]
+        source_count = len(result["archived_tools"])
+        target_name = result["target_tool"].get("name", "tool")
+
+        plural = 's' if source_count != 1 else ''
+        message = (
+            f"Successfully merged {source_count} tool{plural} "
+            f"into {target_name}. "
+            f"Migrated {sentiment_count:,} sentiment records."
+        )
+
+        if result.get("warnings"):
+            message += (
+                " Merge completed with warnings. "
+                "Please review metadata differences."
+            )
+
+        logger.info(
+            "Tools merged successfully",
+            target_tool_id=merge_request.target_tool_id,
+            source_count=source_count,
+            sentiment_count=sentiment_count,
+            admin=admin_user
+        )
+
+        return {
+            "merge_record": result["merge_record"],
+            "target_tool": result["target_tool"],
+            "archived_tools": result["archived_tools"],
+            "warnings": result.get("warnings", []),
+            "message": message
+        }
+
+    except ValueError as e:
+        # Validation errors from ToolService
+        error_msg = str(e)
+        admin_user = verify_admin(x_admin_token)  # Get admin for logging
+        
+        # Determine appropriate status code
+        if "not found" in error_msg.lower():
+            status_code = 404
+        elif any(
+            word in error_msg.lower()
+            for word in ["already merged", "must be active", "merged into"]
+        ):
+            status_code = 409
+        else:
+            status_code = 400
+
+        logger.warning(
+            "Tool merge validation error",
+            error=error_msg,
+            status_code=status_code,
+            admin=admin_user
+        )
+        raise HTTPException(status_code=status_code, detail=error_msg)
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(
+            "Failed to merge tools",
+            target_tool_id=merge_request.target_tool_id,
+            error=str(e),
+            exc_info=True
+        )
+        raise HTTPException(
+            status_code=500,
+            detail=(
+                "An error occurred during the merge operation. "
+                "All changes have been rolled back."
+            )
+        )
+
+
+@router.get("/tools/{tool_id}/merge-history")
+async def get_merge_history(
+    tool_id: str,
+    page: int = Query(1, ge=1, description="Page number (1-indexed)"),
+    limit: int = Query(
+        10,
+        ge=1,
+        le=100,
+        description="Records per page (1-100)"
+    ),
+    x_admin_token: Optional[str] = Header(None),
+    tool_service: ToolService = Depends(get_tool_service)
+):
+    """
+    Get merge history for a tool.
+
+    Returns all merge operations where the specified tool was the target
+    (i.e., other tools were merged into it).
+
+    Requires admin authentication.
+
+    Args:
+        tool_id: Tool identifier
+        page: Page number (1-indexed)
+        limit: Records per page (1-100)
+        x_admin_token: Admin authentication token
+
+    Returns:
+        merge_records: List of merge operation records
+        total: Total number of merge operations
+        page: Current page number
+        limit: Records per page
+        has_more: Whether there are more records
+
+    Raises:
+        404: Tool not found
+        500: Server error
+    """
+    try:
+        # Verify admin access
+        admin_user = verify_admin(x_admin_token)
+
+        logger.info(
+            "Admin fetching merge history",
+            tool_id=tool_id,
+            page=page,
+            limit=limit,
+            admin=admin_user
+        )
+
+        # Get merge history
+        result = await tool_service.get_merge_history(
+            tool_id=tool_id,
+            page=page,
+            limit=limit
+        )
+
+        logger.info(
+            "Merge history retrieved",
+            tool_id=tool_id,
+            count=len(result["merge_records"]),
+            total=result["total"],
+            admin=admin_user
+        )
+
+        return result
+
+    except ValueError as e:
+        error_msg = str(e)
+        admin_user = verify_admin(x_admin_token)  # Get admin for logging
+
+        # Determine status code
+        if "not found" in error_msg.lower():
+            status_code = 404
+        else:
+            status_code = 400
+
+        logger.warning(
+            "Merge history validation error",
+            error=error_msg,
+            status_code=status_code,
+            tool_id=tool_id,
+            admin=admin_user
+        )
+        raise HTTPException(status_code=status_code, detail=error_msg)
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(
+            "Failed to get merge history",
+            tool_id=tool_id,
+            error=str(e),
+            exc_info=True
+        )
+        raise HTTPException(
+            status_code=500,
+            detail="Failed to retrieve merge history"
+        )
+
+
+@router.get("/tools/{tool_id}/audit-log")
+async def get_audit_log(
+    tool_id: str,
+    page: int = Query(1, ge=1, description="Page number (1-indexed)"),
+    limit: int = Query(
+        20,
+        ge=1,
+        le=100,
+        description="Records per page (1-100)"
+    ),
+    action_type: Optional[str] = Query(
+        None,
+        description="Filter by action type (created, edited, archived, unarchived, deleted, merged)"
+    ),
+    x_admin_token: Optional[str] = Header(None),
+    tool_service: ToolService = Depends(get_tool_service)
+):
+    """
+    Get audit log for a specific tool.
+
+    Returns all administrative actions performed on the tool,
+    including create, edit, archive, delete, and merge operations.
+
+    Requires admin authentication.
+
+    Args:
+        tool_id: Tool identifier
+        page: Page number (1-indexed)
+        limit: Records per page (1-100)
+        action_type: Optional filter by action type
+        x_admin_token: Admin authentication token
+
+    Returns:
+        audit_records: List of audit log entries
+        total: Total number of audit records
+        page: Current page number
+        limit: Records per page
+        has_more: Whether there are more records
+
+    Raises:
+        404: Tool not found
+        500: Server error
+    """
+    try:
+        # Verify admin access
+        admin_user = verify_admin(x_admin_token)
+
+        logger.info(
+            "Admin fetching audit log",
+            tool_id=tool_id,
+            page=page,
+            limit=limit,
+            action_type=action_type,
+            admin=admin_user
+        )
+
+        # Get audit log
+        result = await tool_service.get_audit_log(
+            tool_id=tool_id,
+            page=page,
+            limit=limit,
+            action_type=action_type
+        )
+
+        logger.info(
+            "Audit log retrieved",
+            tool_id=tool_id,
+            count=len(result["audit_records"]),
+            total=result["total"],
+            admin=admin_user
+        )
+
+        return result
+
+    except ValueError as e:
+        error_msg = str(e)
+        admin_user = verify_admin(x_admin_token)  # Get admin for logging
+
+        # Determine status code
+        if "not found" in error_msg.lower():
+            status_code = 404
+        else:
+            status_code = 400
+
+        logger.warning(
+            "Audit log validation error",
+            error=error_msg,
+            status_code=status_code,
+            tool_id=tool_id,
+            admin=admin_user
+        )
+        raise HTTPException(status_code=status_code, detail=error_msg)
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(
+            "Failed to get audit log",
+            tool_id=tool_id,
+            error=str(e),
+            exc_info=True
+        )
+        raise HTTPException(
+            status_code=500,
+            detail="Failed to retrieve audit log"
+        )

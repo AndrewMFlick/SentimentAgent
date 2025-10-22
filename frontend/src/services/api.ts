@@ -218,25 +218,53 @@ export const api = {
   },
 
   /**
-   * List all tools with pagination
-   * @param page - Page number
-   * @param limit - Results per page
-   * @param search - Search query
-   * @param category - Category filter
+   * List all tools with pagination and filtering
+   * @param options - Query parameters for filtering and pagination
    * @param adminToken - Admin authentication token
    */
   listAdminTools: async (
-    page: number = 1,
-    limit: number = 20,
-    search: string = '',
-    category: string | null = null,
+    options: {
+      page?: number;
+      limit?: number;
+      search?: string;
+      status?: string;
+      category?: string[];
+      vendor?: string;
+      sort_by?: string;
+      sort_order?: 'asc' | 'desc';
+    } = {},
     adminToken: string
-  ): Promise<any> => {
+  ): Promise<{
+    tools: any[];
+    pagination: {
+      page: number;
+      limit: number;
+      total_items: number;
+      total_pages: number;
+      has_next: boolean;
+      has_prev: boolean;
+    };
+    filters_applied: {
+      status?: string;
+      categories?: string[];
+      vendor?: string;
+      search?: string;
+      sort_by?: string;
+      sort_order?: string;
+    };
+  }> => {
     const params = new URLSearchParams();
-    params.append('page', page.toString());
-    params.append('limit', limit.toString());
-    if (search) params.append('search', search);
-    if (category) params.append('category', category);
+    
+    if (options.page) params.append('page', options.page.toString());
+    if (options.limit) params.append('limit', options.limit.toString());
+    if (options.search) params.append('search', options.search);
+    if (options.status) params.append('status', options.status);
+    if (options.category && options.category.length > 0) {
+      params.append('category', options.category.join(','));
+    }
+    if (options.vendor) params.append('vendor', options.vendor);
+    if (options.sort_by) params.append('sort_by', options.sort_by);
+    if (options.sort_order) params.append('sort_order', options.sort_order);
 
     const response = await axios.get(
       `${API_BASE_URL}/admin/tools?${params}`,
@@ -267,30 +295,49 @@ export const api = {
   },
 
   /**
-   * Update a tool
+   * Update a tool with optimistic concurrency control
    * @param toolId - Tool identifier
    * @param updates - Fields to update
    * @param adminToken - Admin authentication token
+   * @param etag - Optional ETag for optimistic concurrency (If-Match header)
    */
-  updateTool: async (toolId: string, updates: any, adminToken: string): Promise<{ tool: any; message: string }> => {
+  updateTool: async (
+    toolId: string,
+    updates: any,
+    adminToken: string,
+    etag?: string
+  ): Promise<{ tool: any; message: string }> => {
+    const headers: Record<string, string> = {
+      'X-Admin-Token': adminToken
+    };
+
+    // Add ETag header if provided for optimistic concurrency control
+    if (etag) {
+      headers['If-Match'] = etag;
+    }
+
     const response = await axios.put(
       `${API_BASE_URL}/admin/tools/${toolId}`,
       updates,
       {
-        headers: {
-          'X-Admin-Token': adminToken
-        }
+        headers
       }
     );
     return response.data;
   },
 
   /**
-   * Delete a tool (soft delete)
+   * Permanently delete a tool including all sentiment data
    * @param toolId - Tool identifier
    * @param adminToken - Admin authentication token
+   * @returns Deletion result with sentiment count
    */
-  deleteTool: async (toolId: string, adminToken: string): Promise<{ message: string }> => {
+  deleteTool: async (toolId: string, adminToken: string): Promise<{ 
+    message: string;
+    tool_id: string;
+    tool_name: string;
+    sentiment_count: number;
+  }> => {
     const response = await axios.delete(
       `${API_BASE_URL}/admin/tools/${toolId}`,
       {
@@ -330,6 +377,147 @@ export const api = {
     const response = await axios.delete(
       `${API_BASE_URL}/admin/tools/${aliasToolId}/alias`,
       {
+        headers: {
+          'X-Admin-Token': adminToken
+        }
+      }
+    );
+    return response.data;
+  },
+
+  /**
+   * Archive a tool (set status to 'archived')
+   * @param toolId - Tool identifier
+   * @param adminToken - Admin authentication token
+   */
+  archiveTool: async (toolId: string, adminToken: string): Promise<{ tool: any; message: string }> => {
+    const response = await axios.post(
+      `${API_BASE_URL}/admin/tools/${toolId}/archive`,
+      {},
+      {
+        headers: {
+          'X-Admin-Token': adminToken
+        }
+      }
+    );
+    return response.data;
+  },
+
+  /**
+   * Unarchive a tool (set status to 'active')
+   * @param toolId - Tool identifier
+   * @param adminToken - Admin authentication token
+   */
+  unarchiveTool: async (toolId: string, adminToken: string): Promise<{ tool: any; message: string }> => {
+    const response = await axios.post(
+      `${API_BASE_URL}/admin/tools/${toolId}/unarchive`,
+      {},
+      {
+        headers: {
+          'X-Admin-Token': adminToken
+        }
+      }
+    );
+    return response.data;
+  },
+
+  /**
+   * Merge multiple tools into a single primary tool
+   * @param mergeData - Merge configuration with target, sources, categories, vendor
+   * @param adminToken - Admin authentication token
+   * @returns Merge result with updated tool, archived sources, and warnings
+   */
+  mergeTool: async (
+    mergeData: {
+      target_tool_id: string;
+      source_tool_ids: string[];
+      final_categories: string[];
+      final_vendor: string;
+      notes?: string;
+    },
+    adminToken: string
+  ): Promise<{
+    merge_record: any;
+    target_tool: any;
+    archived_tools: any[];
+    warnings: string[];
+    message: string;
+  }> => {
+    const response = await axios.post(
+      `${API_BASE_URL}/admin/tools/merge`,
+      mergeData,
+      {
+        headers: {
+          'X-Admin-Token': adminToken
+        }
+      }
+    );
+    return response.data;
+  },
+
+  /**
+   * Get merge history for a tool (where tool was target)
+   * @param toolId - Tool identifier
+   * @param adminToken - Admin authentication token
+   * @param page - Page number (1-indexed)
+   * @param limit - Records per page (1-100)
+   * @returns Merge history with pagination
+   */
+  getMergeHistory: async (
+    toolId: string,
+    adminToken: string,
+    page: number = 1,
+    limit: number = 10
+  ): Promise<{
+    merge_records: any[];
+    total: number;
+    page: number;
+    limit: number;
+    has_more: boolean;
+  }> => {
+    const response = await axios.get(
+      `${API_BASE_URL}/admin/tools/${toolId}/merge-history`,
+      {
+        params: { page, limit },
+        headers: {
+          'X-Admin-Token': adminToken
+        }
+      }
+    );
+    return response.data;
+  },
+
+  /**
+   * Get audit log for a tool
+   * @param toolId - Tool identifier
+   * @param adminToken - Admin authentication token
+   * @param page - Page number (1-indexed)
+   * @param limit - Records per page (1-100)
+   * @param actionType - Optional filter by action type
+   * @returns Audit log with pagination
+   */
+  getAuditLog: async (
+    toolId: string,
+    adminToken: string,
+    page: number = 1,
+    limit: number = 20,
+    actionType?: string
+  ): Promise<{
+    audit_records: any[];
+    total: number;
+    page: number;
+    limit: number;
+    has_more: boolean;
+  }> => {
+    const params: any = { page, limit };
+    if (actionType) {
+      params.action_type = actionType;
+    }
+
+    const response = await axios.get(
+      `${API_BASE_URL}/admin/tools/${toolId}/audit-log`,
+      {
+        params,
         headers: {
           'X-Admin-Token': adminToken
         }

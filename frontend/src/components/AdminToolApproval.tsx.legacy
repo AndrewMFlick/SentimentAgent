@@ -220,7 +220,8 @@ export const AdminToolApproval = () => {
 
   // Main admin panel
   return (
-    <div className="min-h-screen bg-gradient-to-br from-dark-bg via-dark-surface to-dark-bg p-5">
+    <>
+      <div className="min-h-screen bg-gradient-to-br from-dark-bg via-dark-surface to-dark-bg p-5">
       <div className="max-w-screen-xl mx-auto">
         <div className="glass-card p-8">
           <div className="flex justify-between items-start mb-6">
@@ -285,8 +286,8 @@ export const AdminToolApproval = () => {
                   </p>
                 </div>
               ) : (
-            <div className="overflow-x-auto mt-6">
-              <table className="w-full border-collapse">
+                <div className="overflow-x-auto mt-6">
+                  <table className="w-full border-collapse">
                 <thead>
                   <tr>
                     <th className="text-left p-4 bg-dark-elevated/70 border-b-2 border-glass-border-strong text-sm font-bold text-gray-200">Tool Name</th>
@@ -341,22 +342,27 @@ export const AdminToolApproval = () => {
                 </tbody>
               </table>
             </div>
+              )}
+
+              <div className="mt-8 p-5 bg-dark-elevated/50 border border-glass-border rounded-lg">
+                <p className="text-xs text-gray-400 m-0">
+                  <strong className="text-gray-300">Note:</strong> Tools with 50+ mentions in the last 7 days are
+                  automatically queued for approval. Approved tools will appear in the public
+                  dashboard.
+                </p>
+              </div>
+            </>
           )}
 
-          <div className="mt-8 p-5 bg-dark-elevated/50 border border-glass-border rounded-lg">
-            <p className="text-xs text-gray-400 m-0">
-              <strong className="text-gray-300">Note:</strong> Tools with 50+ mentions in the last 7 days are
-              automatically queued for approval. Approved tools will appear in the public
-              dashboard.
-            </p>
-          </div>
-
-          {/* Tool Alias Management Section */}
-          <div className="mt-12">
-            <h2 className="text-2xl font-bold text-white mb-4">Tool Alias Management</h2>
-            <p className="text-sm text-gray-400 mb-6">
-              Link tools as aliases to consolidate sentiment data (e.g., "Codex" → "OpenAI")
-            </p>
+          {/* Manage Tools Tab */}
+          {activeTab === 'manage' && (
+            <>
+              {/* Tool Alias Management Section */}
+              <div className="mt-12">
+                <h2 className="text-2xl font-bold text-white mb-4">Tool Alias Management</h2>
+                <p className="text-sm text-gray-400 mb-6">
+                  Link tools as aliases to consolidate sentiment data (e.g., "Codex" → "OpenAI")
+                </p>
 
             {isLoadingTools ? (
               <div className="flex items-center justify-center py-10">
@@ -410,9 +416,12 @@ export const AdminToolApproval = () => {
                 </table>
               </div>
             )}
-          </div>
+              </div>
+            </>
+          )}
         </div>
       </div>
+    </div>
 
       {/* Alias Link Modal */}
       {showAliasModal && selectedToolForAlias && (
@@ -427,7 +436,7 @@ export const AdminToolApproval = () => {
           }}
         />
       )}
-    </div>
+    </>
   );
 };
 

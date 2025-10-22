@@ -134,17 +134,23 @@ export interface LastUpdated {
 // Tool Management Feature Types (Admin)
 export enum ToolCategory {
   CODE_ASSISTANT = 'code_assistant',
+  AUTONOMOUS_AGENT = 'autonomous_agent',
+  CODE_REVIEW = 'code_review',
+  TESTING = 'testing',
+  DEVOPS = 'devops',
+  PROJECT_MANAGEMENT = 'project_management',
+  COLLABORATION = 'collaboration',
+  OTHER = 'other',
+  // Legacy values for backward compatibility
   CHATBOT = 'chatbot',
   IMAGE_GENERATION = 'image_generation',
   WRITING = 'writing',
-  PRODUCTIVITY = 'productivity',
-  OTHER = 'other'
+  PRODUCTIVITY = 'productivity'
 }
 
 export enum ToolStatus {
   ACTIVE = 'active',
-  INACTIVE = 'inactive',
-  DELETED = 'deleted'
+  ARCHIVED = 'archived'
 }
 
 export interface Tool {
@@ -153,12 +159,15 @@ export interface Tool {
   name: string;
   slug: string;
   vendor: string;
-  category: ToolCategory;
-  description: string;
+  categories: ToolCategory[];  // Changed from single category to array
   status: ToolStatus;
+  description?: string;  // Changed to optional
+  merged_into?: string | null;  // NEW: UUID of primary tool if merged
   metadata: Record<string, any>;
   created_at: string;
   updated_at: string;
+  created_by: string;  // NEW: Admin ID who created
+  updated_by: string;  // NEW: Admin ID who last updated
 }
 
 export interface ToolAlias {
@@ -170,10 +179,46 @@ export interface ToolAlias {
   created_by: string;
 }
 
+export interface ToolMergeRecord {
+  id: string;
+  partitionKey: string;
+  target_tool_id: string;
+  source_tool_ids: string[];
+  merged_at: string;
+  merged_by: string;
+  sentiment_count: number;
+  target_categories_before: string[];
+  target_categories_after: string[];
+  target_vendor_before: string;
+  target_vendor_after: string;
+  source_tools_metadata: Array<{
+    id: string;
+    name: string;
+    vendor: string;
+    categories: string[];
+  }>;
+  notes?: string | null;
+}
+
+export interface AdminActionLog {
+  id: string;
+  partitionKey: string;  // YYYYMM format
+  timestamp: string;
+  admin_id: string;
+  action_type: 'create' | 'edit' | 'archive' | 'unarchive' | 'delete' | 'merge';
+  tool_id: string;
+  tool_name: string;
+  before_state?: Record<string, any> | null;
+  after_state?: Record<string, any> | null;
+  metadata: Record<string, any>;
+  ip_address?: string | null;
+  user_agent?: string | null;
+}
+
 export interface ToolCreateRequest {
   name: string;
   vendor: string;
-  category: ToolCategory;
+  categories: ToolCategory[];  // Changed from single to array (1-5 items)
   description?: string;
   metadata?: Record<string, any>;
 }
@@ -181,10 +226,17 @@ export interface ToolCreateRequest {
 export interface ToolUpdateRequest {
   name?: string;
   vendor?: string;
-  category?: ToolCategory;
+  categories?: ToolCategory[];  // Changed from single to array
   description?: string;
-  status?: ToolStatus;
   metadata?: Record<string, any>;
+}
+
+export interface ToolMergeRequest {
+  target_tool_id: string;
+  source_tool_ids: string[];
+  final_categories: ToolCategory[];
+  final_vendor: string;
+  notes?: string;
 }
 
 export interface AliasLinkRequest {
@@ -194,7 +246,7 @@ export interface AliasLinkRequest {
 
 export interface ToolResponse {
   tool: Tool;
-  aliases: ToolAlias[];
+  aliases?: ToolAlias[];
 }
 
 export interface ToolListResponse {
@@ -202,4 +254,10 @@ export interface ToolListResponse {
   total: number;
   page: number;
   limit: number;
+  filters_applied?: {
+    status?: string;
+    categories?: string[];
+    vendor?: string;
+    search?: string;
+  };
 }
