@@ -36,10 +36,10 @@ export const DeleteConfirmationDialog = ({
   const [sentimentCount, setSentimentCount] = useState<number | null>(null);
   const [isLoadingCount, setIsLoadingCount] = useState(false);
 
-  if (!tool) return null;
-
   // Load sentiment count when dialog opens
   useEffect(() => {
+    if (!tool) return;
+    
     const loadSentimentCount = async () => {
       setIsLoadingCount(true);
       try {
@@ -56,6 +56,9 @@ export const DeleteConfirmationDialog = ({
 
     loadSentimentCount();
   }, [tool?.id, adminToken]);
+
+  // Only render when tool is provided
+  if (!tool) return null;
 
   const handleDelete = async () => {
     setError(null);
@@ -74,14 +77,27 @@ export const DeleteConfirmationDialog = ({
       );
 
       if (!response.ok) {
-        const data = await response.json();
+        let errorMessage = 'Failed to delete tool';
         
-        // T075: Handle 409 Conflict for referenced tools or active jobs
-        if (response.status === 409) {
-          throw new Error(data.detail || 'Cannot delete tool: it is referenced by other tools or in use');
+        try {
+          const data = await response.json();
+          
+          // T075: Handle 409 Conflict for referenced tools or active jobs
+          if (response.status === 409) {
+            errorMessage = data.detail || 'Cannot delete tool: it is referenced by other tools or in use';
+          } else if (response.status === 404) {
+            errorMessage = 'Tool not found. It may have already been deleted.';
+          } else if (response.status === 401 || response.status === 403) {
+            errorMessage = 'Authentication failed. Please check your admin token.';
+          } else {
+            errorMessage = data.detail || `Failed to delete tool (Error ${response.status})`;
+          }
+        } catch {
+          // If JSON parsing fails, use status-based message
+          errorMessage = `Failed to delete tool (HTTP ${response.status})`;
         }
         
-        throw new Error(data.detail || 'Failed to delete tool');
+        throw new Error(errorMessage);
       }
 
       // Get result for potential future use
@@ -93,8 +109,16 @@ export const DeleteConfirmationDialog = ({
       
       // Note: Success toast will be handled by parent component
     } catch (err) {
-      const message = err instanceof Error ? err.message : 'Failed to delete tool';
+      let message = 'Failed to delete tool';
+      
+      if (err instanceof TypeError && err.message.includes('fetch')) {
+        message = 'Network error: Cannot connect to server. Please ensure the backend is running.';
+      } else if (err instanceof Error) {
+        message = err.message;
+      }
+      
       setError(message);
+      console.error('Delete tool error:', err);
     } finally {
       setIsDeleting(false);
     }

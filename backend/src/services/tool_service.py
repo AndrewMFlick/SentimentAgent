@@ -648,9 +648,11 @@ class ToolService:
                     )
 
             # Delete the tool itself
+            # Note: When partition key path is /id, pass the id value as partition_key
+            # CosmosDB requires both the document id and the partition key value
             self.tools_container.delete_item(
                 item=tool_id,
-                partition_key="TOOL"
+                partition_key='tool'  # Use the partitionKey field value, not the id
             )
             logger.info(
                 "Tool permanently deleted",
