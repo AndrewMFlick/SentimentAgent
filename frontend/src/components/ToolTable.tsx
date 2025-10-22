@@ -2,9 +2,10 @@
  * ToolTable Component
  * 
  * Glass-themed table for managing AI tools with search, filter, pagination
- * Updated for Phase 3: Multi-category support, enhanced filters
+ * Updated for Phase 3: Multi-category support, enhanced filters, React Query caching
  */
 import { useState, useEffect } from 'react';
+import { useQuery } from '@tanstack/react-query';
 import { Tool, ToolStatus } from '../types';
 import { api } from '../services/api';
 import Pagination from './Pagination';
@@ -17,16 +18,8 @@ interface ToolTableProps {
 }
 
 export const ToolTable = ({ adminToken, onEdit, onDelete, refreshTrigger }: ToolTableProps) => {
-  const [tools, setTools] = useState<Tool[]>([]);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  
   // Pagination state
   const [currentPage, setCurrentPage] = useState(1);
-  const [totalTools, setTotalTools] = useState(0);
-  const [totalPages, setTotalPages] = useState(0);
-  const [hasNext, setHasNext] = useState(false);
-  const [hasPrev, setHasPrev] = useState(false);
   const [limit] = useState(20);
   
   // Filter state
@@ -48,45 +41,34 @@ export const ToolTable = ({ adminToken, onEdit, onDelete, refreshTrigger }: Tool
     return () => clearTimeout(timer);
   }, [searchQuery]);
 
-  // Fetch tools
-  useEffect(() => {
-    const fetchTools = async () => {
-      setLoading(true);
-      setError(null);
+  // Fetch tools with React Query
+  const { data, isLoading, error, refetch } = useQuery({
+    queryKey: ['admin-tools', currentPage, limit, debouncedSearch, statusFilter, categoryFilter, vendorFilter, sortBy, sortOrder, refreshTrigger],
+    queryFn: async () => {
+      return await api.listAdminTools(
+        {
+          page: currentPage,
+          limit: limit,
+          search: debouncedSearch || undefined,
+          status: statusFilter || undefined,
+          category: categoryFilter.length > 0 ? categoryFilter : undefined,
+          vendor: vendorFilter || undefined,
+          sort_by: sortBy,
+          sort_order: sortOrder,
+        },
+        adminToken
+      );
+    },
+    enabled: !!adminToken,
+  });
 
-      try {
-        const data = await api.listAdminTools(
-          {
-            page: currentPage,
-            limit: limit,
-            search: debouncedSearch || undefined,
-            status: statusFilter || undefined,
-            category: categoryFilter.length > 0 ? categoryFilter : undefined,
-            vendor: vendorFilter || undefined,
-            sort_by: sortBy,
-            sort_order: sortOrder,
-          },
-          adminToken
-        );
+  const tools = data?.tools || [];
+  const totalTools = data?.pagination?.total_items || 0;
+  const totalPages = data?.pagination?.total_pages || 0;
+  const hasNext = data?.pagination?.has_next || false;
+  const hasPrev = data?.pagination?.has_prev || false;
 
-        setTools(data.tools || []);
-        setTotalTools(data.pagination?.total_items || 0);
-        setTotalPages(data.pagination?.total_pages || 0);
-        setHasNext(data.pagination?.has_next || false);
-        setHasPrev(data.pagination?.has_prev || false);
-      } catch (err) {
-        const message = err instanceof Error ? err.message : 'Failed to fetch tools';
-        setError(message);
-        console.error('Error fetching tools:', err);
-      } finally {
-        setLoading(false);
-      }
-    };
-
-    fetchTools();
-  }, [adminToken, currentPage, limit, debouncedSearch, statusFilter, categoryFilter, vendorFilter, sortBy, sortOrder, refreshTrigger]);
-
-  if (loading && tools.length === 0) {
+  if (isLoading && tools.length === 0) {
     return (
       <div className="flex flex-col items-center py-16 gap-4">
         <div className="border-4 border-dark-elevated border-t-blue-500 rounded-full w-12 h-12 animate-spin"></div>
@@ -95,18 +77,10 @@ export const ToolTable = ({ adminToken, onEdit, onDelete, refreshTrigger }: Tool
     );
   }
 
-  if (error) {
-    return (
-      <div className="p-4 bg-red-900/30 border border-red-700/50 rounded-lg text-red-300">
-        <strong>Error:</strong> {error}
-      </div>
-    );
-  }
-
   return (
     <div className="space-y-4">
       {/* Loading overlay for subsequent fetches */}
-      {loading && tools.length > 0 && (
+      {isLoading && tools.length > 0 && (
         <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center">
           <div className="bg-dark-elevated/90 border border-glass-border rounded-xl p-6 flex flex-col items-center gap-4">
             <div className="border-4 border-dark-elevated border-t-blue-500 rounded-full w-12 h-12 animate-spin"></div>
@@ -121,15 +95,10 @@ export const ToolTable = ({ adminToken, onEdit, onDelete, refreshTrigger }: Tool
           <span className="text-red-400 text-xl">⚠️</span>
           <div className="flex-1">
             <h3 className="text-red-300 font-bold mb-1">Error Loading Tools</h3>
-            <p className="text-red-200 text-sm">{error}</p>
+            <p className="text-red-200 text-sm">
+              {String(error)}
+            </p>
           </div>
-          <button
-            onClick={() => setError(null)}
-            className="text-red-400 hover:text-red-300 transition-colors"
-            aria-label="Dismiss error"
-          >
-            ✕
-          </button>
         </div>
       )}
 
@@ -263,12 +232,12 @@ export const ToolTable = ({ adminToken, onEdit, onDelete, refreshTrigger }: Tool
                   <td className="p-4 text-sm text-gray-300">{tool.vendor}</td>
                   <td className="p-4 text-sm text-gray-300">
                     <div className="flex flex-wrap gap-1">
-                      {tool.categories.map((category, idx) => (
+                      {tool.categories.map((category: string, idx: number) => (
                         <span
                           key={idx}
                           className="inline-block px-3 py-1 bg-blue-900/40 border border-blue-700/50 rounded-full text-xs font-bold text-blue-300"
                         >
-                          {category.replace(/_/g, ' ').replace(/\b\w/g, (l) => l.toUpperCase())}
+                          {category.replace(/_/g, ' ').replace(/\b\w/g, (l: string) => l.toUpperCase())}
                         </span>
                       ))}
                     </div>

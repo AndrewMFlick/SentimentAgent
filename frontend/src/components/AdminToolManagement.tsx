@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { api } from '../services/api';
 import { ToolTable } from './ToolTable';
 import { Tool } from '../types';
@@ -12,6 +13,8 @@ export const AdminToolManagement: React.FC<AdminToolManagementProps> = ({
   adminToken,
   onToolCreated 
 }) => {
+  const queryClient = useQueryClient();
+  
   // View state
   const [activeView, setActiveView] = useState<'list' | 'create'>('list');
   
@@ -24,8 +27,51 @@ export const AdminToolManagement: React.FC<AdminToolManagementProps> = ({
   // UI state
   const [message, setMessage] = useState('');
   const [messageType, setMessageType] = useState<'success' | 'error'>('success');
-  const [isSubmitting, setIsSubmitting] = useState(false);
   const [refreshTrigger, setRefreshTrigger] = useState(0);
+
+  // Create tool mutation
+  const createToolMutation = useMutation({
+    mutationFn: async (toolData: {
+      name: string;
+      vendor: string;
+      categories: string[];
+      description?: string;
+    }) => {
+      return await api.createTool(toolData, adminToken);
+    },
+    onSuccess: (response) => {
+      setMessage(`✓ ${response.message}`);
+      setMessageType('success');
+
+      // Reset form
+      setToolName('');
+      setVendor('');
+      setCategories(['code_assistant']);
+      setDescription('');
+
+      // Invalidate and refetch tools query
+      queryClient.invalidateQueries({ queryKey: ['admin-tools'] });
+
+      // Refresh trigger for ToolTable
+      setRefreshTrigger(prev => prev + 1);
+
+      // Notify parent component
+      if (onToolCreated) {
+        onToolCreated();
+      }
+
+      // Switch back to list view
+      setTimeout(() => {
+        setActiveView('list');
+        setMessage('');
+      }, 2000);
+    },
+    onError: (error: any) => {
+      const errorMessage = error.response?.data?.detail || error.message || 'Failed to create tool';
+      setMessage(`✗ ${errorMessage}`);
+      setMessageType('error');
+    },
+  });
 
   // Placeholder handlers for edit/delete
   const handleEdit = (tool: Tool) => {
@@ -73,50 +119,14 @@ export const AdminToolManagement: React.FC<AdminToolManagementProps> = ({
       return;
     }
 
-    setIsSubmitting(true);
     setMessage('');
 
-    try {
-      const response = await api.createTool(
-        {
-          name: toolName,
-          vendor: vendor,
-          categories: categories,
-          description: description || undefined,
-        },
-        adminToken
-      );
-
-      setMessage(`✓ ${response.message}`);
-      setMessageType('success');
-
-      // Reset form
-      setToolName('');
-      setVendor('');
-      setCategories(['code_assistant']);
-      setDescription('');
-
-      // Refresh the tool list
-      setRefreshTrigger(prev => prev + 1);
-
-      // Notify parent component
-      if (onToolCreated) {
-        onToolCreated();
-      }
-
-      // Switch back to list view
-      setTimeout(() => {
-        setActiveView('list');
-        setMessage('');
-      }, 2000);
-
-    } catch (error: any) {
-      const errorMessage = error.response?.data?.detail || error.message || 'Failed to create tool';
-      setMessage(`✗ ${errorMessage}`);
-      setMessageType('error');
-    } finally {
-      setIsSubmitting(false);
-    }
+    createToolMutation.mutate({
+      name: toolName,
+      vendor: vendor,
+      categories: categories,
+      description: description || undefined,
+    });
   };
 
   return (
@@ -178,7 +188,7 @@ export const AdminToolManagement: React.FC<AdminToolManagementProps> = ({
             className="glass-input w-full"
             maxLength={100}
             required
-            disabled={isSubmitting}
+            disabled={createToolMutation.isPending}
           />
         </div>
 
@@ -196,7 +206,7 @@ export const AdminToolManagement: React.FC<AdminToolManagementProps> = ({
             className="glass-input w-full"
             maxLength={100}
             required
-            disabled={isSubmitting}
+            disabled={createToolMutation.isPending}
           />
         </div>
 
@@ -221,12 +231,12 @@ export const AdminToolManagement: React.FC<AdminToolManagementProps> = ({
                 key={cat.value}
                 type="button"
                 onClick={() => toggleCategory(cat.value)}
-                disabled={isSubmitting}
+                disabled={createToolMutation.isPending}
                 className={`px-3 py-2 rounded-lg text-sm font-medium transition-all ${
                   categories.includes(cat.value)
                     ? 'bg-blue-600/30 border-2 border-blue-500/50 text-white'
                     : 'bg-dark-elevated/50 border-2 border-transparent text-gray-400 hover:bg-dark-elevated hover:text-gray-200'
-                } ${isSubmitting ? 'opacity-50 cursor-not-allowed' : ''}`}
+                } ${createToolMutation.isPending ? 'opacity-50 cursor-not-allowed' : ''}`}
               >
                 {categories.includes(cat.value) && '✓ '}
                 {cat.label}
@@ -251,7 +261,7 @@ export const AdminToolManagement: React.FC<AdminToolManagementProps> = ({
             className="glass-input w-full resize-none"
             rows={3}
             maxLength={500}
-            disabled={isSubmitting}
+            disabled={createToolMutation.isPending}
           />
         </div>
 
@@ -272,18 +282,18 @@ export const AdminToolManagement: React.FC<AdminToolManagementProps> = ({
         <div className="pt-2">
           <button
             type="submit"
-            disabled={!isFormValid() || isSubmitting}
+            disabled={!isFormValid() || createToolMutation.isPending}
             className={`
               px-6 py-3 rounded-lg font-semibold
               transition-all duration-200
               ${
-                isFormValid() && !isSubmitting
+                isFormValid() && !createToolMutation.isPending
                   ? 'bg-gradient-to-r from-blue-500 to-purple-600 hover:from-blue-600 hover:to-purple-700 text-white shadow-lg hover:shadow-xl hover:scale-105'
                   : 'bg-gray-600/50 text-gray-400 cursor-not-allowed'
               }
             `}
           >
-            {isSubmitting ? (
+            {createToolMutation.isPending ? (
               <span className="flex items-center gap-2">
                 <svg className="animate-spin h-5 w-5" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
                   <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
