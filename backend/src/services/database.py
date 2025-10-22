@@ -841,7 +841,7 @@ class DatabaseService:
 
             item = self.tools_container.read_item(
                 item=tool_id,
-                partition_key=tool_id
+                partition_key='tool'
             )
             return item
         except exceptions.CosmosResourceNotFoundError:
@@ -894,23 +894,10 @@ class DatabaseService:
             # TODO: Implement sentiment data aggregation
             # For now, return empty data to prevent dashboard errors
             logger.info(
-                "Sentiment data not yet available",
-                tool_id=tool_id,
-                hours=hours,
-                start_date=start_date,
-                end_date=end_date
+                f"Sentiment data not yet available - tool_id={tool_id}, "
+                f"hours={hours}, start={start_date}, end={end_date}"
             )
             
-            return {
-                "total_mentions": 0,
-                "positive_count": 0,
-                "negative_count": 0,
-                "neutral_count": 0,
-                "avg_sentiment": 0.0,
-            }
-
-        except Exception as e:
-            logger.error(f"Error getting tool sentiment {tool_id}: {e}")
             return {
                 "total_mentions": 0,
                 "positive_count": 0,
@@ -969,8 +956,19 @@ class DatabaseService:
             return sentiments
 
         except Exception as e:
-            logger.error(f"Error comparing tools {tool_ids}: {e}")
-            raise
+            logger.error(f"Error comparing tools {tool_ids}: {e}", exc_info=True)
+            # Return empty results for all tools
+            return [
+                {
+                    "tool_id": tool_id,
+                    "total_mentions": 0,
+                    "positive_count": 0,
+                    "negative_count": 0,
+                    "neutral_count": 0,
+                    "avg_sentiment": 0.0,
+                }
+                for tool_id in tool_ids
+            ]
 
     @monitor_query_performance(slow_query_threshold=3.0)
     async def get_tool_timeseries(
@@ -979,46 +977,23 @@ class DatabaseService:
         """
         Get time series data for a tool.
 
-        Query Pattern #3: Query time_period_aggregates by date range.
+        TODO: This will query time_period_aggregates once the sentiment
+        aggregation system is implemented. For now, returns empty list.
         """
         try:
-            query = """
-                SELECT
-                    c.date,
-                    c.total_mentions,
-                    c.positive_count,
-                    c.negative_count,
-                    c.neutral_count,
-                    c.avg_sentiment
-                FROM c
-                WHERE c.tool_id = @tool_id
-                    AND c.date >= @start_date
-                    AND c.date <= @end_date
-                    AND c.deleted_at = null
-                ORDER BY c.date ASC
-            """
-
-            container = self.client.get_database_client(
-                settings.cosmos_database
-            ).get_container_client("time_period_aggregates")
-
-            items = list(
-                container.query_items(
-                    query=query,
-                    parameters=[
-                        {"name": "@tool_id", "value": tool_id},
-                        {"name": "@start_date", "value": start_date},
-                        {"name": "@end_date", "value": end_date},
-                    ],
-                    enable_cross_partition_query=True,
-                )
+            logger.info(
+                "Timeseries data not yet available - aggregation not implemented",
+                tool_id=tool_id,
+                start_date=start_date,
+                end_date=end_date,
             )
-
-            return items
-
+            return []
         except Exception as e:
-            logger.error(f"Error getting tool timeseries {tool_id}: {e}")
-            raise
+            logger.error(
+                f"Error getting tool timeseries {tool_id}: {e}",
+                exc_info=True
+            )
+            return []
 
     async def get_pending_tools(self) -> List[Dict[str, Any]]:
         """Get tools pending approval."""
