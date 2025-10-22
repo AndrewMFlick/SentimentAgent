@@ -276,7 +276,14 @@ class ToolService:
             # Sync iteration - no await
             items = self.tools_container.query_items(query=query)
             results = list(items)
-            return results[0] if results else 0
+            if not results:
+                return 0
+            # Handle both plain int and dict response
+            count_value = results[0]
+            if isinstance(count_value, dict):
+                # Extract count from dict (CosmosDB may return {'$1': count})
+                return count_value.get('$1', count_value.get('count', 0))
+            return count_value
         except Exception as e:
             logger.error("Failed to count tools", error=str(e))
             return 0
@@ -491,6 +498,177 @@ class ToolService:
             logger.info("Tool soft deleted", tool_id=tool_id)
 
         return True
+
+    async def archive_tool(
+        self,
+        tool_id: str,
+        archived_by: str,
+        ip_address: Optional[str] = None,
+        user_agent: Optional[str] = None
+    ) -> Optional[Dict[str, Any]]:
+        """
+        Archive a tool (set status to 'archived').
+        
+        This preserves historical sentiment data while removing the tool
+        from the active list.
+
+        Args:
+            tool_id: Tool UUID
+            archived_by: Admin ID performing archive
+            ip_address: Admin IP address
+            user_agent: Browser/client info
+
+        Returns:
+            Updated tool document or None if not found
+
+        Raises:
+            ValueError: If tool cannot be archived (e.g., referenced by other tools)
+        """
+        tool = await self.get_tool(tool_id)
+        if not tool:
+            return None
+
+        # Store before state for audit log
+        before_state = tool.copy()
+
+        # Check if this tool is referenced in other tools' merged_into field
+        # (tools that were merged into this one should not allow archiving)
+        query = (
+            "SELECT * FROM Tools t "
+            "WHERE t.partitionKey = 'TOOL' "
+            "AND t.merged_into = @tool_id "
+            "AND t.status != 'deleted'"
+        )
+        items = self.tools_container.query_items(
+            query=query,
+            parameters=[{"name": "@tool_id", "value": tool_id}]
+        )
+        referencing_tools = list(items)
+
+        if referencing_tools:
+            tool_names = [t["name"] for t in referencing_tools]
+            raise ValueError(
+                f"Cannot archive tool: {len(referencing_tools)} tool(s) "
+                f"were merged into this tool ({', '.join(tool_names[:3])}). "
+                "Please unmerge or archive those tools first."
+            )
+
+        # Update status to archived
+        tool["status"] = "archived"
+        tool["updated_at"] = datetime.now(timezone.utc).isoformat()
+        tool["updated_by"] = archived_by
+
+        try:
+            # Sync operation - no await
+            self.tools_container.replace_item(item=tool_id, body=tool)
+
+            logger.info(
+                "Tool archived",
+                tool_id=tool_id,
+                tool_name=tool["name"],
+                archived_by=archived_by
+            )
+
+            # Log admin action
+            await self._log_admin_action(
+                admin_id=archived_by,
+                action_type="archive",
+                tool_id=tool_id,
+                tool_name=tool["name"],
+                before_state=before_state,
+                after_state=tool,
+                metadata={"reason": "archived by admin"},
+                ip_address=ip_address,
+                user_agent=user_agent
+            )
+
+            return tool
+        except Exception as e:
+            logger.error(
+                "Failed to archive tool",
+                tool_id=tool_id,
+                error=str(e)
+            )
+            raise
+
+    async def unarchive_tool(
+        self,
+        tool_id: str,
+        unarchived_by: str,
+        ip_address: Optional[str] = None,
+        user_agent: Optional[str] = None
+    ) -> Optional[Dict[str, Any]]:
+        """
+        Unarchive a tool (set status to 'active').
+        
+        This restores a previously archived tool to the active list.
+
+        Args:
+            tool_id: Tool UUID
+            unarchived_by: Admin ID performing unarchive
+            ip_address: Admin IP address
+            user_agent: Browser/client info
+
+        Returns:
+            Updated tool document or None if not found
+        """
+        # Note: get_tool filters out 'deleted' status, not 'archived'
+        # We need to query directly to get archived tools
+        try:
+            query = (
+                "SELECT * FROM Tools t "
+                "WHERE t.id = @id AND t.partitionKey = 'TOOL'"
+            )
+            items = self.tools_container.query_items(
+                query=query,
+                parameters=[{"name": "@id", "value": tool_id}]
+            )
+            results = list(items)
+            
+            if not results:
+                return None
+            
+            tool = results[0]
+
+            # Store before state for audit log
+            before_state = tool.copy()
+
+            # Update status to active
+            tool["status"] = "active"
+            tool["updated_at"] = datetime.now(timezone.utc).isoformat()
+            tool["updated_by"] = unarchived_by
+
+            # Sync operation - no await
+            self.tools_container.replace_item(item=tool_id, body=tool)
+
+            logger.info(
+                "Tool unarchived",
+                tool_id=tool_id,
+                tool_name=tool["name"],
+                unarchived_by=unarchived_by
+            )
+
+            # Log admin action
+            await self._log_admin_action(
+                admin_id=unarchived_by,
+                action_type="unarchive",
+                tool_id=tool_id,
+                tool_name=tool["name"],
+                before_state=before_state,
+                after_state=tool,
+                metadata={"reason": "unarchived by admin"},
+                ip_address=ip_address,
+                user_agent=user_agent
+            )
+
+            return tool
+        except Exception as e:
+            logger.error(
+                "Failed to unarchive tool",
+                tool_id=tool_id,
+                error=str(e)
+            )
+            return None
 
     async def create_alias(
         self,

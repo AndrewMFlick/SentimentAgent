@@ -14,10 +14,12 @@ interface ToolTableProps {
   adminToken: string;
   onEdit: (tool: Tool) => void;
   onDelete: (tool: Tool) => void;
+  onArchive: (tool: Tool) => void;
+  onUnarchive: (tool: Tool) => void;
   refreshTrigger?: number;
 }
 
-export const ToolTable = ({ adminToken, onEdit, onDelete, refreshTrigger }: ToolTableProps) => {
+export const ToolTable = ({ adminToken, onEdit, onDelete, onArchive, onUnarchive, refreshTrigger }: ToolTableProps) => {
   // Pagination state
   const [currentPage, setCurrentPage] = useState(1);
   const [limit] = useState(20);
@@ -262,6 +264,23 @@ export const ToolTable = ({ adminToken, onEdit, onDelete, refreshTrigger }: Tool
                       >
                         ✏️ Edit
                       </button>
+                      {tool.status === ToolStatus.ACTIVE ? (
+                        <button
+                          onClick={() => onArchive(tool)}
+                          className="px-3 py-1.5 text-xs font-bold bg-yellow-900/40 text-yellow-300 border border-yellow-700/50 rounded-lg transition-all hover:bg-yellow-900/60 hover:border-yellow-600/60"
+                          title="Archive tool"
+                        >
+                          📦 Archive
+                        </button>
+                      ) : (
+                        <button
+                          onClick={() => onUnarchive(tool)}
+                          className="px-3 py-1.5 text-xs font-bold bg-emerald-900/40 text-emerald-300 border border-emerald-700/50 rounded-lg transition-all hover:bg-emerald-900/60 hover:border-emerald-600/60"
+                          title="Unarchive tool"
+                        >
+                          ↩️ Unarchive
+                        </button>
+                      )}
                       <button
                         onClick={() => onDelete(tool)}
                         className="px-3 py-1.5 text-xs font-bold bg-red-900/40 text-red-300 border border-red-700/50 rounded-lg transition-all hover:bg-red-900/60 hover:border-red-600/60"
