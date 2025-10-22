@@ -327,11 +327,17 @@ export const api = {
   },
 
   /**
-   * Delete a tool (soft delete)
+   * Permanently delete a tool including all sentiment data
    * @param toolId - Tool identifier
    * @param adminToken - Admin authentication token
+   * @returns Deletion result with sentiment count
    */
-  deleteTool: async (toolId: string, adminToken: string): Promise<{ message: string }> => {
+  deleteTool: async (toolId: string, adminToken: string): Promise<{ 
+    message: string;
+    tool_id: string;
+    tool_name: string;
+    sentiment_count: number;
+  }> => {
     const response = await axios.delete(
       `${API_BASE_URL}/admin/tools/${toolId}`,
       {
