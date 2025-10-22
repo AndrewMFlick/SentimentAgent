@@ -281,24 +281,115 @@ class ToolService:
             logger.error("Failed to count tools", error=str(e))
             return 0
 
+    async def _log_admin_action(
+        self,
+        admin_id: str,
+        action_type: str,
+        tool_id: str,
+        tool_name: str,
+        before_state: Optional[Dict[str, Any]] = None,
+        after_state: Optional[Dict[str, Any]] = None,
+        metadata: Optional[Dict[str, Any]] = None,
+        ip_address: Optional[str] = None,
+        user_agent: Optional[str] = None
+    ):
+        """
+        Log administrative action to AdminActionLogs container.
+
+        Args:
+            admin_id: Administrator ID
+            action_type: create|edit|archive|unarchive|delete|merge
+            tool_id: Tool UUID affected
+            tool_name: Tool name (denormalized)
+            before_state: Tool state before action
+            after_state: Tool state after action
+            metadata: Additional context
+            ip_address: Admin IP address
+            user_agent: Browser/client info
+        """
+        if not self.admin_logs_container:
+            logger.warning("Admin logs container not available - skipping log")
+            return
+
+        now = datetime.now(timezone.utc)
+        partition_key = now.strftime("%Y%m")  # YYYYMM format
+
+        log_entry = {
+            "id": str(uuid.uuid4()),
+            "partitionKey": partition_key,
+            "timestamp": now.isoformat(),
+            "admin_id": admin_id,
+            "action_type": action_type,
+            "tool_id": tool_id,
+            "tool_name": tool_name,
+            "before_state": before_state,
+            "after_state": after_state,
+            "metadata": metadata or {},
+            "ip_address": ip_address,
+            "user_agent": user_agent
+        }
+
+        try:
+            self.admin_logs_container.create_item(body=log_entry)
+            logger.info(
+                "Admin action logged",
+                action_type=action_type,
+                tool_id=tool_id,
+                admin_id=admin_id
+            )
+        except Exception as e:
+            logger.error(
+                "Failed to log admin action",
+                error=str(e),
+                action_type=action_type,
+                tool_id=tool_id
+            )
+
     async def update_tool(
         self,
         tool_id: str,
-        updates: ToolUpdateRequest
+        updates: ToolUpdateRequest,
+        updated_by: str,
+        etag: Optional[str] = None,
+        ip_address: Optional[str] = None,
+        user_agent: Optional[str] = None
     ) -> Optional[Dict[str, Any]]:
         """
-        Update tool details.
+        Update tool details with optimistic concurrency control.
 
         Args:
             tool_id: Tool UUID
             updates: Fields to update
+            updated_by: Admin ID performing update
+            etag: ETag for optimistic concurrency (If-Match header)
+            ip_address: Admin IP address
+            user_agent: Browser/client info
 
         Returns:
             Updated tool document or None if not found
+
+        Raises:
+            ValueError: If validation fails (duplicate name, invalid
+                categories)
+            exceptions.CosmosHttpResponseError: If ETag mismatch
+                (409 Conflict)
         """
         tool = await self.get_tool(tool_id)
         if not tool:
             return None
+
+        # Store before state for audit log
+        before_state = tool.copy()
+
+        # Validate name uniqueness if name is being changed
+        if updates.name and updates.name != tool["name"]:
+            existing = await self.get_tool_by_name(updates.name)
+            if existing and existing["id"] != tool_id:
+                # Check if existing tool is active
+                if existing.get("status") == "active":
+                    raise ValueError(
+                        f"Tool name '{updates.name}' already exists"
+                    )
 
         # Apply updates
         update_dict = updates.dict(exclude_unset=True)
@@ -306,19 +397,71 @@ class ToolService:
             if value is not None:
                 tool[key] = value
 
-        # Update slug if name changed
+        # Auto-regenerate slug if name changed
         if "name" in update_dict:
             tool["slug"] = update_dict["name"].lower().replace(" ", "-")
 
+        # Update audit fields
         tool["updated_at"] = datetime.now(timezone.utc).isoformat()
+        tool["updated_by"] = updated_by
 
-        # Sync operation - no await
-        self.tools_container.replace_item(item=tool_id, body=tool)
-        logger.info("Tool updated", tool_id=tool_id, updates=update_dict)
+        try:
+            # Use ETag for optimistic concurrency if provided
+            if etag:
+                # Cosmos SDK will raise 412 if ETag doesn't match
+                self.tools_container.replace_item(
+                    item=tool_id,
+                    body=tool,
+                    etag=etag,
+                    match_condition=exceptions.MatchConditions.IfNotModified
+                )
+            else:
+                # No concurrency control
+                self.tools_container.replace_item(item=tool_id, body=tool)
 
-        return tool
+            logger.info(
+                "Tool updated",
+                tool_id=tool_id,
+                updates=update_dict,
+                updated_by=updated_by
+            )
 
-    async def delete_tool(self, tool_id: str, hard_delete: bool = False) -> bool:
+            # Log admin action
+            await self._log_admin_action(
+                admin_id=updated_by,
+                action_type="edit",
+                tool_id=tool_id,
+                tool_name=tool["name"],
+                before_state=before_state,
+                after_state=tool,
+                metadata={"fields_updated": list(update_dict.keys())},
+                ip_address=ip_address,
+                user_agent=user_agent
+            )
+
+            return tool
+        except exceptions.CosmosHttpResponseError as e:
+            if e.status_code == 412:
+                # ETag mismatch - concurrent modification detected
+                logger.warning(
+                    "Concurrent modification detected",
+                    tool_id=tool_id,
+                    updated_by=updated_by
+                )
+                raise  # Re-raise to be handled by API layer
+            else:
+                logger.error(
+                    "Failed to update tool",
+                    tool_id=tool_id,
+                    error=str(e)
+                )
+                raise
+
+    async def delete_tool(
+        self,
+        tool_id: str,
+        hard_delete: bool = False
+    ) -> bool:
         """
         Delete tool (soft delete by default).
 

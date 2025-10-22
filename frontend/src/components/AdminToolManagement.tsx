@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { api } from '../services/api';
 import { ToolTable } from './ToolTable';
+import { ToolEditModal } from './ToolEditModal';
 import { Tool } from '../types';
 
 interface AdminToolManagementProps {
@@ -17,6 +18,10 @@ export const AdminToolManagement: React.FC<AdminToolManagementProps> = ({
   
   // View state
   const [activeView, setActiveView] = useState<'list' | 'create'>('list');
+  
+  // Edit modal state
+  const [editingTool, setEditingTool] = useState<Tool | null>(null);
+  const [isEditModalOpen, setIsEditModalOpen] = useState(false);
   
   // Form state
   const [toolName, setToolName] = useState('');
@@ -73,11 +78,87 @@ export const AdminToolManagement: React.FC<AdminToolManagementProps> = ({
     },
   });
 
-  // Placeholder handlers for edit/delete
+  // Update tool mutation
+  const updateToolMutation = useMutation({
+    mutationFn: async ({ 
+      toolId, 
+      updates, 
+      etag 
+    }: { 
+      toolId: string; 
+      updates: any; 
+      etag?: string;
+    }) => {
+      return await api.updateTool(toolId, updates, adminToken, etag);
+    },
+    onSuccess: (response) => {
+      setMessage(`✓ ${response.message || 'Tool updated successfully'}`);
+      setMessageType('success');
+
+      // Close modal
+      setIsEditModalOpen(false);
+      setEditingTool(null);
+
+      // Invalidate and refetch tools query
+      queryClient.invalidateQueries({ queryKey: ['admin-tools'] });
+
+      // Refresh trigger for ToolTable
+      setRefreshTrigger(prev => prev + 1);
+
+      // Clear message after 3 seconds
+      setTimeout(() => {
+        setMessage('');
+      }, 3000);
+    },
+    onError: (error: any) => {
+      const status = error.response?.status;
+      let errorMessage = error.response?.data?.detail || error.message || 'Failed to update tool';
+      
+      if (status === 409) {
+        // Concurrent modification detected
+        errorMessage = '⚠️ Concurrent modification detected. The tool was updated by another user. Please refresh and try again.';
+      } else if (status === 400) {
+        // Validation error
+        errorMessage = `⚠️ Validation error: ${errorMessage}`;
+      }
+      
+      setMessage(`✗ ${errorMessage}`);
+      setMessageType('error');
+      
+      // Clear error after 5 seconds
+      setTimeout(() => {
+        setMessage('');
+      }, 5000);
+    },
+  });
+
+  // Edit handler
   const handleEdit = (tool: Tool) => {
-    console.log('Edit tool:', tool);
-    // TODO: Implement edit modal (User Story 2)
-    alert(`Edit functionality will be implemented in User Story 2.\nTool: ${tool.name}`);
+    setEditingTool(tool);
+    setIsEditModalOpen(true);
+    setMessage(''); // Clear any existing messages
+  };
+
+  // Save edit handler
+  const handleSaveEdit = async (toolId: string, updates: any, etag: string) => {
+    await updateToolMutation.mutateAsync({ toolId, updates, etag });
+  };
+
+  // Handle edit conflict (409)
+  const handleEditConflict = (conflictMessage: string) => {
+    setMessage(`⚠️ ${conflictMessage}`);
+    setMessageType('error');
+    
+    // Refresh the tools list to get latest data
+    queryClient.invalidateQueries({ queryKey: ['admin-tools'] });
+    setRefreshTrigger(prev => prev + 1);
+  };
+
+  // Handle edit validation error (400)
+  const handleEditValidationError = (errors: Record<string, string>) => {
+    const errorMsg = Object.values(errors).join(', ');
+    setMessage(`⚠️ Validation error: ${errorMsg}`);
+    setMessageType('error');
   };
 
   const handleDelete = (tool: Tool) => {
@@ -309,6 +390,27 @@ export const AdminToolManagement: React.FC<AdminToolManagementProps> = ({
       </form>
         </div>
       )}
+
+      {/* Edit Modal */}
+      <ToolEditModal
+        tool={editingTool}
+        adminToken={adminToken}
+        onClose={() => {
+          setIsEditModalOpen(false);
+          setEditingTool(null);
+        }}
+        onSuccess={(message) => {
+          setMessage(`✓ ${message || 'Tool updated successfully'}`);
+          setMessageType('success');
+          setIsEditModalOpen(false);
+          setEditingTool(null);
+          queryClient.invalidateQueries({ queryKey: ['admin-tools'] });
+          setRefreshTrigger(prev => prev + 1);
+          setTimeout(() => setMessage(''), 3000);
+        }}
+        onConflict={handleEditConflict}
+        onValidationError={handleEditValidationError}
+      />
     </div>
   );
 };

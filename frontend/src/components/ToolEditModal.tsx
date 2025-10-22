@@ -1,34 +1,53 @@
 /**
  * ToolEditModal Component
  * 
- * Glass-themed modal for editing tool details
+ * Glass-themed modal for editing tool details with multi-category support
  */
 import { useState, useEffect } from 'react';
-
-interface Tool {
-  id: string;
-  name: string;
-  vendor: string;
-  category: string;
-  description: string;
-  status: string;
-}
+import { Tool, ToolCategory } from '../types';
 
 interface ToolEditModalProps {
   tool: Tool | null;
   adminToken: string;
   onClose: () => void;
-  onSuccess: () => void;
+  onSuccess: (message?: string) => void;
+  onConflict?: (message: string) => void;
+  onValidationError?: (errors: Record<string, string>) => void;
 }
 
-export const ToolEditModal = ({ tool, adminToken, onClose, onSuccess }: ToolEditModalProps) => {
-  const [formData, setFormData] = useState({
+export interface ToolUpdateData {
+  name?: string;
+  vendor?: string;
+  categories?: string[];
+  description?: string;
+}
+
+const CATEGORY_OPTIONS = [
+  { value: 'code_assistant', label: 'Code Assistant' },
+  { value: 'autonomous_agent', label: 'Autonomous Agent' },
+  { value: 'code_review', label: 'Code Review' },
+  { value: 'testing', label: 'Testing' },
+  { value: 'devops', label: 'DevOps' },
+  { value: 'project_management', label: 'Project Management' },
+  { value: 'collaboration', label: 'Collaboration' },
+  { value: 'other', label: 'Other' },
+];
+
+export const ToolEditModal = ({
+  tool,
+  adminToken,
+  onClose,
+  onSuccess,
+  onConflict,
+  onValidationError,
+}: ToolEditModalProps) => {
+  const [formData, setFormData] = useState<ToolUpdateData>({
     name: '',
     vendor: '',
-    category: '',
+    categories: [],
     description: '',
-    status: 'active',
   });
+  const [errors, setErrors] = useState<Record<string, string>>({});
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -38,51 +57,143 @@ export const ToolEditModal = ({ tool, adminToken, onClose, onSuccess }: ToolEdit
       setFormData({
         name: tool.name,
         vendor: tool.vendor,
-        category: tool.category,
-        description: tool.description,
-        status: tool.status,
+        categories: tool.categories,
+        description: tool.description || '',
       });
       setError(null);
+      setErrors({});
     }
   }, [tool]);
 
   if (!tool) return null;
 
+  const validateForm = (): boolean => {
+    const newErrors: Record<string, string> = {};
+
+    if (!formData.name?.trim()) {
+      newErrors.name = 'Tool name is required';
+    }
+
+    if (!formData.vendor?.trim()) {
+      newErrors.vendor = 'Vendor is required';
+    }
+
+    if (!formData.categories || formData.categories.length === 0) {
+      newErrors.categories = 'At least 1 category is required';
+    } else if (formData.categories.length > 5) {
+      newErrors.categories = 'Maximum 5 categories allowed';
+    }
+
+    setErrors(newErrors);
+    return Object.keys(newErrors).length === 0;
+  };
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+
+    if (!validateForm()) {
+      return;
+    }
+
     setError(null);
     setIsSubmitting(true);
 
     try {
-      const response = await fetch(`http://localhost:8000/api/admin/tools/${tool.id}`, {
-        method: 'PUT',
-        headers: {
-          'Content-Type': 'application/json',
-          'X-Admin-Token': adminToken,
-        },
-        body: JSON.stringify(formData),
-      });
+      // Get ETag from tool metadata if available
+      const etag = (tool as any)._etag || undefined;
+      const headers: Record<string, string> = {
+        'Content-Type': 'application/json',
+        'X-Admin-Token': adminToken,
+      };
 
-      if (!response.ok) {
-        const data = await response.json();
-        throw new Error(data.detail || 'Failed to update tool');
+      if (etag) {
+        headers['If-Match'] = etag;
       }
 
-      onSuccess();
+      const response = await fetch(
+        `http://localhost:8000/api/v1/admin/tools/${tool.id}`,
+        {
+          method: 'PUT',
+          headers,
+          body: JSON.stringify(formData),
+        }
+      );
+
+      if (!response.ok) {
+        if (response.status === 409) {
+          // Conflict - concurrent modification
+          const data = await response.json();
+          const message = data.detail || 'Concurrent modification detected';
+          setError(message);
+          if (onConflict) {
+            onConflict(message);
+          }
+          return;
+        } else if (response.status === 400) {
+          // Validation error
+          const data = await response.json();
+          const message = data.detail || 'Validation error';
+          setError(message);
+          if (onValidationError) {
+            // Try to parse field-specific errors
+            const fieldErrors: Record<string, string> = {};
+            fieldErrors.general = message;
+            setErrors(fieldErrors);
+            onValidationError(fieldErrors);
+          }
+          return;
+        } else {
+          const data = await response.json();
+          throw new Error(data.detail || 'Failed to update tool');
+        }
+      }
+
+      const data = await response.json();
+      onSuccess(data.message || 'Tool updated successfully');
       onClose();
     } catch (err) {
-      const message = err instanceof Error ? err.message : 'Failed to update tool';
+      const message =
+        err instanceof Error ? err.message : 'Failed to update tool';
       setError(message);
     } finally {
       setIsSubmitting(false);
     }
   };
 
-  const handleChange = (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>) => {
+  const handleChange = (
+    e: React.ChangeEvent<
+      HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement
+    >
+  ) => {
     setFormData({
       ...formData,
       [e.target.name]: e.target.value,
     });
+  };
+
+  const toggleCategory = (category: string) => {
+    const categories = formData.categories || [];
+    const isSelected = categories.includes(category);
+
+    if (isSelected) {
+      // Remove category
+      setFormData({
+        ...formData,
+        categories: categories.filter((c) => c !== category),
+      });
+    } else {
+      // Add category (max 5)
+      if (categories.length < 5) {
+        setFormData({
+          ...formData,
+          categories: [...categories, category],
+        });
+      }
+    }
+  };
+
+  const isCategorySelected = (category: string): boolean => {
+    return (formData.categories || []).includes(category);
   };
 
   return (
@@ -142,22 +253,44 @@ export const ToolEditModal = ({ tool, adminToken, onClose, onSuccess }: ToolEdit
             </div>
 
             <div>
-              <label htmlFor="edit-category" className="block text-sm font-bold text-gray-200 mb-2">
-                Category *
+              <label className="block text-sm font-bold text-gray-200 mb-2">
+                Categories *{' '}
+                <span className="text-gray-500 font-normal text-xs">
+                  (Select 1-5)
+                </span>
               </label>
-              <select
-                id="edit-category"
-                name="category"
-                value={formData.category}
-                onChange={handleChange}
-                required
-                className="glass-input w-full"
-              >
-                <option value="">Select a category</option>
-                <option value="code-completion">Code Completion</option>
-                <option value="chat">Chat</option>
-                <option value="analysis">Analysis</option>
-              </select>
+              <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3">
+                {CATEGORY_OPTIONS.map((option) => {
+                  const isSelected = isCategorySelected(option.value);
+                  return (
+                    <button
+                      key={option.value}
+                      type="button"
+                      onClick={() => toggleCategory(option.value)}
+                      disabled={
+                        isSubmitting ||
+                        (!isSelected &&
+                          (formData.categories?.length || 0) >= 5)
+                      }
+                      className={`px-4 py-2 rounded-lg text-sm font-medium transition-all ${
+                        isSelected
+                          ? 'bg-blue-500/20 border-blue-500 text-blue-300'
+                          : 'bg-white/5 border-white/10 text-gray-400 hover:border-white/30 hover:text-gray-300'
+                      } border disabled:opacity-50 disabled:cursor-not-allowed`}
+                    >
+                      {option.label}
+                    </button>
+                  );
+                })}
+              </div>
+              {errors.categories && (
+                <p className="mt-2 text-sm text-red-400">
+                  {errors.categories}
+                </p>
+              )}
+              <p className="mt-2 text-xs text-gray-500">
+                Selected: {formData.categories?.length || 0} / 5
+              </p>
             </div>
 
             <div>
@@ -167,34 +300,17 @@ export const ToolEditModal = ({ tool, adminToken, onClose, onSuccess }: ToolEdit
               <textarea
                 id="edit-description"
                 name="description"
-                value={formData.description}
+                value={formData.description || ''}
                 onChange={handleChange}
-                maxLength={500}
-                rows={3}
+                maxLength={1000}
+                rows={4}
+                disabled={isSubmitting}
                 className="glass-input w-full resize-none"
-                placeholder="Brief description of the tool..."
+                placeholder="Optional description of the tool..."
               />
               <div className="text-xs text-gray-500 mt-1">
-                {formData.description.length}/500 characters
+                {(formData.description || '').length}/1000 characters
               </div>
-            </div>
-
-            <div>
-              <label htmlFor="edit-status" className="block text-sm font-bold text-gray-200 mb-2">
-                Status *
-              </label>
-              <select
-                id="edit-status"
-                name="status"
-                value={formData.status}
-                onChange={handleChange}
-                required
-                className="glass-input w-full"
-              >
-                <option value="active">Active</option>
-                <option value="deprecated">Deprecated</option>
-                <option value="deleted">Deleted</option>
-              </select>
             </div>
 
             <div className="flex gap-3 pt-4">

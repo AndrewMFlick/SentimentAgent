@@ -130,24 +130,31 @@ Remaining work: T020 (optional ToolFilters component - filters integrated in Too
 
 ### Implementation for User Story 2
 
-- [ ] T029 [US2] Add `update_tool` method in `backend/src/services/tool_service.py` with optimistic concurrency using ETag
-- [ ] T030 [US2] Add validation in `update_tool` for unique name (among active tools), 1-5 categories, valid category enums
-- [ ] T031 [US2] Add auto-regeneration of slug if name changes in `update_tool` method
-- [ ] T032 [US2] Add `_log_admin_action` helper method in `backend/src/services/tool_service.py` to create AdminActionLog entries
-- [ ] T033 [US2] Call `_log_admin_action` in `update_tool` with before/after state
-- [ ] T034 [US2] Create `PUT /api/v1/admin/tools/{tool_id}` endpoint in `backend/src/api/admin.py` accepting ToolUpdateRequest body and If-Match header
-- [ ] T035 [US2] Add 409 Conflict response handling for ETag mismatch in PUT endpoint
-- [ ] T036 [US2] Add 400 Bad Request response with validation details for invalid updates
-- [ ] T037 [P] [US2] Create or update ToolEditModal component in `frontend/src/components/ToolEditModal.tsx` with form for name, vendor, categories (multi-select), description
-- [ ] T038 [P] [US2] Add category multi-select UI in ToolEditModal (max 5 selections)
-- [ ] T039 [P] [US2] Add form validation in ToolEditModal (required name, 1-5 categories)
-- [ ] T040 [US2] Add `updateTool` function in `frontend/src/services/toolApi.ts` with If-Match header (ETag)
-- [ ] T041 [US2] Handle 409 Conflict in frontend - show message, refresh tool data, allow retry
-- [ ] T042 [US2] Handle 400 validation errors - display field-specific error messages
-- [ ] T043 [US2] Add success toast notification after successful update
-- [ ] T044 [US2] Invalidate React Query cache after update to refresh list
+- [x] T029 [US2] Add `update_tool` method in `backend/src/services/tool_service.py` with optimistic concurrency using ETag
+- [x] T030 [US2] Add validation in `update_tool` for unique name (among active tools), 1-5 categories, valid category enums
+- [x] T031 [US2] Add auto-regeneration of slug if name changes in `update_tool` method
+- [x] T032 [US2] Add `_log_admin_action` helper method in `backend/src/services/tool_service.py` to create AdminActionLog entries
+- [x] T033 [US2] Call `_log_admin_action` in `update_tool` with before/after state
+- [x] T034 [US2] Create `PUT /api/v1/admin/tools/{tool_id}` endpoint in `backend/src/api/admin.py` accepting ToolUpdateRequest body and If-Match header
+- [x] T035 [US2] Add 409 Conflict response handling for ETag mismatch in PUT endpoint
+- [x] T036 [US2] Add 400 Bad Request response with validation details for invalid updates
+- [x] T037 [P] [US2] Create or update ToolEditModal component in `frontend/src/components/ToolEditModal.tsx` with form for name, vendor, categories (multi-select), description
+- [x] T038 [P] [US2] Add category multi-select UI in ToolEditModal (max 5 selections)
+- [x] T039 [P] [US2] Add form validation in ToolEditModal (required name, 1-5 categories)
+- [x] T040 [US2] Add `updateTool` function in `frontend/src/services/api.ts` with If-Match header (ETag)
+- [x] T041 [US2] Handle 409 Conflict in frontend - show message, refresh tool data, allow retry
+- [x] T042 [US2] Handle 400 validation errors - display field-specific error messages
+- [x] T043 [US2] Add success toast notification after successful update
+- [x] T044 [US2] Invalidate React Query cache after update to refresh list
 
-**Checkpoint**: At this point, User Stories 1 AND 2 should both work independently - can view tools and edit them
+**Checkpoint**: ✅ User Story 2 COMPLETE (16/16 tasks - 100%)! Can now view tools AND edit them with optimistic concurrency control.
+
+**Implementation Summary**:
+- ✅ Backend: `update_tool` method with ETag-based optimistic concurrency, name uniqueness validation, auto slug regeneration, audit logging
+- ✅ Backend API: PUT `/api/v1/admin/tools/{tool_id}` with If-Match header, 409 Conflict on ETag mismatch, 400 on validation errors
+- ✅ Frontend: ToolEditModal with multi-category selection (1-5), form validation, ETag handling
+- ✅ Integration: React Query mutation with automatic cache invalidation, conflict detection with refresh prompt, success/error notifications
+- ⚠️ Testing: Ready for browser validation
 
 ---
 
@@ -169,8 +176,8 @@ Remaining work: T020 (optional ToolFilters component - filters integrated in Too
 - [ ] T052 [P] [US3] Add archive button to ToolTable row actions in `frontend/src/components/ToolTable.tsx`
 - [ ] T053 [P] [US3] Add unarchive button to ToolTable row actions (shown only for archived tools)
 - [ ] T054 [P] [US3] Create ArchiveConfirmationDialog component in `frontend/src/components/ArchiveConfirmationDialog.tsx`
-- [ ] T055 [US3] Add `archiveTool` function in `frontend/src/services/toolApi.ts`
-- [ ] T056 [US3] Add `unarchiveTool` function in `frontend/src/services/toolApi.ts`
+- [ ] T055 [US3] Add `archiveTool` function in `frontend/src/services/api.ts`
+- [ ] T056 [US3] Add `unarchiveTool` function in `frontend/src/services/api.ts`
 - [ ] T057 [US3] Wire archive button to show confirmation dialog, call API on confirm
 - [ ] T058 [US3] Wire unarchive button to call API directly (simpler than archive)
 - [ ] T059 [US3] Invalidate cache and refresh list after archive/unarchive

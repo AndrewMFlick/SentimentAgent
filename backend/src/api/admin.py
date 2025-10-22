@@ -515,10 +515,11 @@ async def update_tool(
     tool_id: str,
     updates: ToolUpdateRequest,
     x_admin_token: Optional[str] = Header(None),
+    if_match: Optional[str] = Header(None),
     tool_service: ToolService = Depends(get_tool_service)
 ):
     """
-    Update tool details.
+    Update tool details with optimistic concurrency control.
 
     Requires admin authentication.
 
@@ -526,10 +527,21 @@ async def update_tool(
         tool_id: Tool UUID
         updates: Fields to update
         x_admin_token: Admin authentication token
+        if_match: ETag value for optimistic concurrency (optional)
 
     Returns:
         Updated tool record
+
+    Raises:
+        400: Validation error (duplicate name, invalid categories)
+        404: Tool not found
+        409: Concurrent modification detected (ETag mismatch)
+        500: Server error
     """
+    from azure.cosmos import exceptions
+
+    admin_user = None
+
     try:
         # Verify admin access
         admin_user = verify_admin(x_admin_token)
@@ -538,13 +550,27 @@ async def update_tool(
             "Admin updating tool",
             tool_id=tool_id,
             updates=updates.dict(exclude_unset=True),
-            admin=admin_user
+            admin=admin_user,
+            has_etag=bool(if_match)
         )
 
-        # Update tool
-        tool = await tool_service.update_tool(tool_id, updates)
+        # Update tool with ETag-based concurrency control
+        tool = await tool_service.update_tool(
+            tool_id=tool_id,
+            updates=updates,
+            updated_by=admin_user,
+            etag=if_match,
+            # Note: FastAPI doesn't provide easy access to client IP/UA
+            # In production, you'd extract these from Request object
+            ip_address=None,
+            user_agent=None
+        )
+
         if not tool:
-            raise HTTPException(status_code=404, detail=f"Tool '{tool_id}' not found")
+            raise HTTPException(
+                status_code=404,
+                detail=f"Tool '{tool_id}' not found"
+            )
 
         logger.info(
             "Tool updated successfully",
@@ -554,6 +580,40 @@ async def update_tool(
 
         return {"tool": tool, "message": "Tool updated successfully"}
 
+    except ValueError as e:
+        # Validation errors (duplicate name, invalid categories)
+        logger.warning(
+            "Tool update validation error",
+            tool_id=tool_id,
+            error=str(e),
+            admin=admin_user
+        )
+        raise HTTPException(status_code=400, detail=str(e))
+    except exceptions.CosmosHttpResponseError as e:
+        if e.status_code == 412:
+            # Precondition failed - ETag mismatch
+            logger.warning(
+                "Concurrent modification detected",
+                tool_id=tool_id,
+                admin=admin_user
+            )
+            raise HTTPException(
+                status_code=409,
+                detail="Concurrent modification detected. "
+                "Please refresh and try again."
+            )
+        else:
+            logger.error(
+                "Cosmos DB error during tool update",
+                tool_id=tool_id,
+                status_code=e.status_code,
+                error=str(e),
+                exc_info=True
+            )
+            raise HTTPException(
+                status_code=500,
+                detail="Database error occurred"
+            )
     except HTTPException:
         raise
     except Exception as e:

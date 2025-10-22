@@ -295,19 +295,32 @@ export const api = {
   },
 
   /**
-   * Update a tool
+   * Update a tool with optimistic concurrency control
    * @param toolId - Tool identifier
    * @param updates - Fields to update
    * @param adminToken - Admin authentication token
+   * @param etag - Optional ETag for optimistic concurrency (If-Match header)
    */
-  updateTool: async (toolId: string, updates: any, adminToken: string): Promise<{ tool: any; message: string }> => {
+  updateTool: async (
+    toolId: string,
+    updates: any,
+    adminToken: string,
+    etag?: string
+  ): Promise<{ tool: any; message: string }> => {
+    const headers: Record<string, string> = {
+      'X-Admin-Token': adminToken
+    };
+
+    // Add ETag header if provided for optimistic concurrency control
+    if (etag) {
+      headers['If-Match'] = etag;
+    }
+
     const response = await axios.put(
       `${API_BASE_URL}/admin/tools/${toolId}`,
       updates,
       {
-        headers: {
-          'X-Admin-Token': adminToken
-        }
+        headers
       }
     );
     return response.data;
