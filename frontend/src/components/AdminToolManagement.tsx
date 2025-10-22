@@ -1,5 +1,9 @@
-import React, { useState } from 'react';
+import { useState } from 'react';
+import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { api } from '../services/api';
+import { ToolTable } from './ToolTable';
+import { ToolEditModal } from './ToolEditModal';
+import { Tool } from '../types';
 
 interface AdminToolManagementProps {
   adminToken: string;
@@ -10,20 +14,119 @@ export const AdminToolManagement: React.FC<AdminToolManagementProps> = ({
   adminToken,
   onToolCreated 
 }) => {
+  const queryClient = useQueryClient();
+  
+  // View state
+  const [activeView, setActiveView] = useState<'list' | 'create'>('list');
+  
+  // Edit modal state
+  const [editingTool, setEditingTool] = useState<Tool | null>(null);
+  
   // Form state
   const [toolName, setToolName] = useState('');
   const [vendor, setVendor] = useState('');
-  const [category, setCategory] = useState<'code-completion' | 'chat' | 'analysis'>('code-completion');
+  const [categories, setCategories] = useState<string[]>(['code_assistant']);
   const [description, setDescription] = useState('');
   
   // UI state
   const [message, setMessage] = useState('');
   const [messageType, setMessageType] = useState<'success' | 'error'>('success');
-  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [refreshTrigger, setRefreshTrigger] = useState(0);
+
+  // Create tool mutation
+  const createToolMutation = useMutation({
+    mutationFn: async (toolData: {
+      name: string;
+      vendor: string;
+      categories: string[];
+      description?: string;
+    }) => {
+      return await api.createTool(toolData, adminToken);
+    },
+    onSuccess: (response) => {
+      setMessage(`✓ ${response.message}`);
+      setMessageType('success');
+
+      // Reset form
+      setToolName('');
+      setVendor('');
+      setCategories(['code_assistant']);
+      setDescription('');
+
+      // Invalidate and refetch tools query
+      queryClient.invalidateQueries({ queryKey: ['admin-tools'] });
+
+      // Refresh trigger for ToolTable
+      setRefreshTrigger(prev => prev + 1);
+
+      // Notify parent component
+      if (onToolCreated) {
+        onToolCreated();
+      }
+
+      // Switch back to list view
+      setTimeout(() => {
+        setActiveView('list');
+        setMessage('');
+      }, 2000);
+    },
+    onError: (error: any) => {
+      const errorMessage = error.response?.data?.detail || error.message || 'Failed to create tool';
+      setMessage(`✗ ${errorMessage}`);
+      setMessageType('error');
+    },
+  });
+
+  // Edit handler
+  const handleEdit = (tool: Tool) => {
+    setEditingTool(tool);
+    setMessage(''); // Clear any existing messages
+  };
+
+  // Edit conflict handler
+  const handleEditConflict = (conflictMessage: string) => {
+    setMessage(`⚠️ ${conflictMessage}`);
+    setMessageType('error');
+    
+    // Refresh the tools list to get latest data
+    queryClient.invalidateQueries({ queryKey: ['admin-tools'] });
+    setRefreshTrigger(prev => prev + 1);
+  };
+
+  // Handle edit validation error (400)
+  const handleEditValidationError = (errors: Record<string, string>) => {
+    const errorMsg = Object.values(errors).join(', ');
+    setMessage(`⚠️ Validation error: ${errorMsg}`);
+    setMessageType('error');
+  };
+
+  const handleDelete = (tool: Tool) => {
+    console.log('Delete tool:', tool);
+    // TODO: Implement delete confirmation (User Story 4)
+    alert(`Delete functionality will be implemented in User Story 4.\nTool: ${tool.name}`);
+  };
+
+  // Category toggle handler
+  const toggleCategory = (category: string) => {
+    setCategories(prev => {
+      if (prev.includes(category)) {
+        // Don't allow removing the last category
+        if (prev.length === 1) return prev;
+        return prev.filter(c => c !== category);
+      } else {
+        // Don't allow more than 5 categories
+        if (prev.length >= 5) return prev;
+        return [...prev, category];
+      }
+    });
+  };
 
   // Form validation
   const isFormValid = () => {
-    return toolName.trim().length > 0 && vendor.trim().length > 0;
+    return toolName.trim().length > 0 && 
+           vendor.trim().length > 0 && 
+           categories.length > 0 && 
+           categories.length <= 5;
   };
 
   // Submit handler
@@ -31,58 +134,66 @@ export const AdminToolManagement: React.FC<AdminToolManagementProps> = ({
     e.preventDefault();
     
     if (!isFormValid()) {
-      setMessage('Please fill in all required fields');
+      setMessage('Please fill in all required fields (1-5 categories)');
       setMessageType('error');
       return;
     }
 
-    setIsSubmitting(true);
     setMessage('');
 
-    try {
-      const response = await api.createTool(
-        {
-          name: toolName,
-          vendor: vendor,
-          category: category,
-          description: description || undefined,
-        },
-        adminToken
-      );
-
-      setMessage(`✓ ${response.message}`);
-      setMessageType('success');
-
-      // Reset form
-      setToolName('');
-      setVendor('');
-      setCategory('code-completion');
-      setDescription('');
-
-      // Notify parent component
-      if (onToolCreated) {
-        onToolCreated();
-      }
-
-      // Clear success message after 5 seconds
-      setTimeout(() => {
-        setMessage('');
-      }, 5000);
-
-    } catch (error: any) {
-      const errorMessage = error.response?.data?.detail || error.message || 'Failed to create tool';
-      setMessage(`✗ ${errorMessage}`);
-      setMessageType('error');
-    } finally {
-      setIsSubmitting(false);
-    }
+    createToolMutation.mutate({
+      name: toolName,
+      vendor: vendor,
+      categories: categories,
+      description: description || undefined,
+    });
   };
 
   return (
-    <div className="glass-card p-6 mb-8">
-      <h2 className="text-2xl font-bold text-white mb-6">Add New AI Tool</h2>
-      
-      <form onSubmit={handleSubmit} className="space-y-4">
+    <div className="space-y-6">
+      {/* View Toggle */}
+      <div className="flex gap-4 mb-6">
+        <button
+          onClick={() => setActiveView('list')}
+          className={`px-6 py-3 rounded-lg font-semibold transition-all duration-200 ${
+            activeView === 'list'
+              ? 'bg-blue-600/30 border-2 border-blue-500/50 text-white'
+              : 'bg-dark-elevated/50 border-2 border-transparent text-gray-400 hover:bg-dark-elevated hover:text-gray-200'
+          }`}
+        >
+          📋 View All Tools
+        </button>
+        <button
+          onClick={() => setActiveView('create')}
+          className={`px-6 py-3 rounded-lg font-semibold transition-all duration-200 ${
+            activeView === 'create'
+              ? 'bg-blue-600/30 border-2 border-blue-500/50 text-white'
+              : 'bg-dark-elevated/50 border-2 border-transparent text-gray-400 hover:bg-dark-elevated hover:text-gray-200'
+          }`}
+        >
+          ➕ Add New Tool
+        </button>
+      </div>
+
+      {/* List View */}
+      {activeView === 'list' && (
+        <div className="glass-card p-6">
+          <h2 className="text-2xl font-bold text-white mb-6">All AI Tools</h2>
+          <ToolTable
+            adminToken={adminToken}
+            onEdit={handleEdit}
+            onDelete={handleDelete}
+            refreshTrigger={refreshTrigger}
+          />
+        </div>
+      )}
+
+      {/* Create View */}
+      {activeView === 'create' && (
+        <div className="glass-card p-6">
+          <h2 className="text-2xl font-bold text-white mb-6">Add New AI Tool</h2>
+          
+          <form onSubmit={handleSubmit} className="space-y-4">
         {/* Tool Name */}
         <div>
           <label htmlFor="tool-name" className="block text-sm font-medium mb-2 text-gray-200">
@@ -97,7 +208,7 @@ export const AdminToolManagement: React.FC<AdminToolManagementProps> = ({
             className="glass-input w-full"
             maxLength={100}
             required
-            disabled={isSubmitting}
+            disabled={createToolMutation.isPending}
           />
         </div>
 
@@ -115,33 +226,46 @@ export const AdminToolManagement: React.FC<AdminToolManagementProps> = ({
             className="glass-input w-full"
             maxLength={100}
             required
-            disabled={isSubmitting}
+            disabled={createToolMutation.isPending}
           />
         </div>
 
-        {/* Category */}
+        {/* Categories (Multi-select) */}
         <div>
-          <label htmlFor="category" className="block text-sm font-medium mb-2 text-gray-200">
-            Category <span className="text-red-400">*</span>
+          <label className="block text-sm font-medium mb-2 text-gray-200">
+            Categories <span className="text-red-400">*</span>
+            <span className="text-xs text-gray-400 ml-2">(Select 1-5 categories)</span>
           </label>
-          <select
-            id="category"
-            value={category}
-            onChange={(e) => setCategory(e.target.value as 'code-completion' | 'chat' | 'analysis')}
-            className="glass-input w-full"
-            required
-            disabled={isSubmitting}
-          >
-            <option value="code-completion" className="bg-dark-surface text-gray-200">
-              Code Completion
-            </option>
-            <option value="chat" className="bg-dark-surface text-gray-200">
-              Chat
-            </option>
-            <option value="analysis" className="bg-dark-surface text-gray-200">
-              Analysis
-            </option>
-          </select>
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
+            {[
+              { value: 'code_assistant', label: 'Code Assistant' },
+              { value: 'autonomous_agent', label: 'Autonomous Agent' },
+              { value: 'code_review', label: 'Code Review' },
+              { value: 'testing', label: 'Testing' },
+              { value: 'devops', label: 'DevOps' },
+              { value: 'project_management', label: 'Project Management' },
+              { value: 'collaboration', label: 'Collaboration' },
+              { value: 'other', label: 'Other' },
+            ].map((cat) => (
+              <button
+                key={cat.value}
+                type="button"
+                onClick={() => toggleCategory(cat.value)}
+                disabled={createToolMutation.isPending}
+                className={`px-3 py-2 rounded-lg text-sm font-medium transition-all ${
+                  categories.includes(cat.value)
+                    ? 'bg-blue-600/30 border-2 border-blue-500/50 text-white'
+                    : 'bg-dark-elevated/50 border-2 border-transparent text-gray-400 hover:bg-dark-elevated hover:text-gray-200'
+                } ${createToolMutation.isPending ? 'opacity-50 cursor-not-allowed' : ''}`}
+              >
+                {categories.includes(cat.value) && '✓ '}
+                {cat.label}
+              </button>
+            ))}
+          </div>
+          <p className="text-xs text-gray-400 mt-2">
+            Selected: {categories.length} / 5
+          </p>
         </div>
 
         {/* Description */}
@@ -157,7 +281,7 @@ export const AdminToolManagement: React.FC<AdminToolManagementProps> = ({
             className="glass-input w-full resize-none"
             rows={3}
             maxLength={500}
-            disabled={isSubmitting}
+            disabled={createToolMutation.isPending}
           />
         </div>
 
@@ -178,18 +302,18 @@ export const AdminToolManagement: React.FC<AdminToolManagementProps> = ({
         <div className="pt-2">
           <button
             type="submit"
-            disabled={!isFormValid() || isSubmitting}
+            disabled={!isFormValid() || createToolMutation.isPending}
             className={`
               px-6 py-3 rounded-lg font-semibold
               transition-all duration-200
               ${
-                isFormValid() && !isSubmitting
+                isFormValid() && !createToolMutation.isPending
                   ? 'bg-gradient-to-r from-blue-500 to-purple-600 hover:from-blue-600 hover:to-purple-700 text-white shadow-lg hover:shadow-xl hover:scale-105'
                   : 'bg-gray-600/50 text-gray-400 cursor-not-allowed'
               }
             `}
           >
-            {isSubmitting ? (
+            {createToolMutation.isPending ? (
               <span className="flex items-center gap-2">
                 <svg className="animate-spin h-5 w-5" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
                   <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
@@ -203,6 +327,27 @@ export const AdminToolManagement: React.FC<AdminToolManagementProps> = ({
           </button>
         </div>
       </form>
+        </div>
+      )}
+
+      {/* Edit Modal */}
+      <ToolEditModal
+        tool={editingTool}
+        adminToken={adminToken}
+        onClose={() => {
+          setEditingTool(null);
+        }}
+        onSuccess={(message) => {
+          setMessage(`✓ ${message || 'Tool updated successfully'}`);
+          setMessageType('success');
+          setEditingTool(null);
+          queryClient.invalidateQueries({ queryKey: ['admin-tools'] });
+          setRefreshTrigger(prev => prev + 1);
+          setTimeout(() => setMessage(''), 3000);
+        }}
+        onConflict={handleEditConflict}
+        onValidationError={handleEditValidationError}
+      />
     </div>
   );
 };

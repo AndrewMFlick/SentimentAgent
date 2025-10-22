@@ -2,20 +2,13 @@
  * ToolTable Component
  * 
  * Glass-themed table for managing AI tools with search, filter, pagination
+ * Updated for Phase 3: Multi-category support, enhanced filters, React Query caching
  */
 import { useState, useEffect } from 'react';
-
-interface Tool {
-  id: string;
-  name: string;
-  slug: string;
-  vendor: string;
-  category: string;
-  description: string;
-  status: string;
-  created_at: string;
-  updated_at: string;
-}
+import { useQuery } from '@tanstack/react-query';
+import { Tool, ToolStatus } from '../types';
+import { api } from '../services/api';
+import Pagination from './Pagination';
 
 interface ToolTableProps {
   adminToken: string;
@@ -25,18 +18,17 @@ interface ToolTableProps {
 }
 
 export const ToolTable = ({ adminToken, onEdit, onDelete, refreshTrigger }: ToolTableProps) => {
-  const [tools, setTools] = useState<Tool[]>([]);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  
   // Pagination state
   const [currentPage, setCurrentPage] = useState(1);
-  const [totalTools, setTotalTools] = useState(0);
   const [limit] = useState(20);
   
   // Filter state
   const [searchQuery, setSearchQuery] = useState('');
-  const [categoryFilter, setCategoryFilter] = useState('');
+  const [statusFilter, setStatusFilter] = useState<string>('active');
+  const [categoryFilter, setCategoryFilter] = useState<string[]>([]);
+  const [vendorFilter] = useState('');  // Future feature
+  const [sortBy] = useState('name');    // Future feature
+  const [sortOrder] = useState<'asc' | 'desc'>('asc');  // Future feature
   const [debouncedSearch, setDebouncedSearch] = useState('');
 
   // Debounce search input
@@ -49,69 +41,34 @@ export const ToolTable = ({ adminToken, onEdit, onDelete, refreshTrigger }: Tool
     return () => clearTimeout(timer);
   }, [searchQuery]);
 
-  // Fetch tools
-  useEffect(() => {
-    const fetchTools = async () => {
-      setLoading(true);
-      setError(null);
+  // Fetch tools with React Query
+  const { data, isLoading, error } = useQuery({
+    queryKey: ['admin-tools', currentPage, limit, debouncedSearch, statusFilter, categoryFilter, vendorFilter, sortBy, sortOrder, refreshTrigger],
+    queryFn: async () => {
+      return await api.listAdminTools(
+        {
+          page: currentPage,
+          limit: limit,
+          search: debouncedSearch || undefined,
+          status: statusFilter || undefined,
+          category: categoryFilter.length > 0 ? categoryFilter : undefined,
+          vendor: vendorFilter || undefined,
+          sort_by: sortBy,
+          sort_order: sortOrder,
+        },
+        adminToken
+      );
+    },
+    enabled: !!adminToken,
+  });
 
-      try {
-        const params = new URLSearchParams({
-          page: currentPage.toString(),
-          limit: limit.toString(),
-        });
+  const tools = data?.tools || [];
+  const totalTools = data?.pagination?.total_items || 0;
+  const totalPages = data?.pagination?.total_pages || 0;
+  const hasNext = data?.pagination?.has_next || false;
+  const hasPrev = data?.pagination?.has_prev || false;
 
-        if (debouncedSearch) {
-          params.append('search', debouncedSearch);
-        }
-
-        if (categoryFilter) {
-          params.append('category', categoryFilter);
-        }
-
-        const response = await fetch(
-          `http://localhost:8000/api/admin/tools?${params.toString()}`,
-          {
-            headers: {
-              'X-Admin-Token': adminToken,
-            },
-          }
-        );
-
-        if (!response.ok) {
-          throw new Error(`Failed to fetch tools: ${response.statusText}`);
-        }
-
-        const data = await response.json();
-        setTools(data.tools || []);
-        setTotalTools(data.total || 0);
-      } catch (err) {
-        const message = err instanceof Error ? err.message : 'Failed to fetch tools';
-        setError(message);
-        console.error('Error fetching tools:', err);
-      } finally {
-        setLoading(false);
-      }
-    };
-
-    fetchTools();
-  }, [adminToken, currentPage, limit, debouncedSearch, categoryFilter, refreshTrigger]);
-
-  const totalPages = Math.ceil(totalTools / limit);
-
-  const handlePreviousPage = () => {
-    if (currentPage > 1) {
-      setCurrentPage(currentPage - 1);
-    }
-  };
-
-  const handleNextPage = () => {
-    if (currentPage < totalPages) {
-      setCurrentPage(currentPage + 1);
-    }
-  };
-
-  if (loading && tools.length === 0) {
+  if (isLoading && tools.length === 0) {
     return (
       <div className="flex flex-col items-center py-16 gap-4">
         <div className="border-4 border-dark-elevated border-t-blue-500 rounded-full w-12 h-12 animate-spin"></div>
@@ -120,19 +77,35 @@ export const ToolTable = ({ adminToken, onEdit, onDelete, refreshTrigger }: Tool
     );
   }
 
-  if (error) {
-    return (
-      <div className="p-4 bg-red-900/30 border border-red-700/50 rounded-lg text-red-300">
-        <strong>Error:</strong> {error}
-      </div>
-    );
-  }
-
   return (
     <div className="space-y-4">
+      {/* Loading overlay for subsequent fetches */}
+      {isLoading && tools.length > 0 && (
+        <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center">
+          <div className="bg-dark-elevated/90 border border-glass-border rounded-xl p-6 flex flex-col items-center gap-4">
+            <div className="border-4 border-dark-elevated border-t-blue-500 rounded-full w-12 h-12 animate-spin"></div>
+            <p className="text-gray-300">Updating tools...</p>
+          </div>
+        </div>
+      )}
+
+      {/* Error display */}
+      {error && (
+        <div className="bg-red-900/20 border border-red-700/50 rounded-lg p-4 flex items-start gap-3">
+          <span className="text-red-400 text-xl">⚠️</span>
+          <div className="flex-1">
+            <h3 className="text-red-300 font-bold mb-1">Error Loading Tools</h3>
+            <p className="text-red-200 text-sm">
+              {String(error)}
+            </p>
+          </div>
+        </div>
+      )}
+
       {/* Search and Filter Controls */}
-      <div className="flex flex-col md:flex-row gap-4">
-        <div className="flex-1">
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+        {/* Search */}
+        <div className="lg:col-span-2">
           <label htmlFor="search-tools" className="block text-sm font-bold text-gray-200 mb-2">
             Search Tools
           </label>
@@ -146,30 +119,68 @@ export const ToolTable = ({ adminToken, onEdit, onDelete, refreshTrigger }: Tool
           />
         </div>
 
-        <div className="w-full md:w-64">
+        {/* Status Filter */}
+        <div>
+          <label htmlFor="status-filter" className="block text-sm font-bold text-gray-200 mb-2">
+            Status
+          </label>
+          <select
+            id="status-filter"
+            value={statusFilter}
+            onChange={(e) => {
+              setStatusFilter(e.target.value);
+              setCurrentPage(1);
+            }}
+            className="glass-input w-full"
+          >
+            <option value="active">Active Only</option>
+            <option value="archived">Archived Only</option>
+            <option value="all">All Statuses</option>
+          </select>
+        </div>
+
+        {/* Category Filter */}
+        <div>
           <label htmlFor="category-filter" className="block text-sm font-bold text-gray-200 mb-2">
             Category
           </label>
           <select
             id="category-filter"
-            value={categoryFilter}
+            value={categoryFilter[0] || ''}
             onChange={(e) => {
-              setCategoryFilter(e.target.value);
+              setCategoryFilter(e.target.value ? [e.target.value] : []);
               setCurrentPage(1);
             }}
             className="glass-input w-full"
           >
             <option value="">All Categories</option>
-            <option value="code-completion">Code Completion</option>
-            <option value="chat">Chat</option>
-            <option value="analysis">Analysis</option>
+            <option value="code_assistant">Code Assistant</option>
+            <option value="autonomous_agent">Autonomous Agent</option>
+            <option value="code_review">Code Review</option>
+            <option value="testing">Testing</option>
+            <option value="devops">DevOps</option>
+            <option value="project_management">Project Management</option>
+            <option value="collaboration">Collaboration</option>
+            <option value="other">Other</option>
           </select>
         </div>
       </div>
 
+      {/* Vendor Filter (optional - can add if needed) */}
+      {vendorFilter && (
+        <div className="text-xs text-gray-400">
+          Filtering by vendor: {vendorFilter}
+        </div>
+      )}
+
       {/* Results Summary */}
-      <div className="text-sm text-gray-400">
-        Showing {tools.length > 0 ? (currentPage - 1) * limit + 1 : 0} - {Math.min(currentPage * limit, totalTools)} of {totalTools} tools
+      <div className="flex justify-between items-center text-sm text-gray-400">
+        <span>
+          Showing {tools.length > 0 ? (currentPage - 1) * limit + 1 : 0} - {Math.min(currentPage * limit, totalTools)} of {totalTools} tools
+        </span>
+        <span className="text-xs">
+          Page {currentPage} of {totalPages || 1}
+        </span>
       </div>
 
       {/* Table */}
@@ -220,21 +231,26 @@ export const ToolTable = ({ adminToken, onEdit, onDelete, refreshTrigger }: Tool
                   </td>
                   <td className="p-4 text-sm text-gray-300">{tool.vendor}</td>
                   <td className="p-4 text-sm text-gray-300">
-                    <span className="inline-block px-3 py-1 bg-blue-900/40 border border-blue-700/50 rounded-full text-xs font-bold text-blue-300">
-                      {tool.category}
-                    </span>
+                    <div className="flex flex-wrap gap-1">
+                      {tool.categories.map((category: string, idx: number) => (
+                        <span
+                          key={idx}
+                          className="inline-block px-3 py-1 bg-blue-900/40 border border-blue-700/50 rounded-full text-xs font-bold text-blue-300"
+                        >
+                          {category.replace(/_/g, ' ').replace(/\b\w/g, (l: string) => l.toUpperCase())}
+                        </span>
+                      ))}
+                    </div>
                   </td>
                   <td className="p-4 text-sm text-gray-300">
                     <span
                       className={`inline-block px-3 py-1 rounded-full text-xs font-bold ${
-                        tool.status === 'active'
+                        tool.status === ToolStatus.ACTIVE
                           ? 'bg-emerald-900/40 border border-emerald-700/50 text-emerald-300'
-                          : tool.status === 'deprecated'
-                          ? 'bg-yellow-900/40 border border-yellow-700/50 text-yellow-300'
-                          : 'bg-red-900/40 border border-red-700/50 text-red-300'
+                          : 'bg-gray-900/40 border border-gray-700/50 text-gray-300'
                       }`}
                     >
-                      {tool.status}
+                      {tool.status === ToolStatus.ACTIVE ? 'Active' : 'Archived'}
                     </span>
                   </td>
                   <td className="p-4 text-sm text-gray-300">
@@ -263,29 +279,14 @@ export const ToolTable = ({ adminToken, onEdit, onDelete, refreshTrigger }: Tool
       )}
 
       {/* Pagination Controls */}
-      {totalPages > 1 && (
-        <div className="flex justify-between items-center mt-6">
-          <button
-            onClick={handlePreviousPage}
-            disabled={currentPage === 1 || loading}
-            className="glass-button disabled:opacity-50 disabled:cursor-not-allowed"
-          >
-            ← Previous
-          </button>
-
-          <span className="text-sm text-gray-300">
-            Page {currentPage} of {totalPages}
-          </span>
-
-          <button
-            onClick={handleNextPage}
-            disabled={currentPage >= totalPages || loading}
-            className="glass-button disabled:opacity-50 disabled:cursor-not-allowed"
-          >
-            Next →
-          </button>
-        </div>
-      )}
+      <Pagination
+        currentPage={currentPage}
+        totalPages={totalPages}
+        hasNext={hasNext}
+        hasPrev={hasPrev}
+        onPageChange={setCurrentPage}
+        className="mt-6"
+      />
     </div>
   );
 };

@@ -299,7 +299,7 @@ export const useAllToolsAdmin = (adminToken: string | null) => {
     queryKey: ['allToolsAdmin', adminToken],
     queryFn: () => {
       if (!adminToken) throw new Error('Admin token is required');
-      return api.getAllToolsAdmin(adminToken);
+      return api.getTools();  // Fixed: use getTools() instead of getAllToolsAdmin()
     },
     enabled: !!adminToken,
     staleTime: 30 * 1000, // 30 seconds

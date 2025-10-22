@@ -24,10 +24,12 @@ async def get_tool_service() -> ToolService:
     
     tools_container = db.database.get_container_client("Tools")
     aliases_container = db.database.get_container_client("ToolAliases")
+    admin_logs_container = db.database.get_container_client("AdminActionLogs")
     
     return ToolService(
         tools_container=tools_container,
-        aliases_container=aliases_container
+        aliases_container=aliases_container,
+        admin_logs_container=admin_logs_container
     )
 
 
@@ -325,37 +327,70 @@ async def create_tool(
 @router.get("/tools")
 async def list_tools(
     page: int = Query(default=1, ge=1, description="Page number"),
-    limit: int = Query(default=20, ge=1, le=100, description="Results per page"),
+    limit: int = Query(
+        default=20, ge=1, le=100, description="Results per page"
+    ),
     search: str = Query(default="", description="Search by tool name"),
-    category: Optional[str] = Query(default=None, description="Filter by category"),
+    status: Optional[str] = Query(
+        default=None,
+        description="Filter by status: active, archived, or all"
+    ),
+    category: Optional[str] = Query(
+        default=None,
+        description="Filter by category (can repeat for multiple)"
+    ),
+    vendor: Optional[str] = Query(
+        default=None,
+        description="Filter by vendor name"
+    ),
+    sort_by: str = Query(
+        default="name",
+        description="Sort by field: name, vendor, or updated_at"
+    ),
+    sort_order: str = Query(
+        default="asc",
+        description="Sort order: asc or desc"
+    ),
     x_admin_token: Optional[str] = Header(None),
     tool_service: ToolService = Depends(get_tool_service)
 ):
     """
-    List all tools with pagination and filtering.
+    List all tools with pagination, filtering, search, and sorting.
 
     Requires admin authentication.
 
-    Args:
+    Query Parameters:
         page: Page number (1-indexed)
-        limit: Results per page
-        search: Search query
-        category: Category filter
-        x_admin_token: Admin authentication token
+        limit: Results per page (max 100)
+        search: Search query for tool name (case-insensitive)
+        status: Filter by status (active, archived, or all)
+        category: Filter by category (supports multiple)
+        vendor: Filter by vendor name
+        sort_by: Sort field (name, vendor, updated_at)
+        sort_order: Sort order (asc or desc)
 
     Returns:
-        Paginated list of tools
+        Paginated list of tools with metadata
     """
     try:
         # Verify admin access
         admin_user = verify_admin(x_admin_token)
+
+        # Parse categories (if provided as comma-separated)
+        categories = None
+        if category:
+            categories = [c.strip() for c in category.split(",")]
 
         logger.info(
             "Admin listing tools",
             page=page,
             limit=limit,
             search=search,
-            category=category,
+            status=status,
+            categories=categories,
+            vendor=vendor,
+            sort_by=sort_by,
+            sort_order=sort_order,
             admin=admin_user
         )
 
@@ -364,18 +399,41 @@ async def list_tools(
             page=page,
             limit=limit,
             search=search,
-            category=category
+            status=status,
+            categories=categories,
+            vendor=vendor,
+            sort_by=sort_by,
+            sort_order=sort_order
         )
-        
+
         total = await tool_service.count_tools(
             search=search,
-            category=category
+            status=status,
+            categories=categories,
+            vendor=vendor
         )
+
+        # Calculate pagination metadata
+        total_pages = (total + limit - 1) // limit  # Ceiling division
+        has_next = page < total_pages
+        has_prev = page > 1
+
+        # Build filters_applied metadata
+        filters_applied = {}
+        if status:
+            filters_applied["status"] = status
+        if categories:
+            filters_applied["categories"] = categories
+        if vendor:
+            filters_applied["vendor"] = vendor
+        if search:
+            filters_applied["search"] = search
 
         logger.info(
             "Tools listed successfully",
             count=len(tools),
             total=total,
+            total_pages=total_pages,
             admin=admin_user
         )
 
@@ -383,7 +441,11 @@ async def list_tools(
             "tools": tools,
             "total": total,
             "page": page,
-            "limit": limit
+            "limit": limit,
+            "total_pages": total_pages,
+            "has_next": has_next,
+            "has_prev": has_prev,
+            "filters_applied": filters_applied
         }
 
     except HTTPException:
@@ -455,10 +517,11 @@ async def update_tool(
     tool_id: str,
     updates: ToolUpdateRequest,
     x_admin_token: Optional[str] = Header(None),
+    if_match: Optional[str] = Header(None),
     tool_service: ToolService = Depends(get_tool_service)
 ):
     """
-    Update tool details.
+    Update tool details with optimistic concurrency control.
 
     Requires admin authentication.
 
@@ -466,10 +529,21 @@ async def update_tool(
         tool_id: Tool UUID
         updates: Fields to update
         x_admin_token: Admin authentication token
+        if_match: ETag value for optimistic concurrency (optional)
 
     Returns:
         Updated tool record
+
+    Raises:
+        400: Validation error (duplicate name, invalid categories)
+        404: Tool not found
+        409: Concurrent modification detected (ETag mismatch)
+        500: Server error
     """
+    from azure.cosmos import exceptions
+
+    admin_user = None
+
     try:
         # Verify admin access
         admin_user = verify_admin(x_admin_token)
@@ -478,13 +552,27 @@ async def update_tool(
             "Admin updating tool",
             tool_id=tool_id,
             updates=updates.dict(exclude_unset=True),
-            admin=admin_user
+            admin=admin_user,
+            has_etag=bool(if_match)
         )
 
-        # Update tool
-        tool = await tool_service.update_tool(tool_id, updates)
+        # Update tool with ETag-based concurrency control
+        tool = await tool_service.update_tool(
+            tool_id=tool_id,
+            updates=updates,
+            updated_by=admin_user,
+            etag=if_match,
+            # Note: FastAPI doesn't provide easy access to client IP/UA
+            # In production, you'd extract these from Request object
+            ip_address=None,
+            user_agent=None
+        )
+
         if not tool:
-            raise HTTPException(status_code=404, detail=f"Tool '{tool_id}' not found")
+            raise HTTPException(
+                status_code=404,
+                detail=f"Tool '{tool_id}' not found"
+            )
 
         logger.info(
             "Tool updated successfully",
@@ -494,6 +582,40 @@ async def update_tool(
 
         return {"tool": tool, "message": "Tool updated successfully"}
 
+    except ValueError as e:
+        # Validation errors (duplicate name, invalid categories)
+        logger.warning(
+            "Tool update validation error",
+            tool_id=tool_id,
+            error=str(e),
+            admin=admin_user
+        )
+        raise HTTPException(status_code=400, detail=str(e))
+    except exceptions.CosmosHttpResponseError as e:
+        if e.status_code == 412:
+            # Precondition failed - ETag mismatch
+            logger.warning(
+                "Concurrent modification detected",
+                tool_id=tool_id,
+                admin=admin_user
+            )
+            raise HTTPException(
+                status_code=409,
+                detail="Concurrent modification detected. "
+                "Please refresh and try again."
+            )
+        else:
+            logger.error(
+                "Cosmos DB error during tool update",
+                tool_id=tool_id,
+                status_code=e.status_code,
+                error=str(e),
+                exc_info=True
+            )
+            raise HTTPException(
+                status_code=500,
+                detail="Database error occurred"
+            )
     except HTTPException:
         raise
     except Exception as e:

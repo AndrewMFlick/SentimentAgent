@@ -3,6 +3,8 @@
 Auto-generated from all feature plans. Last updated: 2025-01-15
 
 ## Active Technologies
+- Python 3.13.3 (backend), TypeScript 5.3.3 (frontend) + FastAPI 0.109.2, Azure Cosmos SDK 4.5.1, React 18.2.0, TailwindCSS 3.4+, Pydantic 2.x (011-the-admin-section)
+- Azure Cosmos DB (SQL API) - Tools and ToolAliases containers already exis (011-the-admin-section)
 
 - Python 3.13.3 + Azure Cosmos SDK 4.5.1, FastAPI 0.109.2, structlog 24.1.0 (004-fix-the-cosmosdb)
 - Azure CosmosDB (PostgreSQL mode emulator on localhost:8081, production on Azure) (004-fix-the-cosmosdb)
@@ -129,12 +131,10 @@ app = FastAPI(lifespan=lifespan)
 ```
 
 ## Recent Changes
+- 011-the-admin-section: Added Python 3.13.3 (backend), TypeScript 5.3.3 (frontend) + FastAPI 0.109.2, Azure Cosmos SDK 4.5.1, React 18.2.0, TailwindCSS 3.4+, Pydantic 2.x
 
 - 010-admin-tool-management: Added admin tool CRUD operations, alias linking, tool management dashboard
 - 009-glass-ui-redesign: Added TailwindCSS 3.4+, PostCSS 8+, glass morphism design system
-- 008-dashboard-ui-with: Added Python 3.13.3 (backend), TypeScript 5.3.3/React 18.2.0 (frontend)
-- 005-fix-cosmosdb-sql: Added Python 3.13.3 + Azure Cosmos SDK 4.5.1, FastAPI 0.109.2, pytest 8.0.0, structlog 24.1.0
-- 004-fix-the-cosmosdb: Added Python 3.13.3 + Azure Cosmos SDK 4.5.1, FastAPI 0.109.2, structlog 24.1.0
 
 ## Admin Tool Management Patterns (Feature 010)
 
