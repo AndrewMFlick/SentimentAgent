@@ -325,37 +325,70 @@ async def create_tool(
 @router.get("/tools")
 async def list_tools(
     page: int = Query(default=1, ge=1, description="Page number"),
-    limit: int = Query(default=20, ge=1, le=100, description="Results per page"),
+    limit: int = Query(
+        default=20, ge=1, le=100, description="Results per page"
+    ),
     search: str = Query(default="", description="Search by tool name"),
-    category: Optional[str] = Query(default=None, description="Filter by category"),
+    status: Optional[str] = Query(
+        default=None,
+        description="Filter by status: active, archived, or all"
+    ),
+    category: Optional[str] = Query(
+        default=None,
+        description="Filter by category (can repeat for multiple)"
+    ),
+    vendor: Optional[str] = Query(
+        default=None,
+        description="Filter by vendor name"
+    ),
+    sort_by: str = Query(
+        default="name",
+        description="Sort by field: name, vendor, or updated_at"
+    ),
+    sort_order: str = Query(
+        default="asc",
+        description="Sort order: asc or desc"
+    ),
     x_admin_token: Optional[str] = Header(None),
     tool_service: ToolService = Depends(get_tool_service)
 ):
     """
-    List all tools with pagination and filtering.
+    List all tools with pagination, filtering, search, and sorting.
 
     Requires admin authentication.
 
-    Args:
+    Query Parameters:
         page: Page number (1-indexed)
-        limit: Results per page
-        search: Search query
-        category: Category filter
-        x_admin_token: Admin authentication token
+        limit: Results per page (max 100)
+        search: Search query for tool name (case-insensitive)
+        status: Filter by status (active, archived, or all)
+        category: Filter by category (supports multiple)
+        vendor: Filter by vendor name
+        sort_by: Sort field (name, vendor, updated_at)
+        sort_order: Sort order (asc or desc)
 
     Returns:
-        Paginated list of tools
+        Paginated list of tools with metadata
     """
     try:
         # Verify admin access
         admin_user = verify_admin(x_admin_token)
+
+        # Parse categories (if provided as comma-separated)
+        categories = None
+        if category:
+            categories = [c.strip() for c in category.split(",")]
 
         logger.info(
             "Admin listing tools",
             page=page,
             limit=limit,
             search=search,
-            category=category,
+            status=status,
+            categories=categories,
+            vendor=vendor,
+            sort_by=sort_by,
+            sort_order=sort_order,
             admin=admin_user
         )
 
@@ -364,18 +397,41 @@ async def list_tools(
             page=page,
             limit=limit,
             search=search,
-            category=category
+            status=status,
+            categories=categories,
+            vendor=vendor,
+            sort_by=sort_by,
+            sort_order=sort_order
         )
-        
+
         total = await tool_service.count_tools(
             search=search,
-            category=category
+            status=status,
+            categories=categories,
+            vendor=vendor
         )
+
+        # Calculate pagination metadata
+        total_pages = (total + limit - 1) // limit  # Ceiling division
+        has_next = page < total_pages
+        has_prev = page > 1
+
+        # Build filters_applied metadata
+        filters_applied = {}
+        if status:
+            filters_applied["status"] = status
+        if categories:
+            filters_applied["categories"] = categories
+        if vendor:
+            filters_applied["vendor"] = vendor
+        if search:
+            filters_applied["search"] = search
 
         logger.info(
             "Tools listed successfully",
             count=len(tools),
             total=total,
+            total_pages=total_pages,
             admin=admin_user
         )
 
@@ -383,7 +439,11 @@ async def list_tools(
             "tools": tools,
             "total": total,
             "page": page,
-            "limit": limit
+            "limit": limit,
+            "total_pages": total_pages,
+            "has_next": has_next,
+            "has_prev": has_prev,
+            "filters_applied": filters_applied
         }
 
     except HTTPException:

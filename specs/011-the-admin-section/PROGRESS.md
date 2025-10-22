@@ -177,9 +177,46 @@ All user stories can now proceed independently - foundation is complete!
 
 ## Phase 3: User Story 1 - View All Active Tools (Priority: P1) 🎯 MVP
 
-**Status**: Ready to start
+**Status**: In Progress (Backend Complete, Frontend Starting)
 
 **Tasks**: 13 tasks (T016-T028)
+
+### Backend Tasks Complete (4/4)
+
+✅ **T016**: Extended `list_tools` method with filtering, search, pagination, sorting
+- Added status filter (active/archived/all)
+- Added categories filter (multi-category array support)
+- Added vendor filter
+- Added sort_by and sort_order parameters
+- Implemented ARRAY_CONTAINS for category filtering
+
+✅ **T017**: Updated `GET /api/v1/admin/tools` endpoint with query parameters
+- status, category (comma-separated), vendor, search
+- page, limit, sort_by, sort_order
+- All parameters documented with descriptions
+
+✅ **T018**: Added pagination metadata to response
+- page, limit, total, total_pages
+- has_next, has_prev boolean flags
+- Ceiling division for total_pages calculation
+
+✅ **T019**: Added filters_applied metadata to response
+- Shows which filters are actively applied
+- Includes status, categories, vendor, search
+
+### Frontend Tasks (0/9)
+
+- [ ] T020 [P] Create ToolFilters component
+- [ ] T021 [P] Update ToolTable component for multi-category display
+- [ ] T022 [P] Add status badge to ToolTable
+- [ ] T023 [P] Create Pagination component
+- [ ] T024 Integrate filters, table, pagination in AdminToolManagement
+- [ ] T025 Add state management for filters
+- [ ] T026 Update listTools API function
+- [ ] T027 Add React Query/SWR caching
+- [ ] T028 Add loading states and error handling
+
+**Next**: Starting frontend implementation (T020-T028)
 
 ---
 

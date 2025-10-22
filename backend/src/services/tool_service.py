@@ -150,16 +150,24 @@ class ToolService:
         page: int = 1,
         limit: int = 20,
         search: str = "",
-        category: Optional[str] = None
+        status: Optional[str] = None,
+        categories: Optional[List[str]] = None,
+        vendor: Optional[str] = None,
+        sort_by: str = "name",
+        sort_order: str = "asc"
     ) -> List[Dict[str, Any]]:
         """
-        List all tools with pagination and filtering.
+        List all tools with pagination, filtering, search, and sorting.
 
         Args:
             page: Page number (1-indexed)
             limit: Results per page
             search: Search query for tool name
-            category: Filter by category
+            status: Filter by status (active/archived/all)
+            categories: Filter by categories (array support)
+            vendor: Filter by vendor
+            sort_by: Sort field (name/vendor/updated_at)
+            sort_order: Sort order (asc/desc)
 
         Returns:
             List of tool documents
@@ -167,18 +175,38 @@ class ToolService:
         offset = (page - 1) * limit
 
         # Build query
-        query = (
-            "SELECT * FROM Tools t "
-            "WHERE t.partitionKey = 'tool' AND t.status = 'active'"
-        )
+        query = "SELECT * FROM Tools t WHERE t.partitionKey = 'TOOL'"
 
+        # Status filter (default to active only)
+        if status and status != "all":
+            query += f" AND t.status = '{status}'"
+        elif not status:
+            # Default: show only active tools
+            query += " AND t.status = 'active'"
+
+        # Search by name (case-insensitive)
         if search:
             query += f" AND CONTAINS(LOWER(t.name), LOWER('{search}'))"
 
-        if category:
-            query += f" AND t.category = '{category}'"
+        # Category filter (supports multi-category)
+        if categories:
+            category_conditions = []
+            for cat in categories:
+                category_conditions.append(
+                    f"ARRAY_CONTAINS(t.categories, '{cat}')"
+                )
+            query += f" AND ({' OR '.join(category_conditions)})"
 
-        query += f" ORDER BY t.name OFFSET {offset} LIMIT {limit}"
+        # Vendor filter
+        if vendor:
+            query += f" AND t.vendor = '{vendor}'"
+
+        # Sorting
+        sort_direction = "ASC" if sort_order == "asc" else "DESC"
+        query += f" ORDER BY t.{sort_by} {sort_direction}"
+
+        # Pagination
+        query += f" OFFSET {offset} LIMIT {limit}"
 
         try:
             # Sync iteration - no await
@@ -190,7 +218,9 @@ class ToolService:
                 count=len(results),
                 page=page,
                 search=search,
-                category=category
+                status=status,
+                categories=categories,
+                vendor=vendor
             )
             return results
         except Exception as e:
@@ -200,28 +230,47 @@ class ToolService:
     async def count_tools(
         self,
         search: str = "",
-        category: Optional[str] = None
+        status: Optional[str] = None,
+        categories: Optional[List[str]] = None,
+        vendor: Optional[str] = None
     ) -> int:
         """
         Count total tools matching filters.
 
         Args:
             search: Search query
-            category: Category filter
+            status: Status filter (active/archived/all)
+            categories: Category filter (array)
+            vendor: Vendor filter
 
         Returns:
             Total count
         """
         query = (
             "SELECT VALUE COUNT(1) FROM Tools t "
-            "WHERE t.partitionKey = 'tool' AND t.status = 'active'"
+            "WHERE t.partitionKey = 'TOOL'"
         )
+
+        # Status filter (default to active only)
+        if status and status != "all":
+            query += f" AND t.status = '{status}'"
+        elif not status:
+            query += " AND t.status = 'active'"
 
         if search:
             query += f" AND CONTAINS(LOWER(t.name), LOWER('{search}'))"
 
-        if category:
-            query += f" AND t.category = '{category}'"
+        # Category filter (supports multi-category)
+        if categories:
+            category_conditions = []
+            for cat in categories:
+                category_conditions.append(
+                    f"ARRAY_CONTAINS(t.categories, '{cat}')"
+                )
+            query += f" AND ({' OR '.join(category_conditions)})"
+
+        if vendor:
+            query += f" AND t.vendor = '{vendor}'"
 
         try:
             # Sync iteration - no await
