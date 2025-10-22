@@ -16,10 +16,21 @@ interface ToolTableProps {
   onDelete: (tool: Tool) => void;
   onArchive: (tool: Tool) => void;
   onUnarchive: (tool: Tool) => void;
+  onMerge: (tool: Tool, allTools: Tool[]) => void;
+  onViewHistory?: (tool: Tool) => void;
   refreshTrigger?: number;
 }
 
-export const ToolTable = ({ adminToken, onEdit, onDelete, onArchive, onUnarchive, refreshTrigger }: ToolTableProps) => {
+export const ToolTable = ({ 
+  adminToken, 
+  onEdit, 
+  onDelete, 
+  onArchive, 
+  onUnarchive, 
+  onMerge,
+  onViewHistory,
+  refreshTrigger 
+}: ToolTableProps) => {
   // Pagination state
   const [currentPage, setCurrentPage] = useState(1);
   const [limit] = useState(20);
@@ -256,7 +267,7 @@ export const ToolTable = ({ adminToken, onEdit, onDelete, onArchive, onUnarchive
                     </span>
                   </td>
                   <td className="p-4 text-sm text-gray-300">
-                    <div className="flex gap-2">
+                    <div className="flex gap-2 flex-wrap">
                       <button
                         onClick={() => onEdit(tool)}
                         className="px-3 py-1.5 text-xs font-bold bg-blue-900/40 text-blue-300 border border-blue-700/50 rounded-lg transition-all hover:bg-blue-900/60 hover:border-blue-600/60"
@@ -264,6 +275,26 @@ export const ToolTable = ({ adminToken, onEdit, onDelete, onArchive, onUnarchive
                       >
                         ✏️ Edit
                       </button>
+                      {tool.status === ToolStatus.ACTIVE && (
+                        <>
+                          <button
+                            onClick={() => onMerge(tool, tools)}
+                            className="px-3 py-1.5 text-xs font-bold bg-purple-900/40 text-purple-300 border border-purple-700/50 rounded-lg transition-all hover:bg-purple-900/60 hover:border-purple-600/60"
+                            title="Merge tools into this one"
+                          >
+                            🔗 Merge
+                          </button>
+                          {onViewHistory && (
+                            <button
+                              onClick={() => onViewHistory(tool)}
+                              className="px-3 py-1.5 text-xs font-bold bg-indigo-900/40 text-indigo-300 border border-indigo-700/50 rounded-lg transition-all hover:bg-indigo-900/60 hover:border-indigo-600/60"
+                              title="View merge history"
+                            >
+                              📜 History
+                            </button>
+                          )}
+                        </>
+                      )}
                       {tool.status === ToolStatus.ACTIVE ? (
                         <button
                           onClick={() => onArchive(tool)}

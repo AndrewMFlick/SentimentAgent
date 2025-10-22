@@ -5,11 +5,15 @@ from typing import Optional
 import structlog
 from fastapi import APIRouter, Header, HTTPException, Query, Depends
 
-from ..models.tool import ToolCreateRequest, ToolUpdateRequest, AliasLinkRequest
+from ..models.tool import (
+    ToolCreateRequest,
+    ToolUpdateRequest,
+    AliasLinkRequest,
+    ToolMergeRequest,
+)
 from ..services.database import db
 from ..services.tool_manager import tool_manager
 from ..services.tool_service import ToolService
-from ..models.tool import ToolCreateRequest, ToolUpdateRequest, AliasLinkRequest
 
 logger = structlog.get_logger(__name__)
 
@@ -1026,3 +1030,269 @@ async def unlink_alias(
             exc_info=True
         )
         raise HTTPException(status_code=500, detail="Failed to unlink alias")
+
+
+@router.post("/tools/merge")
+async def merge_tools(
+    merge_request: ToolMergeRequest,
+    x_admin_token: Optional[str] = Header(None),
+    tool_service: ToolService = Depends(get_tool_service)
+):
+    """
+    Merge multiple tools into a single primary tool.
+
+    This operation:
+    - Validates all tools exist and are active
+    - Migrates sentiment data with source attribution
+    - Updates target tool with new categories/vendor
+    - Archives source tools with merged_into reference
+    - Creates merge record and audit log
+
+    Requires admin authentication.
+
+    Args:
+        merge_request: Merge request with target, sources, categories, vendor, notes
+        x_admin_token: Admin authentication token
+
+    Returns:
+        merge_record: Full merge metadata
+        target_tool: Updated target tool
+        archived_tools: List of archived source tools
+        warnings: List of metadata conflict warnings (if any)
+        message: Success message with counts
+
+    Raises:
+        400: Validation error (invalid request, circular merge, etc.)
+        404: One or more tools not found
+        409: Conflict (tool already merged, not active, etc.)
+        500: Server error
+    """
+    try:
+        # Verify admin access
+        admin_user = verify_admin(x_admin_token)
+
+        logger.info(
+            "Admin initiating tool merge",
+            target_tool_id=merge_request.target_tool_id,
+            source_tool_count=len(merge_request.source_tool_ids),
+            admin=admin_user
+        )
+
+        # Validate merge request
+        if len(merge_request.source_tool_ids) > 10:
+            raise HTTPException(
+                status_code=400,
+                detail="Cannot merge more than 10 source tools at once"
+            )
+
+        if len(set(merge_request.source_tool_ids)) != len(
+            merge_request.source_tool_ids
+        ):
+            raise HTTPException(
+                status_code=400,
+                detail="Source tool IDs must be unique"
+            )
+
+        if merge_request.target_tool_id in merge_request.source_tool_ids:
+            raise HTTPException(
+                status_code=400,
+                detail="Cannot merge tool into itself"
+            )
+
+        # Validate categories are valid enum values
+        try:
+            # Convert request categories to strings for the service
+            target_categories = [
+                cat.value if hasattr(cat, 'value') else cat
+                for cat in merge_request.final_categories
+            ]
+        except Exception as e:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Invalid category values: {str(e)}"
+            )
+
+        # Perform merge
+        result = await tool_service.merge_tools(
+            target_tool_id=merge_request.target_tool_id,
+            source_tool_ids=merge_request.source_tool_ids,
+            target_categories=target_categories,
+            target_vendor=merge_request.final_vendor,
+            merged_by=admin_user,
+            notes=merge_request.notes
+        )
+
+        sentiment_count = result["merge_record"]["sentiment_count"]
+        source_count = len(result["archived_tools"])
+        target_name = result["target_tool"].get("name", "tool")
+
+        plural = 's' if source_count != 1 else ''
+        message = (
+            f"Successfully merged {source_count} tool{plural} "
+            f"into {target_name}. "
+            f"Migrated {sentiment_count:,} sentiment records."
+        )
+
+        if result.get("warnings"):
+            message += (
+                " Merge completed with warnings. "
+                "Please review metadata differences."
+            )
+
+        logger.info(
+            "Tools merged successfully",
+            target_tool_id=merge_request.target_tool_id,
+            source_count=source_count,
+            sentiment_count=sentiment_count,
+            admin=admin_user
+        )
+
+        return {
+            "merge_record": result["merge_record"],
+            "target_tool": result["target_tool"],
+            "archived_tools": result["archived_tools"],
+            "warnings": result.get("warnings", []),
+            "message": message
+        }
+
+    except ValueError as e:
+        # Validation errors from ToolService
+        error_msg = str(e)
+        admin_user = verify_admin(x_admin_token)  # Get admin for logging
+        
+        # Determine appropriate status code
+        if "not found" in error_msg.lower():
+            status_code = 404
+        elif any(
+            word in error_msg.lower()
+            for word in ["already merged", "must be active", "merged into"]
+        ):
+            status_code = 409
+        else:
+            status_code = 400
+
+        logger.warning(
+            "Tool merge validation error",
+            error=error_msg,
+            status_code=status_code,
+            admin=admin_user
+        )
+        raise HTTPException(status_code=status_code, detail=error_msg)
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(
+            "Failed to merge tools",
+            target_tool_id=merge_request.target_tool_id,
+            error=str(e),
+            exc_info=True
+        )
+        raise HTTPException(
+            status_code=500,
+            detail=(
+                "An error occurred during the merge operation. "
+                "All changes have been rolled back."
+            )
+        )
+
+
+@router.get("/tools/{tool_id}/merge-history")
+async def get_merge_history(
+    tool_id: str,
+    page: int = Query(1, ge=1, description="Page number (1-indexed)"),
+    limit: int = Query(
+        10,
+        ge=1,
+        le=100,
+        description="Records per page (1-100)"
+    ),
+    x_admin_token: Optional[str] = Header(None),
+    tool_service: ToolService = Depends(get_tool_service)
+):
+    """
+    Get merge history for a tool.
+
+    Returns all merge operations where the specified tool was the target
+    (i.e., other tools were merged into it).
+
+    Requires admin authentication.
+
+    Args:
+        tool_id: Tool identifier
+        page: Page number (1-indexed)
+        limit: Records per page (1-100)
+        x_admin_token: Admin authentication token
+
+    Returns:
+        merge_records: List of merge operation records
+        total: Total number of merge operations
+        page: Current page number
+        limit: Records per page
+        has_more: Whether there are more records
+
+    Raises:
+        404: Tool not found
+        500: Server error
+    """
+    try:
+        # Verify admin access
+        admin_user = verify_admin(x_admin_token)
+
+        logger.info(
+            "Admin fetching merge history",
+            tool_id=tool_id,
+            page=page,
+            limit=limit,
+            admin=admin_user
+        )
+
+        # Get merge history
+        result = await tool_service.get_merge_history(
+            tool_id=tool_id,
+            page=page,
+            limit=limit
+        )
+
+        logger.info(
+            "Merge history retrieved",
+            tool_id=tool_id,
+            count=len(result["merge_records"]),
+            total=result["total"],
+            admin=admin_user
+        )
+
+        return result
+
+    except ValueError as e:
+        error_msg = str(e)
+        admin_user = verify_admin(x_admin_token)  # Get admin for logging
+
+        # Determine status code
+        if "not found" in error_msg.lower():
+            status_code = 404
+        else:
+            status_code = 400
+
+        logger.warning(
+            "Merge history validation error",
+            error=error_msg,
+            status_code=status_code,
+            tool_id=tool_id,
+            admin=admin_user
+        )
+        raise HTTPException(status_code=status_code, detail=error_msg)
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(
+            "Failed to get merge history",
+            tool_id=tool_id,
+            error=str(e),
+            exc_info=True
+        )
+        raise HTTPException(
+            status_code=500,
+            detail="Failed to retrieve merge history"
+        )

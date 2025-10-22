@@ -5,6 +5,8 @@ import { ToolTable } from './ToolTable';
 import { ToolEditModal } from './ToolEditModal';
 import { ArchiveConfirmationDialog } from './ArchiveConfirmationDialog';
 import { DeleteConfirmationDialog } from './DeleteConfirmationDialog';
+import { ToolMergeModal } from './ToolMergeModal';
+import { MergeHistoryModal } from './MergeHistoryModal';
 import { Tool } from '../types';
 
 interface AdminToolManagementProps {
@@ -29,6 +31,13 @@ export const AdminToolManagement: React.FC<AdminToolManagementProps> = ({
   
   // Delete modal state
   const [deletingTool, setDeletingTool] = useState<Tool | null>(null);
+  
+  // Merge modal state
+  const [mergingTool, setMergingTool] = useState<Tool | null>(null);
+  const [availableTools, setAvailableTools] = useState<Tool[]>([]);
+  
+  // Merge history modal state
+  const [historyTool, setHistoryTool] = useState<Tool | null>(null);
   
   // Form state
   const [toolName, setToolName] = useState('');
@@ -172,6 +181,31 @@ export const AdminToolManagement: React.FC<AdminToolManagementProps> = ({
     setTimeout(() => setMessage(''), 3000);
   };
 
+  // Merge handler
+  const handleMerge = async (tool: Tool, allTools: Tool[]) => {
+    setMergingTool(tool);
+    setAvailableTools(allTools);
+    setMessage(''); // Clear any existing messages
+  };
+
+  // Merge success callback
+  const handleMergeSuccess = () => {
+    setMessage(`✓ Tools merged successfully`);
+    setMessageType('success');
+    
+    // Invalidate and refetch tools query
+    queryClient.invalidateQueries({ queryKey: ['admin-tools'] });
+    setRefreshTrigger(prev => prev + 1);
+    
+    // Clear message after 3 seconds
+    setTimeout(() => setMessage(''), 3000);
+  };
+
+  // View history handler
+  const handleViewHistory = (tool: Tool) => {
+    setHistoryTool(tool);
+  };
+
   // Category toggle handler
   const toggleCategory = (category: string) => {
     setCategories(prev => {
@@ -251,6 +285,8 @@ export const AdminToolManagement: React.FC<AdminToolManagementProps> = ({
             onDelete={handleDelete}
             onArchive={handleArchive}
             onUnarchive={handleUnarchive}
+            onMerge={handleMerge}
+            onViewHistory={handleViewHistory}
             refreshTrigger={refreshTrigger}
           />
         </div>
@@ -433,6 +469,25 @@ export const AdminToolManagement: React.FC<AdminToolManagementProps> = ({
           setDeletingTool(null);
         }}
         onSuccess={handleDeleteSuccess}
+      />
+
+      {/* Merge Tools Modal */}
+      <ToolMergeModal
+        targetTool={mergingTool}
+        availableTools={availableTools}
+        adminToken={adminToken}
+        onClose={() => {
+          setMergingTool(null);
+          setAvailableTools([]);
+        }}
+        onSuccess={handleMergeSuccess}
+      />
+
+      {/* Merge History Modal */}
+      <MergeHistoryModal
+        tool={historyTool}
+        adminToken={adminToken}
+        onClose={() => setHistoryTool(null)}
       />
     </div>
   );

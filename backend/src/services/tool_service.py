@@ -3,7 +3,7 @@
 from azure.cosmos import exceptions
 import uuid
 from datetime import datetime, timezone
-from typing import List, Optional, Dict, Any
+from typing import List, Optional, Dict, Any, Tuple
 import structlog
 
 from ..models.tool import (
@@ -1011,3 +1011,375 @@ class ToolService:
                 break
 
         return alias_tool_id in visited
+
+    async def _validate_merge(
+        self,
+        target_tool_id: str,
+        source_tool_ids: List[str]
+    ) -> Tuple[Dict[str, Any], List[Dict[str, Any]], List[Dict[str, Any]]]:
+        """
+        Validate merge operation and return tools with warnings.
+
+        Args:
+            target_tool_id: Primary tool that will receive merged data
+            source_tool_ids: Tools to merge into target
+
+        Returns:
+            Tuple of (target_tool, source_tools, warnings)
+
+        Raises:
+            ValueError: If validation fails
+        """
+        # Validate target tool exists and is active
+        target_tool = await self.get_tool(target_tool_id)
+        if not target_tool:
+            raise ValueError(f"Target tool '{target_tool_id}' not found")
+        
+        if target_tool.get("status") != "active":
+            raise ValueError(f"Target tool must be active, current status: {target_tool.get('status')}")
+        
+        if target_tool.get("merged_into"):
+            raise ValueError(f"Target tool has already been merged into another tool")
+
+        # Validate source tools
+        source_tools = []
+        for source_id in source_tool_ids:
+            # Prevent circular merge
+            if source_id == target_tool_id:
+                raise ValueError("Cannot merge tool into itself")
+            
+            source_tool = await self.get_tool(source_id)
+            if not source_tool:
+                raise ValueError(f"Source tool '{source_id}' not found")
+            
+            if source_tool.get("status") != "active":
+                raise ValueError(f"Source tool '{source_tool['name']}' must be active")
+            
+            if source_tool.get("merged_into"):
+                raise ValueError(f"Source tool '{source_tool['name']}' has already been merged")
+            
+            source_tools.append(source_tool)
+
+        # Generate warnings for metadata differences
+        warnings = []
+        
+        # Check vendor mismatches
+        source_vendors = list(set([t.get("vendor", "") for t in source_tools]))
+        target_vendor = target_tool.get("vendor", "")
+        if any(v != target_vendor for v in source_vendors if v):
+            warnings.append({
+                "type": "vendor_mismatch",
+                "message": "Source tools have different vendors than target",
+                "details": {
+                    "target_vendor": target_vendor,
+                    "source_vendors": source_vendors
+                }
+            })
+
+        return target_tool, source_tools, warnings
+
+    async def _migrate_sentiment_data(
+        self,
+        target_tool_id: str,
+        source_tool_ids: List[str]
+    ) -> int:
+        """
+        Migrate sentiment data from source tools to target tool.
+
+        Args:
+            target_tool_id: Tool to receive sentiment data
+            source_tool_ids: Tools whose sentiment data will be migrated
+
+        Returns:
+            Total count of migrated sentiment records
+        """
+        if not hasattr(self, 'sentiment_container') or not self.sentiment_container:
+            logger.warning("No sentiment container available for migration")
+            return 0
+
+        total_migrated = 0
+
+        for source_id in source_tool_ids:
+            try:
+                # Query all sentiment records for this source tool
+                query = "SELECT * FROM c WHERE c.tool_id = @tool_id"
+                sentiment_items = self.sentiment_container.query_items(
+                    query=query,
+                    parameters=[{"name": "@tool_id", "value": source_id}],
+                    enable_cross_partition_query=True
+                )
+
+                # Update each sentiment record
+                for sentiment in sentiment_items:
+                    try:
+                        # Add source attribution
+                        sentiment['original_tool_id'] = source_id
+                        sentiment['tool_id'] = target_tool_id
+                        sentiment['migrated_at'] = datetime.now(timezone.utc).isoformat()
+                        
+                        # Update the sentiment record
+                        self.sentiment_container.upsert_item(body=sentiment)
+                        total_migrated += 1
+                    except Exception as e:
+                        logger.error(
+                            "Failed to migrate sentiment record",
+                            sentiment_id=sentiment.get('id'),
+                            source_tool_id=source_id,
+                            error=str(e)
+                        )
+                
+                logger.info(
+                    "Migrated sentiment data",
+                    source_tool_id=source_id,
+                    target_tool_id=target_tool_id,
+                    count=total_migrated
+                )
+            except Exception as e:
+                logger.error(
+                    "Failed to query sentiment data for migration",
+                    source_tool_id=source_id,
+                    error=str(e)
+                )
+
+        return total_migrated
+
+    async def merge_tools(
+        self,
+        target_tool_id: str,
+        source_tool_ids: List[str],
+        target_categories: List[str],
+        target_vendor: str,
+        merged_by: str,
+        notes: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """
+        Merge multiple tools into a single tool.
+
+        This is an atomic operation that:
+        1. Validates all tools exist and are active
+        2. Migrates sentiment data with source attribution
+        3. Updates target tool with new categories/vendor
+        4. Archives source tools with merged_into reference
+        5. Creates merge record and audit log
+
+        Args:
+            target_tool_id: Primary tool receiving merged data
+            source_tool_ids: Tools to merge (1-10 tools)
+            target_categories: Final categories for merged tool
+            target_vendor: Final vendor for merged tool
+            merged_by: Admin user ID performing merge
+            notes: Optional notes explaining merge reason
+
+        Returns:
+            Dict containing merge_record, target_tool, archived_tools, warnings
+
+        Raises:
+            ValueError: If validation fails
+        """
+        # Step 1: Validation
+        target_tool, source_tools, warnings = await self._validate_merge(
+            target_tool_id,
+            source_tool_ids
+        )
+
+        # Store before state for audit
+        target_categories_before = target_tool.get("categories", [])
+        target_vendor_before = target_tool.get("vendor", "")
+
+        # Step 2: Migrate sentiment data
+        sentiment_count = await self._migrate_sentiment_data(
+            target_tool_id,
+            source_tool_ids
+        )
+
+        # Step 3: Update target tool
+        target_tool["categories"] = target_categories
+        target_tool["vendor"] = target_vendor
+        target_tool["updated_at"] = datetime.now(timezone.utc).isoformat()
+        target_tool["updated_by"] = merged_by
+
+        self.tools_container.replace_item(item=target_tool_id, body=target_tool)
+
+        # Step 4: Archive source tools
+        archived_tools = []
+        for source_tool in source_tools:
+            source_tool["status"] = "archived"
+            source_tool["merged_into"] = target_tool_id
+            source_tool["updated_at"] = datetime.now(timezone.utc).isoformat()
+            source_tool["updated_by"] = merged_by
+
+            self.tools_container.replace_item(
+                item=source_tool["id"],
+                body=source_tool
+            )
+            archived_tools.append(source_tool)
+
+        # Step 5: Create merge record
+        merge_record_id = str(uuid.uuid4())
+        merge_record = {
+            "id": merge_record_id,
+            "partitionKey": "merge",
+            "target_tool_id": target_tool_id,
+            "source_tool_ids": source_tool_ids,
+            "merged_at": datetime.now(timezone.utc).isoformat(),
+            "merged_by": merged_by,
+            "sentiment_count": sentiment_count,
+            "target_categories_before": target_categories_before,
+            "target_categories_after": target_categories,
+            "target_vendor_before": target_vendor_before,
+            "target_vendor_after": target_vendor,
+            "source_tools_metadata": [
+                {
+                    "id": t["id"],
+                    "name": t["name"],
+                    "vendor": t.get("vendor", ""),
+                    "categories": t.get("categories", []),
+                    "sentiment_count": 0  # Could be calculated if needed
+                }
+                for t in source_tools
+            ],
+            "notes": notes or ""
+        }
+
+        if hasattr(self, 'merge_records_container') and self.merge_records_container:
+            self.merge_records_container.create_item(body=merge_record)
+
+        # Step 6: Create audit log
+        await self._log_admin_action(
+            admin_id=merged_by,
+            action_type="merge",
+            tool_id=target_tool_id,
+            tool_name=target_tool.get("name", ""),
+            before_state={
+                "target_categories": target_categories_before,
+                "target_vendor": target_vendor_before,
+                "source_tool_ids": source_tool_ids
+            },
+            after_state={
+                "target_categories": target_categories,
+                "target_vendor": target_vendor,
+                "sentiment_migrated": sentiment_count,
+                "source_tools_archived": len(source_tools)
+            },
+            metadata={"notes": notes, "merge_record_id": merge_record_id}
+        )
+
+        logger.info(
+            "Tools merged successfully",
+            target_tool_id=target_tool_id,
+            source_count=len(source_tools),
+            sentiment_count=sentiment_count,
+            merged_by=merged_by
+        )
+
+        return {
+            "merge_record": merge_record,
+            "target_tool": target_tool,
+            "archived_tools": archived_tools,
+            "warnings": warnings
+        }
+
+    async def get_merge_history(
+        self,
+        tool_id: str,
+        page: int = 1,
+        limit: int = 10
+    ) -> Dict[str, Any]:
+        """
+        Get merge history for a tool (where tool was the target).
+
+        Args:
+            tool_id: Tool identifier
+            page: Page number (1-indexed)
+            limit: Records per page (1-100)
+
+        Returns:
+            Dict with merge_records, total, page, limit, has_more
+
+        Raises:
+            ValueError: If tool not found or pagination invalid
+        """
+        # Validate tool exists
+        try:
+            self.tools_container.read_item(
+                item=tool_id,
+                partition_key=tool_id
+            )
+        except exceptions.CosmosResourceNotFoundError:
+            raise ValueError(f"Tool '{tool_id}' not found")
+
+        # Validate pagination
+        if page < 1:
+            raise ValueError("Page must be >= 1")
+        if limit < 1 or limit > 100:
+            raise ValueError("Limit must be between 1 and 100")
+
+        # Check if merge records container exists
+        if not hasattr(self, 'merge_records_container'):
+            return {
+                "merge_records": [],
+                "total": 0,
+                "page": page,
+                "limit": limit,
+                "has_more": False
+            }
+
+        # Query merge records for this tool (as target)
+        query = """
+            SELECT * FROM c
+            WHERE c.target_tool_id = @tool_id
+            ORDER BY c.merged_at DESC
+        """
+
+        # Get total count
+        count_query = """
+            SELECT VALUE COUNT(1) FROM c
+            WHERE c.target_tool_id = @tool_id
+        """
+
+        try:
+            count_result = list(
+                self.merge_records_container.query_items(
+                    query=count_query,
+                    parameters=[{"name": "@tool_id", "value": tool_id}],
+                    enable_cross_partition_query=True
+                )
+            )
+            total = count_result[0] if count_result else 0
+        except Exception as e:
+            logger.warning(
+                "Failed to count merge records",
+                tool_id=tool_id,
+                error=str(e)
+            )
+            total = 0
+
+        # Get paginated results
+        offset = (page - 1) * limit
+
+        try:
+            merge_records = list(
+                self.merge_records_container.query_items(
+                    query=f"{query} OFFSET {offset} LIMIT {limit}",
+                    parameters=[{"name": "@tool_id", "value": tool_id}],
+                    enable_cross_partition_query=True
+                )
+            )
+        except Exception as e:
+            logger.error(
+                "Failed to query merge records",
+                tool_id=tool_id,
+                error=str(e),
+                exc_info=True
+            )
+            merge_records = []
+
+        has_more = (offset + len(merge_records)) < total
+
+        return {
+            "merge_records": merge_records,
+            "total": total,
+            "page": page,
+            "limit": limit,
+            "has_more": has_more
+        }

@@ -419,5 +419,71 @@ export const api = {
       }
     );
     return response.data;
+  },
+
+  /**
+   * Merge multiple tools into a single primary tool
+   * @param mergeData - Merge configuration with target, sources, categories, vendor
+   * @param adminToken - Admin authentication token
+   * @returns Merge result with updated tool, archived sources, and warnings
+   */
+  mergeTool: async (
+    mergeData: {
+      target_tool_id: string;
+      source_tool_ids: string[];
+      final_categories: string[];
+      final_vendor: string;
+      notes?: string;
+    },
+    adminToken: string
+  ): Promise<{
+    merge_record: any;
+    target_tool: any;
+    archived_tools: any[];
+    warnings: string[];
+    message: string;
+  }> => {
+    const response = await axios.post(
+      `${API_BASE_URL}/admin/tools/merge`,
+      mergeData,
+      {
+        headers: {
+          'X-Admin-Token': adminToken
+        }
+      }
+    );
+    return response.data;
+  },
+
+  /**
+   * Get merge history for a tool (where tool was target)
+   * @param toolId - Tool identifier
+   * @param adminToken - Admin authentication token
+   * @param page - Page number (1-indexed)
+   * @param limit - Records per page (1-100)
+   * @returns Merge history with pagination
+   */
+  getMergeHistory: async (
+    toolId: string,
+    adminToken: string,
+    page: number = 1,
+    limit: number = 10
+  ): Promise<{
+    merge_records: any[];
+    total: number;
+    page: number;
+    limit: number;
+    has_more: boolean;
+  }> => {
+    const response = await axios.get(
+      `${API_BASE_URL}/admin/tools/${toolId}/merge-history`,
+      {
+        params: { page, limit },
+        headers: {
+          'X-Admin-Token': adminToken
+        }
+      }
+    );
+    return response.data;
   }
 };
