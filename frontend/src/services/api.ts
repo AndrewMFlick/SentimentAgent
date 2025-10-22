@@ -485,5 +485,44 @@ export const api = {
       }
     );
     return response.data;
+  },
+
+  /**
+   * Get audit log for a tool
+   * @param toolId - Tool identifier
+   * @param adminToken - Admin authentication token
+   * @param page - Page number (1-indexed)
+   * @param limit - Records per page (1-100)
+   * @param actionType - Optional filter by action type
+   * @returns Audit log with pagination
+   */
+  getAuditLog: async (
+    toolId: string,
+    adminToken: string,
+    page: number = 1,
+    limit: number = 20,
+    actionType?: string
+  ): Promise<{
+    audit_records: any[];
+    total: number;
+    page: number;
+    limit: number;
+    has_more: boolean;
+  }> => {
+    const params: any = { page, limit };
+    if (actionType) {
+      params.action_type = actionType;
+    }
+
+    const response = await axios.get(
+      `${API_BASE_URL}/admin/tools/${toolId}/audit-log`,
+      {
+        params,
+        headers: {
+          'X-Admin-Token': adminToken
+        }
+      }
+    );
+    return response.data;
   }
 };

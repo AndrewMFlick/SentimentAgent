@@ -1296,3 +1296,111 @@ async def get_merge_history(
             status_code=500,
             detail="Failed to retrieve merge history"
         )
+
+
+@router.get("/tools/{tool_id}/audit-log")
+async def get_audit_log(
+    tool_id: str,
+    page: int = Query(1, ge=1, description="Page number (1-indexed)"),
+    limit: int = Query(
+        20,
+        ge=1,
+        le=100,
+        description="Records per page (1-100)"
+    ),
+    action_type: Optional[str] = Query(
+        None,
+        description="Filter by action type (created, edited, archived, unarchived, deleted, merged)"
+    ),
+    x_admin_token: Optional[str] = Header(None),
+    tool_service: ToolService = Depends(get_tool_service)
+):
+    """
+    Get audit log for a specific tool.
+
+    Returns all administrative actions performed on the tool,
+    including create, edit, archive, delete, and merge operations.
+
+    Requires admin authentication.
+
+    Args:
+        tool_id: Tool identifier
+        page: Page number (1-indexed)
+        limit: Records per page (1-100)
+        action_type: Optional filter by action type
+        x_admin_token: Admin authentication token
+
+    Returns:
+        audit_records: List of audit log entries
+        total: Total number of audit records
+        page: Current page number
+        limit: Records per page
+        has_more: Whether there are more records
+
+    Raises:
+        404: Tool not found
+        500: Server error
+    """
+    try:
+        # Verify admin access
+        admin_user = verify_admin(x_admin_token)
+
+        logger.info(
+            "Admin fetching audit log",
+            tool_id=tool_id,
+            page=page,
+            limit=limit,
+            action_type=action_type,
+            admin=admin_user
+        )
+
+        # Get audit log
+        result = await tool_service.get_audit_log(
+            tool_id=tool_id,
+            page=page,
+            limit=limit,
+            action_type=action_type
+        )
+
+        logger.info(
+            "Audit log retrieved",
+            tool_id=tool_id,
+            count=len(result["audit_records"]),
+            total=result["total"],
+            admin=admin_user
+        )
+
+        return result
+
+    except ValueError as e:
+        error_msg = str(e)
+        admin_user = verify_admin(x_admin_token)  # Get admin for logging
+
+        # Determine status code
+        if "not found" in error_msg.lower():
+            status_code = 404
+        else:
+            status_code = 400
+
+        logger.warning(
+            "Audit log validation error",
+            error=error_msg,
+            status_code=status_code,
+            tool_id=tool_id,
+            admin=admin_user
+        )
+        raise HTTPException(status_code=status_code, detail=error_msg)
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(
+            "Failed to get audit log",
+            tool_id=tool_id,
+            error=str(e),
+            exc_info=True
+        )
+        raise HTTPException(
+            status_code=500,
+            detail="Failed to retrieve audit log"
+        )

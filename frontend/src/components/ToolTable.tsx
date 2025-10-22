@@ -19,6 +19,7 @@ interface ToolTableProps {
   onUnarchive: (tool: Tool) => void;
   onMerge: (tool: Tool, allTools: Tool[]) => void;
   onViewHistory?: (tool: Tool) => void;
+  onViewAuditLog?: (tool: Tool) => void;
   refreshTrigger?: number;
 }
 
@@ -30,6 +31,7 @@ export const ToolTable = ({
   onUnarchive, 
   onMerge,
   onViewHistory,
+  onViewAuditLog,
   refreshTrigger 
 }: ToolTableProps) => {
   // Pagination state
@@ -288,6 +290,15 @@ export const ToolTable = ({
                               title="View merge history"
                             >
                               📜 History
+                            </button>
+                          )}
+                          {onViewAuditLog && (
+                            <button
+                              onClick={() => onViewAuditLog(tool)}
+                              className="px-3 py-1.5 text-xs font-bold bg-cyan-900/40 text-cyan-300 border border-cyan-700/50 rounded-lg transition-all hover:bg-cyan-900/60 hover:border-cyan-600/60"
+                              title="View audit log"
+                            >
+                              📋 Audit Log
                             </button>
                           )}
                         </>

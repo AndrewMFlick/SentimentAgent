@@ -51,7 +51,7 @@ import time
 import warnings
 from datetime import datetime, timedelta
 from functools import wraps
-from typing import Any, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional
 
 import urllib3
 from azure.cosmos import CosmosClient, PartitionKey, exceptions
@@ -64,6 +64,107 @@ urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 warnings.filterwarnings("ignore", message="Unverified HTTPS request")
 
 logger = logging.getLogger(__name__)
+
+
+def monitor_query_performance(
+    slow_query_threshold: float = 3.0,
+) -> Callable:
+    """
+    Decorator to monitor database query performance.
+    
+    Logs warnings for queries exceeding the threshold duration.
+    
+    Args:
+        slow_query_threshold: Time in seconds to consider a query slow (default 3.0s)
+        
+    Example:
+        @monitor_query_performance(slow_query_threshold=2.0)
+        async def my_query_method(self, ...):
+            ...
+    """
+    def decorator(func: Callable) -> Callable:
+        @wraps(func)
+        async def async_wrapper(*args, **kwargs):
+            start_time = time.time()
+            container_name = kwargs.get('container_name', 'unknown')
+            
+            try:
+                result = await func(*args, **kwargs)
+                duration = time.time() - start_time
+                
+                if duration > slow_query_threshold:
+                    logger.warning(
+                        "Slow query detected",
+                        function=func.__name__,
+                        duration=f"{duration:.3f}s",
+                        container=container_name,
+                        threshold=f"{slow_query_threshold}s"
+                    )
+                else:
+                    logger.debug(
+                        "Query completed",
+                        function=func.__name__,
+                        duration=f"{duration:.3f}s",
+                        container=container_name
+                    )
+                    
+                return result
+            except Exception as e:
+                duration = time.time() - start_time
+                logger.error(
+                    "Query failed",
+                    function=func.__name__,
+                    duration=f"{duration:.3f}s",
+                    container=container_name,
+                    error=str(e),
+                    exc_info=True
+                )
+                raise
+        
+        @wraps(func)
+        def sync_wrapper(*args, **kwargs):
+            start_time = time.time()
+            container_name = kwargs.get('container_name', 'unknown')
+            
+            try:
+                result = func(*args, **kwargs)
+                duration = time.time() - start_time
+                
+                if duration > slow_query_threshold:
+                    logger.warning(
+                        "Slow query detected",
+                        function=func.__name__,
+                        duration=f"{duration:.3f}s",
+                        container=container_name,
+                        threshold=f"{slow_query_threshold}s"
+                    )
+                else:
+                    logger.debug(
+                        "Query completed",
+                        function=func.__name__,
+                        duration=f"{duration:.3f}s",
+                        container=container_name
+                    )
+                    
+                return result
+            except Exception as e:
+                duration = time.time() - start_time
+                logger.error(
+                    "Query failed",
+                    function=func.__name__,
+                    duration=f"{duration:.3f}s",
+                    container=container_name,
+                    error=str(e),
+                    exc_info=True
+                )
+                raise
+        
+        # Return appropriate wrapper based on function type
+        if asyncio.iscoroutinefunction(func):
+            return async_wrapper
+        return sync_wrapper
+    
+    return decorator
 
 
 def retry_db_operation(func):
@@ -494,6 +595,7 @@ class DatabaseService:
             logger.error(f"Error getting tool IDs for aggregation {primary_tool_id}: {e}")
             return tool_ids
 
+    @monitor_query_performance(slow_query_threshold=3.0)
     async def get_sentiment_stats(
         self, subreddit: Optional[str] = None, hours: int = 24
     ) -> Dict[str, Any]:
@@ -753,6 +855,7 @@ class DatabaseService:
             logger.error(f"Error updating tool {tool_id}: {e}")
             raise
 
+    @monitor_query_performance(slow_query_threshold=3.0)
     async def get_tool_sentiment(
         self,
         tool_id: str,
@@ -826,6 +929,7 @@ class DatabaseService:
             logger.error(f"Error getting tool sentiment {tool_id}: {e}")
             raise
 
+    @monitor_query_performance(slow_query_threshold=3.0)
     async def compare_tools(
         self,
         tool_ids: List[str],
@@ -868,6 +972,7 @@ class DatabaseService:
             logger.error(f"Error comparing tools {tool_ids}: {e}")
             raise
 
+    @monitor_query_performance(slow_query_threshold=3.0)
     async def get_tool_timeseries(
         self, tool_id: str, start_date: str, end_date: str
     ) -> List[Dict[str, Any]]:

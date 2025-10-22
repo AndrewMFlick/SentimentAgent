@@ -7,6 +7,7 @@ import { ArchiveConfirmationDialog } from './ArchiveConfirmationDialog';
 import { DeleteConfirmationDialog } from './DeleteConfirmationDialog';
 import { ToolMergeModal } from './ToolMergeModal';
 import { MergeHistoryModal } from './MergeHistoryModal';
+import AuditLogViewer from './AuditLogViewer';
 import { Tool } from '../types';
 
 interface AdminToolManagementProps {
@@ -38,6 +39,9 @@ export const AdminToolManagement: React.FC<AdminToolManagementProps> = ({
   
   // Merge history modal state
   const [historyTool, setHistoryTool] = useState<Tool | null>(null);
+  
+  // Audit log modal state
+  const [auditLogTool, setAuditLogTool] = useState<Tool | null>(null);
   
   // Form state
   const [toolName, setToolName] = useState('');
@@ -206,6 +210,11 @@ export const AdminToolManagement: React.FC<AdminToolManagementProps> = ({
     setHistoryTool(tool);
   };
 
+  // View audit log handler
+  const handleViewAuditLog = (tool: Tool) => {
+    setAuditLogTool(tool);
+  };
+
   // Category toggle handler
   const toggleCategory = (category: string) => {
     setCategories(prev => {
@@ -287,6 +296,7 @@ export const AdminToolManagement: React.FC<AdminToolManagementProps> = ({
             onUnarchive={handleUnarchive}
             onMerge={handleMerge}
             onViewHistory={handleViewHistory}
+            onViewAuditLog={handleViewAuditLog}
             refreshTrigger={refreshTrigger}
           />
         </div>
@@ -488,6 +498,15 @@ export const AdminToolManagement: React.FC<AdminToolManagementProps> = ({
         tool={historyTool}
         adminToken={adminToken}
         onClose={() => setHistoryTool(null)}
+      />
+
+      {/* Audit Log Viewer */}
+      <AuditLogViewer
+        toolId={auditLogTool?.id || ''}
+        toolName={auditLogTool?.name || ''}
+        isOpen={!!auditLogTool}
+        onClose={() => setAuditLogTool(null)}
+        adminToken={adminToken}
       />
     </div>
   );

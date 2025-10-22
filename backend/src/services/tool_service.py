@@ -1383,3 +1383,112 @@ class ToolService:
             "limit": limit,
             "has_more": has_more
         }
+
+    async def get_audit_log(
+        self,
+        tool_id: str,
+        page: int = 1,
+        limit: int = 20,
+        action_type: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """
+        Get audit log for a specific tool.
+
+        Returns all administrative actions performed on the tool,
+        sorted by timestamp descending (newest first).
+
+        Args:
+            tool_id: Tool identifier
+            page: Page number (1-indexed)
+            limit: Records per page (1-100)
+            action_type: Optional filter by action type
+
+        Returns:
+            Dict with audit_records, total, page, limit, has_more
+
+        Raises:
+            ValueError: If tool not found or pagination invalid
+        """
+        # Validate tool exists
+        try:
+            self.tools_container.read_item(
+                item=tool_id,
+                partition_key=tool_id
+            )
+        except exceptions.CosmosResourceNotFoundError:
+            raise ValueError(f"Tool '{tool_id}' not found")
+
+        # Validate pagination
+        if page < 1:
+            raise ValueError("Page must be >= 1")
+        if limit < 1 or limit > 100:
+            raise ValueError("Limit must be between 1 and 100")
+
+        # Build query
+        query_conditions = ["c.tool_id = @tool_id"]
+        parameters = [{"name": "@tool_id", "value": tool_id}]
+
+        if action_type:
+            query_conditions.append("c.action_type = @action_type")
+            parameters.append({"name": "@action_type", "value": action_type})
+
+        where_clause = " AND ".join(query_conditions)
+
+        query = f"""
+            SELECT * FROM c
+            WHERE {where_clause}
+            ORDER BY c.timestamp DESC
+        """
+
+        # Get total count
+        count_query = f"""
+            SELECT VALUE COUNT(1) FROM c
+            WHERE {where_clause}
+        """
+
+        try:
+            count_result = list(
+                self.admin_logs_container.query_items(
+                    query=count_query,
+                    parameters=parameters,
+                    enable_cross_partition_query=True
+                )
+            )
+            total = count_result[0] if count_result else 0
+        except Exception as e:
+            logger.warning(
+                "Failed to count audit records",
+                tool_id=tool_id,
+                error=str(e)
+            )
+            total = 0
+
+        # Get paginated results
+        offset = (page - 1) * limit
+
+        try:
+            audit_records = list(
+                self.admin_logs_container.query_items(
+                    query=f"{query} OFFSET {offset} LIMIT {limit}",
+                    parameters=parameters,
+                    enable_cross_partition_query=True
+                )
+            )
+        except Exception as e:
+            logger.error(
+                "Failed to query audit records",
+                tool_id=tool_id,
+                error=str(e),
+                exc_info=True
+            )
+            audit_records = []
+
+        has_more = (offset + len(audit_records)) < total
+
+        return {
+            "audit_records": audit_records,
+            "total": total,
+            "page": page,
+            "limit": limit,
+            "has_more": has_more
+        }
