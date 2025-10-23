@@ -2,16 +2,20 @@ import React, { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { api } from '../services/api';
 import { HotTopicCard } from './HotTopicCard';
+import { RelatedPostsList } from './RelatedPostsList';
 import { SimpleTimeRangeFilter } from './SimpleTimeRangeFilter';
-import { TimeRange } from '../types/hot-topics';
+import { TimeRange, HotTopic } from '../types/hot-topics';
 
 /**
  * Hot Topics Page Component
  * Displays ranked list of trending developer tools with engagement metrics
  * User Story 1 implementation
+ * 
+ * Also handles navigation to related posts view (User Story 2)
  */
 export const HotTopicsPage: React.FC = () => {
   const [timeRange, setTimeRange] = useState<TimeRange>('7d');
+  const [selectedTool, setSelectedTool] = useState<{ id: string; name: string } | null>(null);
 
   // Fetch hot topics using React Query
   const {
@@ -48,6 +52,17 @@ export const HotTopicsPage: React.FC = () => {
       ))}
     </div>
   );
+
+  // If a tool is selected, show related posts
+  if (selectedTool) {
+    return (
+      <RelatedPostsList
+        toolId={selectedTool.id}
+        toolName={selectedTool.name}
+        onBack={() => setSelectedTool(null)}
+      />
+    );
+  }
 
   // Error state
   if (error && !data) {
@@ -121,14 +136,14 @@ export const HotTopicsPage: React.FC = () => {
             </div>
           )}
           
-          {data.hot_topics.map((topic, index) => (
+          {data.hot_topics.map((topic: HotTopic, index: number) => (
             <HotTopicCard
               key={topic.tool_id}
               topic={topic}
               rank={index + 1}
               onClick={() => {
-                // TODO: Phase 4 (US2) - Navigate to related posts or open modal
-                console.log('View related posts for:', topic.tool_slug);
+                // Navigate to related posts view
+                setSelectedTool({ id: topic.tool_id, name: topic.tool_name });
               }}
             />
           ))}

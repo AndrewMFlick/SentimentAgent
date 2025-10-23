@@ -392,6 +392,8 @@ class HotTopicsService:
         Raises:
             ValueError: If parameters are invalid
         """
+        from ..models.hot_topics import RelatedPost
+        
         self._logger.info(
             "get_related_posts called",
             tool_id=tool_id,
