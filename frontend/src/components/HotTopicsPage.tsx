@@ -1,10 +1,12 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { api } from '../services/api';
 import { HotTopicCard } from './HotTopicCard';
 import { RelatedPostsList } from './RelatedPostsList';
 import { SimpleTimeRangeFilter } from './SimpleTimeRangeFilter';
+import { ToastContainer } from './Toast';
 import { TimeRange, HotTopic } from '../types/hot-topics';
+import { useToast } from '../hooks/useToast';
 
 /**
  * Hot Topics Page Component
@@ -16,19 +18,40 @@ import { TimeRange, HotTopic } from '../types/hot-topics';
 export const HotTopicsPage: React.FC = () => {
   const [timeRange, setTimeRange] = useState<TimeRange>('7d');
   const [selectedTool, setSelectedTool] = useState<{ id: string; name: string } | null>(null);
+  const toast = useToast();
 
   // Fetch hot topics using React Query
   const {
     data,
     isLoading,
     error,
-    isFetching
+    isFetching,
+    refetch
   } = useQuery({
     queryKey: ['hot-topics', timeRange],
     queryFn: () => api.getHotTopics({ time_range: timeRange, limit: 10 }),
     refetchInterval: 5 * 60 * 1000, // Refetch every 5 minutes
     staleTime: 2 * 60 * 1000, // Consider data fresh for 2 minutes
+    retry: 2, // Retry failed requests 2 times
   });
+
+  // Show error toast when query fails
+  useEffect(() => {
+    if (error) {
+      const errorMessage = error instanceof Error ? error.message : 'An error occurred';
+      
+      // Distinguish error types
+      if (errorMessage.includes('404')) {
+        toast.warning('Hot topics endpoint not found. Please check the API configuration.');
+      } else if (errorMessage.includes('Network') || errorMessage.includes('timeout')) {
+        toast.error('Network error. Please check your internet connection and try again.');
+      } else if (errorMessage.includes('500')) {
+        toast.error('Server error. The service is experiencing issues. Please try again later.');
+      } else {
+        toast.error(`Failed to load hot topics: ${errorMessage}`);
+      }
+    }
+  }, [error, toast]);
 
   // Loading skeleton
   const renderSkeleton = () => (
@@ -68,6 +91,8 @@ export const HotTopicsPage: React.FC = () => {
   if (error && !data) {
     return (
       <div className="container mx-auto px-6 py-12">
+        <ToastContainer toasts={toast.toasts} onRemove={toast.removeToast} />
+        
         <h1 className="text-4xl font-bold mb-10 bg-gradient-to-r from-emerald-400 to-blue-500 bg-clip-text text-transparent">
           Hot Topics
         </h1>
@@ -75,15 +100,23 @@ export const HotTopicsPage: React.FC = () => {
           <div className="text-red-400 text-xl mb-4">
             Failed to load hot topics
           </div>
-          <p className="text-gray-400">
+          <p className="text-gray-400 mb-6">
             {error instanceof Error ? error.message : 'An error occurred'}
           </p>
-          <button
-            onClick={() => window.location.reload()}
-            className="mt-4 px-6 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg transition-colors"
-          >
-            Retry
-          </button>
+          <div className="flex gap-3 justify-center">
+            <button
+              onClick={() => refetch()}
+              className="px-6 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500"
+            >
+              Retry
+            </button>
+            <button
+              onClick={() => window.location.href = '/'}
+              className="px-6 py-2 glass-button text-gray-300 hover:bg-white/10 rounded-lg transition-colors"
+            >
+              Go Home
+            </button>
+          </div>
         </div>
       </div>
     );
@@ -91,6 +124,8 @@ export const HotTopicsPage: React.FC = () => {
 
   return (
     <div className="container mx-auto px-6 py-12">
+      <ToastContainer toasts={toast.toasts} onRemove={toast.removeToast} />
+      
       {/* Header */}
       <div className="mb-10">
         <h1 className="text-4xl font-bold mb-4 bg-gradient-to-r from-emerald-400 to-blue-500 bg-clip-text text-transparent">

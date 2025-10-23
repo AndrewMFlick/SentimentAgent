@@ -4,6 +4,8 @@ import { api } from '../services/api';
 import { RelatedPostCard } from './RelatedPostCard';
 import { SimpleTimeRangeFilter } from './SimpleTimeRangeFilter';
 import { TimeRange, RelatedPost, RelatedPostsResponse } from '../types/hot-topics';
+import { ToastContainer } from './Toast';
+import { useToast } from '../hooks/useToast';
 
 interface RelatedPostsListProps {
   toolId: string;
@@ -25,6 +27,7 @@ export const RelatedPostsList: React.FC<RelatedPostsListProps> = ({
   const [offset, setOffset] = useState(0);
   const [allPosts, setAllPosts] = useState<RelatedPost[]>([]);
   const limit = 20;
+  const toast = useToast();
 
   // Fetch related posts
   const {
@@ -40,7 +43,25 @@ export const RelatedPostsList: React.FC<RelatedPostsListProps> = ({
       offset: offset,
       limit: limit,
     }),
+    retry: 2,
   });
+
+  // Show error toasts
+  useEffect(() => {
+    if (error) {
+      const errorMessage = error instanceof Error ? error.message : 'An error occurred';
+      
+      if (errorMessage.includes('404')) {
+        toast.warning('Related posts endpoint not found. Please check the API configuration.');
+      } else if (errorMessage.includes('Network') || errorMessage.includes('timeout')) {
+        toast.error('Network error. Please check your internet connection and try again.');
+      } else if (errorMessage.includes('500')) {
+        toast.error('Server error. The service is experiencing issues. Please try again later.');
+      } else {
+        toast.error(`Failed to load related posts: ${errorMessage}`);
+      }
+    }
+  }, [error, toast]);
 
   // Update allPosts when data changes
   useEffect(() => {
@@ -94,10 +115,12 @@ export const RelatedPostsList: React.FC<RelatedPostsListProps> = ({
   if (error && !data) {
     return (
       <div className="container mx-auto px-6 py-12">
+        <ToastContainer toasts={toast.toasts} onRemove={toast.removeToast} />
+        
         {onBack && (
           <button
             onClick={onBack}
-            className="mb-6 inline-flex items-center gap-2 text-gray-400 hover:text-white transition-colors"
+            className="mb-6 inline-flex items-center gap-2 text-gray-400 hover:text-white transition-colors focus-visible:ring-2 focus-visible:ring-emerald-500 focus-visible:outline-none rounded-md px-2 py-1"
           >
             <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
@@ -113,12 +136,22 @@ export const RelatedPostsList: React.FC<RelatedPostsListProps> = ({
           <p className="text-gray-400 mb-4">
             {error instanceof Error ? error.message : 'An error occurred'}
           </p>
-          <button
-            onClick={() => refetch()}
-            className="px-6 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg transition-colors"
-          >
-            Retry
-          </button>
+          <div className="flex gap-4 justify-center">
+            <button
+              onClick={() => refetch()}
+              className="px-6 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg transition-colors focus-visible:ring-2 focus-visible:ring-emerald-500 focus-visible:outline-none"
+            >
+              Retry
+            </button>
+            {onBack && (
+              <button
+                onClick={onBack}
+                className="px-6 py-2 bg-gray-700 hover:bg-gray-600 text-white rounded-lg transition-colors focus-visible:ring-2 focus-visible:ring-gray-500 focus-visible:outline-none"
+              >
+                Go Back
+              </button>
+            )}
+          </div>
         </div>
       </div>
     );
@@ -162,6 +195,8 @@ export const RelatedPostsList: React.FC<RelatedPostsListProps> = ({
 
   return (
     <div className="container mx-auto px-6 py-12">
+      <ToastContainer toasts={toast.toasts} onRemove={toast.removeToast} />
+      
       {/* Back button */}
       {onBack && (
         <button
