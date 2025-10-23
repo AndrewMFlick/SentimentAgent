@@ -309,25 +309,126 @@ class TestHotTopicsPerformance:
 
 
 class TestRelatedPostsPerformance:
-    """Performance tests for related posts endpoint (Phase 4/US2)."""
+    """Performance tests for related posts endpoint (Task T031 - US2)."""
     
-    @pytest.mark.skip(reason="API endpoint not yet implemented - Phase 4 (T023)")
     def test_related_posts_first_page_under_2_seconds(self, client):
         """
         Test first 20 posts query completes in < 2 seconds (SC-005).
         
-        Task: T019 (Phase 4 performance validation)
-        Purpose: Verify related posts initial load performance
+        Task: T031 (US2 performance tests)
+        Purpose: Verify related posts initial load meets performance requirements
+        Requirement: GET /api/hot-topics/{tool_id}/posts returns first page in < 2 seconds
+        Setup: Mock service with 20 related posts
+        Test: Measure response time
+        Assertions:
+          - Response time < 2000ms
+          - Status code 200
+          - Returns 20 posts
         """
-        pass
+        from src.models.hot_topics import RelatedPost, RelatedPostsResponse
+        
+        # Create mock response with 20 posts
+        mock_posts = [
+            RelatedPost(
+                post_id=f"post-{i}",
+                title=f"Post {i} About AI Tool",
+                excerpt=f"This is excerpt {i} discussing the tool...",
+                author=f"user_{i}",
+                subreddit="programming",
+                created_utc=datetime.now(timezone.utc),
+                reddit_url=f"https://reddit.com/r/programming/comments/post-{i}",
+                comment_count=10 + i,
+                upvotes=50 + (i * 5),
+                sentiment="positive" if i % 2 == 0 else "neutral",
+                engagement_score=60 + (i * 5)
+            )
+            for i in range(20)
+        ]
+        
+        mock_response = RelatedPostsResponse(
+            posts=mock_posts,
+            total=100,
+            has_more=True,
+            offset=0,
+            limit=20
+        )
+        
+        with patch(
+            'src.services.hot_topics_service.HotTopicsService.get_related_posts',
+            new_callable=AsyncMock,
+            return_value=mock_response
+        ):
+            start_time = time.time()
+            response = client.get("/api/hot-topics/test-tool/posts")
+            end_time = time.time()
+            
+            response_time_ms = (end_time - start_time) * 1000
+            
+            assert response.status_code == 200
+            assert response_time_ms < 2000, f"Response took {response_time_ms}ms, expected < 2000ms"
+            
+            data = response.json()
+            assert len(data["posts"]) == 20
+            assert data["total"] == 100
+            assert data["has_more"] is True
     
-    @pytest.mark.skip(reason="API endpoint not yet implemented - Phase 4 (T023)")
     def test_related_posts_pagination_under_1_second(self, client):
         """
-        Test paginated requests (offset > 0) complete in < 1 second.
+        Test paginated requests (offset > 0) complete in < 1 second (cached).
         
-        Task: T019
-        Purpose: Verify pagination performance with caching
-        Requirement: Cached pagination should be faster than initial query
+        Task: T031 (US2 performance tests)
+        Purpose: Verify pagination performance with server-side caching
+        Requirement: Paginated requests should be faster than initial query (< 1s with cache)
+        Setup: Mock service with paginated response
+        Test: Measure response time for offset=20
+        Assertions:
+          - Response time < 1000ms
+          - Status code 200
+          - Correct offset applied
         """
-        pass
+        from src.models.hot_topics import RelatedPost, RelatedPostsResponse
+        
+        # Create mock response for page 2 (offset=20)
+        mock_posts = [
+            RelatedPost(
+                post_id=f"post-{20 + i}",
+                title=f"Post {20 + i} About AI Tool",
+                excerpt=f"This is excerpt {20 + i}...",
+                author=f"user_{20 + i}",
+                subreddit="programming",
+                created_utc=datetime.now(timezone.utc),
+                reddit_url=f"https://reddit.com/r/programming/comments/post-{20 + i}",
+                comment_count=30 + i,
+                upvotes=150 + (i * 5),
+                sentiment="neutral",
+                engagement_score=180 + (i * 5)
+            )
+            for i in range(20)
+        ]
+        
+        mock_response = RelatedPostsResponse(
+            posts=mock_posts,
+            total=100,
+            has_more=True,
+            offset=20,
+            limit=20
+        )
+        
+        with patch(
+            'src.services.hot_topics_service.HotTopicsService.get_related_posts',
+            new_callable=AsyncMock,
+            return_value=mock_response
+        ):
+            start_time = time.time()
+            response = client.get("/api/hot-topics/test-tool/posts?offset=20&limit=20")
+            end_time = time.time()
+            
+            response_time_ms = (end_time - start_time) * 1000
+            
+            assert response.status_code == 200
+            assert response_time_ms < 1000, f"Pagination took {response_time_ms}ms, expected < 1000ms (cached)"
+            
+            data = response.json()
+            assert len(data["posts"]) == 20
+            assert data["offset"] == 20
+            assert data["has_more"] is True

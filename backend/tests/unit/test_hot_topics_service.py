@@ -8,9 +8,6 @@ from unittest.mock import Mock, AsyncMock, patch
 from datetime import datetime, timezone, timedelta
 from typing import List, Dict, Any
 
-from src.services.hot_topics_service import HotTopicsService
-from src.models.hot_topics import SentimentDistribution
-
 
 class TestCalculateCutoffTimestamp:
     """Unit tests for _calculate_cutoff_timestamp helper method."""
@@ -18,17 +15,22 @@ class TestCalculateCutoffTimestamp:
     @pytest.fixture
     def hot_topics_service(self):
         """Create a HotTopicsService with mocked containers."""
-        sentiment_scores = Mock()
-        reddit_posts = Mock()
-        reddit_comments = Mock()
-        tools = Mock()
-        
-        return HotTopicsService(
-            sentiment_scores_container=sentiment_scores,
-            reddit_posts_container=reddit_posts,
-            reddit_comments_container=reddit_comments,
-            tools_container=tools,
-        )
+        # Import HotTopicsService directly without triggering database init
+        with patch('azure.cosmos.CosmosClient'):
+            from src.services.hot_topics_service import HotTopicsService
+            from src.models.hot_topics import SentimentDistribution
+            
+            sentiment_scores = Mock()
+            reddit_posts = Mock()
+            reddit_comments = Mock()
+            tools = Mock()
+            
+            return HotTopicsService(
+                sentiment_scores_container=sentiment_scores,
+                reddit_posts_container=reddit_posts,
+                reddit_comments_container=reddit_comments,
+                tools_container=tools,
+            )
     
     def test_calculate_cutoff_24h(self, hot_topics_service):
         """
@@ -115,7 +117,10 @@ class TestCalculateEngagementScore:
     @pytest.fixture
     def hot_topics_service(self):
         """Create a HotTopicsService with mocked containers."""
-        sentiment_scores = Mock()
+        with patch('azure.cosmos.CosmosClient'):
+            from src.services.hot_topics_service import HotTopicsService
+            
+            sentiment_scores = Mock()
         reddit_posts = Mock()
         reddit_comments = Mock()
         tools = Mock()
@@ -165,7 +170,10 @@ class TestAggregateSentimentDistribution:
     @pytest.fixture
     def hot_topics_service(self):
         """Create a HotTopicsService with mocked containers."""
-        sentiment_scores = Mock()
+        with patch('azure.cosmos.CosmosClient'):
+            from src.services.hot_topics_service import HotTopicsService
+            
+            sentiment_scores = Mock()
         reddit_posts = Mock()
         reddit_comments = Mock()
         tools = Mock()
@@ -243,7 +251,10 @@ class TestGetHotTopicsParameters:
     @pytest.fixture
     def hot_topics_service(self):
         """Create a HotTopicsService with mocked containers."""
-        sentiment_scores = Mock()
+        with patch('azure.cosmos.CosmosClient'):
+            from src.services.hot_topics_service import HotTopicsService
+            
+            sentiment_scores = Mock()
         reddit_posts = Mock()
         reddit_comments = Mock()
         tools = Mock()
@@ -324,7 +335,10 @@ class TestGetRelatedPostsParameters:
     @pytest.fixture
     def hot_topics_service(self):
         """Create a HotTopicsService with mocked containers."""
-        sentiment_scores = Mock()
+        with patch('azure.cosmos.CosmosClient'):
+            from src.services.hot_topics_service import HotTopicsService
+            
+            sentiment_scores = Mock()
         reddit_posts = Mock()
         reddit_comments = Mock()
         tools = Mock()
@@ -409,4 +423,91 @@ class TestGetRelatedPostsParameters:
             await hot_topics_service.get_related_posts(
                 tool_id="test-tool",
                 offset=-1
+            )
+
+
+class TestRelatedPostsBusinessLogic:
+    """Unit tests for related posts business logic (Task T029)."""
+    
+    @pytest.fixture
+    def hot_topics_service(self):
+        """Create a HotTopicsService with mocked containers."""
+        with patch('azure.cosmos.CosmosClient'):
+            from src.services.hot_topics_service import HotTopicsService
+            
+            sentiment_scores = Mock()
+        reddit_posts = Mock()
+        reddit_comments = Mock()
+        tools = Mock()
+        
+        return HotTopicsService(
+            sentiment_scores_container=sentiment_scores,
+            reddit_posts_container=reddit_posts,
+            reddit_comments_container=reddit_comments,
+            tools_container=tools,
+        )
+    
+    @pytest.mark.asyncio
+    async def test_get_related_posts_pagination_offset_limit(self, hot_topics_service):
+        """
+        Test get_related_posts pagination with offset and limit.
+        
+        Task: T029 (US2 testing)
+        Purpose: Verify pagination parameters are correctly handled
+        Setup: Mock service with default containers
+        Test: Call get_related_posts with offset=10, limit=5
+        Assertions:
+          - Response offset matches request
+          - Response limit matches request
+          - Response structure is valid
+        """
+        response = await hot_topics_service.get_related_posts(
+            tool_id="github-copilot",
+            offset=10,
+            limit=5
+        )
+        
+        assert response.offset == 10
+        assert response.limit == 5
+        assert isinstance(response.posts, list)
+        assert isinstance(response.total, int)
+        assert isinstance(response.has_more, bool)
+    
+    @pytest.mark.asyncio
+    async def test_get_related_posts_empty_result(self, hot_topics_service):
+        """
+        Test get_related_posts returns empty list when no posts found.
+        
+        Task: T029 (US2 testing)
+        Purpose: Verify placeholder returns empty results correctly
+        """
+        response = await hot_topics_service.get_related_posts(
+            tool_id="nonexistent-tool"
+        )
+        
+        assert response.posts == []
+        assert response.total == 0
+        assert response.has_more is False
+    
+    @pytest.mark.asyncio
+    async def test_get_related_posts_time_range_filtering(self, hot_topics_service):
+        """
+        Test get_related_posts respects time_range parameter.
+        
+        Task: T029 (US2 testing)  
+        Purpose: Verify time range is validated (calls _calculate_cutoff_timestamp)
+        """
+        # Test with different time ranges - should not raise
+        for time_range in ["24h", "7d", "30d"]:
+            response = await hot_topics_service.get_related_posts(
+                tool_id="test-tool",
+                time_range=time_range
+            )
+            assert response is not None
+        
+        # Test invalid time range - should raise via _calculate_cutoff_timestamp
+        with pytest.raises(ValueError, match="Invalid time_range"):
+            await hot_topics_service.get_related_posts(
+                tool_id="test-tool",
+                time_range="invalid"
             )
