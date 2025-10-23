@@ -50,7 +50,7 @@ export const RelatedPostCard: React.FC<RelatedPostCardProps> = ({ post }) => {
   };
 
   return (
-    <div className="glass-card p-6 rounded-lg hover:scale-[1.01] transition-transform">
+    <article className="glass-card p-6 rounded-lg hover:scale-[1.01] transition-transform">
       {/* Header: Title and Sentiment */}
       <div className="flex items-start justify-between gap-4 mb-3">
         <h3 className="text-lg font-semibold text-white flex-1">
@@ -58,12 +58,18 @@ export const RelatedPostCard: React.FC<RelatedPostCardProps> = ({ post }) => {
             href={post.reddit_url}
             target="_blank"
             rel="noopener noreferrer"
-            className="hover:text-emerald-400 transition-colors"
+            className="hover:text-emerald-400 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500 focus-visible:ring-offset-2 focus-visible:ring-offset-dark-bg rounded"
+            aria-label={`Reddit post: ${post.title}`}
           >
             {post.title}
           </a>
         </h3>
-        <span className={`${getSentimentColor()} text-2xl flex-shrink-0`} title={post.sentiment}>
+        <span 
+          className={`${getSentimentColor()} text-2xl flex-shrink-0`} 
+          role="img"
+          aria-label={`Sentiment: ${post.sentiment}`}
+          title={post.sentiment}
+        >
           {getSentimentIcon()}
         </span>
       </div>
@@ -113,14 +119,15 @@ export const RelatedPostCard: React.FC<RelatedPostCardProps> = ({ post }) => {
           href={post.reddit_url}
           target="_blank"
           rel="noopener noreferrer"
-          className="inline-flex items-center gap-2 text-sm text-emerald-400 hover:text-emerald-300 transition-colors"
+          className="inline-flex items-center gap-2 text-sm text-emerald-400 hover:text-emerald-300 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500 focus-visible:ring-offset-2 focus-visible:ring-offset-dark-bg rounded"
+          aria-label="Open post on Reddit in new tab"
         >
           <span>View on Reddit</span>
-          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
           </svg>
         </a>
       </div>
-    </div>
+    </article>
   );
 };

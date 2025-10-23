@@ -106,6 +106,7 @@ export const HotTopicsPage: React.FC = () => {
         <SimpleTimeRangeFilter
           value={timeRange}
           onChange={setTimeRange}
+          isLoading={isFetching}
         />
         
         {/* Last updated indicator */}
