@@ -137,7 +137,7 @@ async def test_get_related_posts_with_data(hot_topics_service, mock_containers):
     assert post1.engagement_score == 60
     assert post1.sentiment == "positive"
     assert post1.reddit_url == "https://reddit.com/r/test/comments/post1/test_post_1"
-    assert len(post1.excerpt) <= 200
+    assert len(post1.excerpt) <= 153  # 150 chars + "..." if truncated
 
 
 @pytest.mark.asyncio
