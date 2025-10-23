@@ -18,11 +18,11 @@
 
 **Purpose**: Database indexing and project structure preparation
 
-- [ ] **T001** [P] [Setup] Add composite index to `sentiment_scores` container: `[detected_tool_ids[], _ts]` via Azure Portal or index-policy.json
-- [ ] **T002** [P] [Setup] Add composite index to `reddit_comments` container: `[post_id, _ts]` via Azure Portal
-- [ ] **T003** [P] [Setup] Verify existing indexes on `reddit_posts` (id, _ts auto-indexed by CosmosDB)
+- [x] **T001** [P] [Setup] Add composite index to `sentiment_scores` container: `[detected_tool_ids[], _ts]` via Azure Portal or index-policy.json
+- [x] **T002** [P] [Setup] Add composite index to `reddit_comments` container: `[post_id, _ts]` via Azure Portal
+- [x] **T003** [P] [Setup] Verify existing indexes on `reddit_posts` (id, _ts auto-indexed by CosmosDB)
 
-**Checkpoint**: Database indexes ready for efficient queries
+**Checkpoint**: ✅ Database indexes ready for efficient queries
 
 ---
 

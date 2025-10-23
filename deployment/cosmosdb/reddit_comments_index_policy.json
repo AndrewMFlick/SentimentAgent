@@ -1,0 +1,26 @@
+{
+  "indexingMode": "consistent",
+  "automatic": true,
+  "includedPaths": [
+    {
+      "path": "/*"
+    }
+  ],
+  "excludedPaths": [
+    {
+      "path": "/\"_etag\"/?"
+    }
+  ],
+  "compositeIndexes": [
+    [
+      {
+        "path": "/post_id",
+        "order": "ascending"
+      },
+      {
+        "path": "/_ts",
+        "order": "descending"
+      }
+    ]
+  ]
+}
