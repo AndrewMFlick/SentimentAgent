@@ -11,7 +11,7 @@ All entities are derived/calculated - nothing stored in database.
 """
 
 from datetime import datetime, timedelta, timezone
-from typing import List, Optional
+from typing import Any, Dict, List
 
 import structlog
 from azure.cosmos import ContainerProxy
@@ -19,7 +19,6 @@ from azure.cosmos import ContainerProxy
 from ..models.hot_topics import (
     HotTopic,
     HotTopicsResponse,
-    RelatedPost,
     RelatedPostsResponse,
     SentimentDistribution,
 )
@@ -97,6 +96,76 @@ class HotTopicsService:
         
         return timestamp
 
+    def calculate_engagement_score(
+        self,
+        mentions: int,
+        comments: int,
+        upvotes: int,
+    ) -> int:
+        """Calculate engagement score for a tool.
+        
+        Formula: (mentions × 10) + (comments × 2) + upvotes
+        
+        Args:
+            mentions: Number of posts/comments mentioning the tool
+            comments: Sum of comment counts on related posts
+            upvotes: Sum of upvotes on related posts
+        
+        Returns:
+            Integer engagement score (higher is more engaged)
+        
+        Example:
+            >>> service.calculate_engagement_score(5, 20, 100)
+            190  # (5 × 10) + (20 × 2) + 100
+        """
+        return (mentions * 10) + (comments * 2) + upvotes
+
+    def _aggregate_sentiment_distribution(
+        self,
+        sentiment_scores: List[Dict[str, Any]],
+    ) -> SentimentDistribution:
+        """Aggregate sentiment distribution from sentiment scores.
+        
+        Args:
+            sentiment_scores: List of sentiment score documents
+        
+        Returns:
+            SentimentDistribution with counts and percentages
+        """
+        positive_count = 0
+        negative_count = 0
+        neutral_count = 0
+        
+        for score in sentiment_scores:
+            sentiment = score.get("sentiment", "neutral")
+            if sentiment == "positive":
+                positive_count += 1
+            elif sentiment == "negative":
+                negative_count += 1
+            else:
+                neutral_count += 1
+        
+        total = positive_count + negative_count + neutral_count
+        
+        if total == 0:
+            return SentimentDistribution(
+                positive_count=0,
+                negative_count=0,
+                neutral_count=0,
+                positive_percent=0.0,
+                negative_percent=0.0,
+                neutral_percent=0.0,
+            )
+        
+        return SentimentDistribution(
+            positive_count=positive_count,
+            negative_count=negative_count,
+            neutral_count=neutral_count,
+            positive_percent=round((positive_count / total) * 100, 2),
+            negative_percent=round((negative_count / total) * 100, 2),
+            neutral_percent=round((neutral_count / total) * 100, 2),
+        )
+
     async def get_hot_topics(
         self,
         time_range: str = "7d",
@@ -104,10 +173,7 @@ class HotTopicsService:
     ) -> HotTopicsResponse:
         """Get hot topics ranked by engagement within time range.
         
-        Placeholder for Phase 3 (US1) implementation.
-        Will aggregate data from sentiment_scores and reddit_posts.
-        
-        Algorithm (to be implemented in Phase 3):
+        Algorithm:
         1. Query sentiment_scores for tool mentions within time range
         2. Calculate engagement score per tool: (mentions × 10) + (comments × 2) + upvotes
         3. Calculate sentiment distribution per tool
@@ -125,7 +191,7 @@ class HotTopicsService:
             ValueError: If time_range is invalid or limit out of range
         """
         self._logger.info(
-            "get_hot_topics called (placeholder)",
+            "get_hot_topics called",
             time_range=time_range,
             limit=limit,
         )
@@ -136,14 +202,111 @@ class HotTopicsService:
         
         cutoff_ts = self._calculate_cutoff_timestamp(time_range)
         
-        # TODO (Phase 3 - T010): Implement hot topics aggregation
-        # - Query sentiment_scores with composite index [detected_tool_ids[], _ts]
-        # - Group by tool_id, calculate engagement scores
-        # - Calculate sentiment distribution per tool
-        # - Sort by engagement_score DESC, limit results
+        # Get all active tools
+        tools_query = "SELECT * FROM c WHERE c.status = 'active' AND c.partitionKey = 'tool'"
+        tools = list(self.tools.query_items(
+            query=tools_query,
+            enable_cross_partition_query=False
+        ))
+        
+        self._logger.debug(f"Found {len(tools)} active tools")
+        
+        # For each tool, calculate engagement metrics
+        hot_topics = []
+        
+        for tool in tools:
+            tool_id = tool["id"]
+            tool_name = tool["name"]
+            tool_slug = tool.get("slug", tool_name.lower().replace(" ", "-"))
+            
+            # Query sentiment scores for this tool within time range
+            # Use ARRAY_CONTAINS to find posts mentioning this tool
+            sentiment_query = """
+                SELECT * FROM c 
+                WHERE ARRAY_CONTAINS(c.detected_tool_ids, @tool_id)
+                AND c._ts >= @cutoff_ts
+            """
+            
+            sentiment_scores = list(self.sentiment_scores.query_items(
+                query=sentiment_query,
+                parameters=[
+                    {"name": "@tool_id", "value": tool_id},
+                    {"name": "@cutoff_ts", "value": cutoff_ts}
+                ],
+                enable_cross_partition_query=True
+            ))
+            
+            mentions = len(sentiment_scores)
+            
+            # Skip tools with fewer than 3 mentions (threshold)
+            if mentions < 3:
+                continue
+            
+            # Get post IDs to calculate engagement metrics
+            post_ids = [score["post_id"] for score in sentiment_scores]
+            
+            # Query reddit posts for comment counts and upvotes
+            total_comments = 0
+            total_upvotes = 0
+            
+            if post_ids:
+                # Query in batches to avoid parameter limits
+                batch_size = 100
+                for i in range(0, len(post_ids), batch_size):
+                    batch_ids = post_ids[i:i+batch_size]
+                    
+                    # Use IN clause for batch querying
+                    placeholders = ", ".join([f"@post_id_{j}" for j in range(len(batch_ids))])
+                    posts_query = f"SELECT c.num_comments, c.score FROM c WHERE c.id IN ({placeholders})"
+                    
+                    parameters = [
+                        {"name": f"@post_id_{j}", "value": post_id}
+                        for j, post_id in enumerate(batch_ids)
+                    ]
+                    
+                    posts = list(self.reddit_posts.query_items(
+                        query=posts_query,
+                        parameters=parameters,
+                        enable_cross_partition_query=True
+                    ))
+                    
+                    for post in posts:
+                        total_comments += post.get("num_comments", 0)
+                        total_upvotes += post.get("score", 0)
+            
+            # Calculate engagement score
+            engagement_score = self.calculate_engagement_score(
+                mentions, total_comments, total_upvotes
+            )
+            
+            # Calculate sentiment distribution
+            sentiment_distribution = self._aggregate_sentiment_distribution(sentiment_scores)
+            
+            hot_topics.append(HotTopic(
+                tool_id=tool_id,
+                tool_name=tool_name,
+                tool_slug=tool_slug,
+                engagement_score=engagement_score,
+                total_mentions=mentions,
+                total_comments=total_comments,
+                total_upvotes=total_upvotes,
+                sentiment_distribution=sentiment_distribution,
+            ))
+        
+        # Sort by engagement score descending
+        hot_topics.sort(key=lambda x: x.engagement_score, reverse=True)
+        
+        # Limit results
+        hot_topics = hot_topics[:limit]
+        
+        self._logger.info(
+            "Hot topics calculated",
+            count=len(hot_topics),
+            time_range=time_range,
+        )
         
         return HotTopicsResponse(
-            hot_topics=[],
+            hot_topics=hot_topics,
             generated_at=datetime.now(timezone.utc),
             time_range=time_range,
         )
@@ -194,7 +357,8 @@ class HotTopicsService:
         if offset < 0:
             raise ValueError("offset must be >= 0")
         
-        cutoff_ts = self._calculate_cutoff_timestamp(time_range)
+        # Calculate cutoff timestamp
+        _ = self._calculate_cutoff_timestamp(time_range)
         
         # TODO (Phase 4 - T023): Implement related posts query
         # - Query sentiment_scores WHERE tool_id IN detected_tool_ids AND _ts >= cutoff

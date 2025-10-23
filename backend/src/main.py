@@ -10,6 +10,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from .api import router
 from .api.admin import router as admin_router
+from .api.hot_topics import router as hot_topics_router
 from .config import settings
 from .services import db, scheduler
 from .services.health import app_state
@@ -195,6 +196,9 @@ app.include_router(router, prefix="/api/v1")
 
 # Include admin routes (requires authentication)
 app.include_router(admin_router, prefix="/api/v1")
+
+# Include hot topics routes
+app.include_router(hot_topics_router)
 
 
 @app.get("/")
