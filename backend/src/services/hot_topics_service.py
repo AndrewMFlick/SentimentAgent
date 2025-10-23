@@ -227,6 +227,13 @@ class HotTopicsService:
         
         cutoff_ts = self._calculate_cutoff_timestamp(time_range)
         
+        self._logger.info(
+            "Fetching hot topics",
+            time_range=time_range,
+            cutoff_ts=cutoff_ts,
+            limit=limit,
+        )
+        
         # Get all active tools
         tools_query = "SELECT * FROM c WHERE c.status = 'active' AND c.partitionKey = 'tool'"
         tools = list(self.tools.query_items(
@@ -234,37 +241,80 @@ class HotTopicsService:
             enable_cross_partition_query=False
         ))
         
-        self._logger.debug(f"Found {len(tools)} active tools")
+        self._logger.info(
+            "Active tools retrieved",
+            tool_count=len(tools),
+        )
+        
+        if not tools:
+            self._logger.warning("No active tools found in database")
+            return HotTopicsResponse(
+                hot_topics=[],
+                generated_at=datetime.now(timezone.utc),
+                time_range=time_range,
+            )
         
         # For each tool, calculate engagement metrics
         hot_topics = []
+        tools_processed = 0
+        tools_filtered = 0
         
         for tool in tools:
+            tools_processed += 1
             tool_id = tool["id"]
             tool_name = tool["name"]
             tool_slug = tool.get("slug", tool_name.lower().replace(" ", "-"))
             
-            # Query sentiment scores for this tool within time range
-            # Use ARRAY_CONTAINS to find posts mentioning this tool
-            sentiment_query = """
-                SELECT * FROM c 
-                WHERE ARRAY_CONTAINS(c.detected_tool_ids, @tool_id)
-                AND c._ts >= @cutoff_ts
-            """
-            
-            sentiment_scores = list(self.sentiment_scores.query_items(
-                query=sentiment_query,
-                parameters=[
-                    {"name": "@tool_id", "value": tool_id},
-                    {"name": "@cutoff_ts", "value": cutoff_ts}
-                ],
-                enable_cross_partition_query=True
-            ))
+            try:
+                # Query sentiment scores for this tool within time range
+                # Use ARRAY_CONTAINS to find posts mentioning this tool
+                sentiment_query = """
+                    SELECT * FROM c 
+                    WHERE ARRAY_CONTAINS(c.detected_tool_ids, @tool_id)
+                    AND c._ts >= @cutoff_ts
+                """
+                
+                sentiment_scores = list(self.sentiment_scores.query_items(
+                    query=sentiment_query,
+                    parameters=[
+                        {"name": "@tool_id", "value": tool_id},
+                        {"name": "@cutoff_ts", "value": cutoff_ts}
+                    ],
+                    enable_cross_partition_query=True
+                ))
+                
+            except Exception as e:
+                # Log error but continue processing other tools
+                self._logger.error(
+                    "Failed to query sentiment scores for tool",
+                    tool_id=tool_id,
+                    tool_name=tool_name,
+                    error=str(e),
+                    exc_info=True,
+                )
+                continue
             
             mentions = len(sentiment_scores)
             
+            # Log engagement calculation for each tool (debug level)
+            self._logger.debug(
+                "Tool mentions found",
+                tool_id=tool_id,
+                tool_name=tool_name,
+                mentions=mentions,
+            )
+            
             # Skip tools with fewer than 3 mentions (threshold)
+            # Edge case: Tools with 0-2 mentions filtered out
             if mentions < 3:
+                tools_filtered += 1
+                self._logger.debug(
+                    "Tool filtered out (below mention threshold)",
+                    tool_id=tool_id,
+                    tool_name=tool_name,
+                    mentions=mentions,
+                    threshold=3,
+                )
                 continue
             
             # Get post IDs to calculate engagement metrics
@@ -304,6 +354,17 @@ class HotTopicsService:
                 mentions, total_comments, total_upvotes
             )
             
+            # Log engagement calculation (debug level)
+            self._logger.debug(
+                "Engagement score calculated",
+                tool_id=tool_id,
+                tool_name=tool_name,
+                engagement_score=engagement_score,
+                mentions=mentions,
+                total_comments=total_comments,
+                total_upvotes=total_upvotes,
+            )
+            
             # Calculate sentiment distribution
             sentiment_distribution = self._aggregate_sentiment_distribution(sentiment_scores)
             
@@ -325,10 +386,22 @@ class HotTopicsService:
         hot_topics = hot_topics[:limit]
         
         self._logger.info(
-            "Hot topics calculated",
-            count=len(hot_topics),
+            "Hot topics calculation complete",
+            total_tools=len(tools),
+            tools_processed=tools_processed,
+            tools_filtered=tools_filtered,
+            tools_with_sufficient_mentions=len(hot_topics),
+            returned_count=len(hot_topics),
             time_range=time_range,
         )
+        
+        # Edge case: No tools with sufficient engagement
+        if not hot_topics:
+            self._logger.warning(
+                "No hot topics found (all tools below threshold)",
+                time_range=time_range,
+                min_mentions_threshold=3,
+            )
         
         return HotTopicsResponse(
             hot_topics=hot_topics,
@@ -437,8 +510,22 @@ class HotTopicsService:
         # Calculate cutoff timestamp
         cutoff_ts = self._calculate_cutoff_timestamp(time_range)
         
+        self._logger.info(
+            "Fetching related posts",
+            tool_id=tool_id,
+            time_range=time_range,
+            cutoff_ts=cutoff_ts,
+            offset=offset,
+            limit=limit,
+        )
+        
         # Get engaged post IDs (posts created or commented on within time range)
         engaged_post_ids = await self._get_posts_with_engagement(cutoff_ts)
+        
+        self._logger.debug(
+            "Engaged posts retrieved",
+            engaged_count=len(engaged_post_ids),
+        )
         
         # Query sentiment_scores for posts mentioning this tool
         # Filter by content_type = 'post' to only get post-level sentiment
@@ -457,11 +544,23 @@ class HotTopicsService:
         
         # Filter sentiment scores to only engaged posts
         engaged_sentiment_scores = [
-            s for s in sentiment_scores 
+            s for s in sentiment_scores
             if s["content_id"] in engaged_post_ids
         ]
         
+        self._logger.debug(
+            "Sentiment scores filtered",
+            total_sentiment_scores=len(sentiment_scores),
+            engaged_sentiment_scores=len(engaged_sentiment_scores),
+        )
+        
+        # Edge case: No engaged posts found for this tool
         if not engaged_sentiment_scores:
+            self._logger.info(
+                "No engaged posts found for tool",
+                tool_id=tool_id,
+                time_range=time_range,
+            )
             return RelatedPostsResponse(
                 posts=[],
                 total=0,
