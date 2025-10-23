@@ -263,6 +263,9 @@ class TestGetHotTopicsParameters:
         Task: T017
         Purpose: Verify default time_range="7d" and limit=10
         """
+        # Mock empty tools query
+        hot_topics_service.tools.query_items.return_value = []
+        
         response = await hot_topics_service.get_hot_topics()
         
         assert response.time_range == "7d"
@@ -277,6 +280,9 @@ class TestGetHotTopicsParameters:
         Task: T017
         Purpose: Verify parameter passing
         """
+        # Mock empty tools query
+        hot_topics_service.tools.query_items.return_value = []
+        
         response = await hot_topics_service.get_hot_topics(
             time_range="24h",
             limit=20
@@ -318,6 +324,105 @@ class TestGetHotTopicsParameters:
             await hot_topics_service.get_hot_topics(time_range="invalid")
 
 
+class TestGetPostsWithEngagement:
+    """Unit tests for _get_posts_with_engagement helper method."""
+    
+    @pytest.fixture
+    def hot_topics_service(self):
+        """Create a HotTopicsService with mocked containers."""
+        sentiment_scores = Mock()
+        reddit_posts = Mock()
+        reddit_comments = Mock()
+        tools = Mock()
+        
+        return HotTopicsService(
+            sentiment_scores_container=sentiment_scores,
+            reddit_posts_container=reddit_posts,
+            reddit_comments_container=reddit_comments,
+            tools_container=tools,
+        )
+    
+    @pytest.mark.asyncio
+    async def test_get_posts_with_engagement_includes_recent_posts(self, hot_topics_service):
+        """
+        Test that _get_posts_with_engagement includes posts created within time range.
+        
+        Task: T029
+        Purpose: Verify posts created recently are included
+        """
+        cutoff_ts = 1000000
+        
+        # Mock posts created within time range
+        hot_topics_service.reddit_posts.query_items.return_value = [
+            {"id": "post1"},
+            {"id": "post2"},
+        ]
+        
+        # Mock no comments in range
+        hot_topics_service.reddit_comments.query_items.return_value = []
+        
+        result = await hot_topics_service._get_posts_with_engagement(cutoff_ts)
+        
+        assert "post1" in result
+        assert "post2" in result
+        assert len(result) == 2
+    
+    @pytest.mark.asyncio
+    async def test_get_posts_with_engagement_includes_posts_with_recent_comments(self, hot_topics_service):
+        """
+        Test that _get_posts_with_engagement includes posts with recent comments.
+        
+        Task: T029
+        Purpose: Verify posts with recent comments are included even if post is old
+        """
+        cutoff_ts = 1000000
+        
+        # Mock no posts created in range
+        hot_topics_service.reddit_posts.query_items.return_value = []
+        
+        # Mock comments in range pointing to old posts
+        hot_topics_service.reddit_comments.query_items.return_value = [
+            {"post_id": "old_post1"},
+            {"post_id": "old_post2"},
+            {"post_id": "old_post1"},  # Duplicate should be deduplicated
+        ]
+        
+        result = await hot_topics_service._get_posts_with_engagement(cutoff_ts)
+        
+        assert "old_post1" in result
+        assert "old_post2" in result
+        assert len(result) == 2  # Deduplicated
+    
+    @pytest.mark.asyncio
+    async def test_get_posts_with_engagement_combines_both_sources(self, hot_topics_service):
+        """
+        Test that _get_posts_with_engagement combines posts from both sources.
+        
+        Task: T029
+        Purpose: Verify union of recent posts and posts with recent comments
+        """
+        cutoff_ts = 1000000
+        
+        # Mock posts in range
+        hot_topics_service.reddit_posts.query_items.return_value = [
+            {"id": "new_post1"},
+            {"id": "new_post2"},
+        ]
+        
+        # Mock comments pointing to different posts
+        hot_topics_service.reddit_comments.query_items.return_value = [
+            {"post_id": "old_post1"},
+            {"post_id": "new_post1"},  # Overlap with recent posts
+        ]
+        
+        result = await hot_topics_service._get_posts_with_engagement(cutoff_ts)
+        
+        assert "new_post1" in result
+        assert "new_post2" in result
+        assert "old_post1" in result
+        assert len(result) == 3  # Union, not sum
+
+
 class TestGetRelatedPostsParameters:
     """Unit tests for get_related_posts parameter validation."""
     
@@ -341,9 +446,14 @@ class TestGetRelatedPostsParameters:
         """
         Test get_related_posts with default parameters.
         
-        Task: T017
+        Task: T029
         Purpose: Verify default time_range="7d", offset=0, limit=20
         """
+        # Mock empty responses
+        hot_topics_service.reddit_posts.query_items.return_value = []
+        hot_topics_service.reddit_comments.query_items.return_value = []
+        hot_topics_service.sentiment_scores.query_items.return_value = []
+        
         response = await hot_topics_service.get_related_posts(tool_id="test-tool")
         
         assert response.offset == 0
@@ -357,9 +467,14 @@ class TestGetRelatedPostsParameters:
         """
         Test get_related_posts with custom offset and limit.
         
-        Task: T017
+        Task: T029
         Purpose: Verify pagination parameter passing
         """
+        # Mock empty responses
+        hot_topics_service.reddit_posts.query_items.return_value = []
+        hot_topics_service.reddit_comments.query_items.return_value = []
+        hot_topics_service.sentiment_scores.query_items.return_value = []
+        
         response = await hot_topics_service.get_related_posts(
             tool_id="test-tool",
             offset=20,
@@ -374,7 +489,7 @@ class TestGetRelatedPostsParameters:
         """
         Test get_related_posts rejects limit < 1.
         
-        Task: T017
+        Task: T029
         Purpose: Verify input validation
         """
         with pytest.raises(ValueError, match="limit must be between 1 and 100"):
@@ -388,7 +503,7 @@ class TestGetRelatedPostsParameters:
         """
         Test get_related_posts rejects limit > 100.
         
-        Task: T017
+        Task: T029
         Purpose: Verify input validation
         """
         with pytest.raises(ValueError, match="limit must be between 1 and 100"):
@@ -402,7 +517,7 @@ class TestGetRelatedPostsParameters:
         """
         Test get_related_posts rejects negative offset.
         
-        Task: T017
+        Task: T029
         Purpose: Verify input validation
         """
         with pytest.raises(ValueError, match="offset must be >= 0"):
@@ -410,3 +525,138 @@ class TestGetRelatedPostsParameters:
                 tool_id="test-tool",
                 offset=-1
             )
+
+
+class TestGetRelatedPostsBehavior:
+    """Unit tests for get_related_posts business logic."""
+    
+    @pytest.fixture
+    def hot_topics_service(self):
+        """Create a HotTopicsService with mocked containers."""
+        sentiment_scores = Mock()
+        reddit_posts = Mock()
+        reddit_comments = Mock()
+        tools = Mock()
+        
+        return HotTopicsService(
+            sentiment_scores_container=sentiment_scores,
+            reddit_posts_container=reddit_posts,
+            reddit_comments_container=reddit_comments,
+            tools_container=tools,
+        )
+    
+    @pytest.mark.asyncio
+    async def test_get_related_posts_returns_empty_when_no_engaged_posts(self, hot_topics_service):
+        """
+        Test that get_related_posts returns empty when no engaged posts exist.
+        
+        Task: T029
+        Purpose: Verify handling of no engaged posts
+        """
+        # Mock no engaged posts
+        hot_topics_service.reddit_posts.query_items.return_value = []
+        hot_topics_service.reddit_comments.query_items.return_value = []
+        hot_topics_service.sentiment_scores.query_items.return_value = [
+            {"content_id": "post1", "sentiment": "positive"}
+        ]
+        
+        response = await hot_topics_service.get_related_posts(tool_id="test-tool")
+        
+        assert response.total == 0
+        assert len(response.posts) == 0
+        assert response.has_more == False
+    
+    @pytest.mark.asyncio
+    async def test_get_related_posts_has_more_pagination(self, hot_topics_service):
+        """
+        Test that has_more flag is set correctly for pagination.
+        
+        Task: T029
+        Purpose: Verify has_more pagination flag
+        """
+        # Mock engaged posts
+        hot_topics_service.reddit_posts.query_items.return_value = [
+            {"id": f"post{i}"} for i in range(25)
+        ]
+        hot_topics_service.reddit_comments.query_items.return_value = []
+        hot_topics_service.sentiment_scores.query_items.return_value = [
+            {"content_id": f"post{i}", "sentiment": "positive"} for i in range(25)
+        ]
+        
+        # Mock post details query - return all posts
+        hot_topics_service.reddit_posts.query_items.side_effect = [
+            # First call: engaged posts query
+            [{"id": f"post{i}"} for i in range(25)],
+            # Second call: post details query
+            [
+                {
+                    "id": f"post{i}",
+                    "title": f"Post {i}",
+                    "content": f"Content {i}",
+                    "author": "user",
+                    "subreddit": "test",
+                    "created_utc": "2025-10-20T00:00:00Z",
+                    "url": "url",
+                    "comment_count": 10,
+                    "upvotes": 20,
+                }
+                for i in range(25)
+            ]
+        ]
+        
+        # Request with limit 20
+        response = await hot_topics_service.get_related_posts(
+            tool_id="test-tool",
+            offset=0,
+            limit=20
+        )
+        
+        assert response.total == 25
+        assert len(response.posts) == 20  # Limited to 20
+        assert response.has_more == True  # offset(0) + limit(20) < total(25)
+    
+    @pytest.mark.asyncio
+    async def test_get_related_posts_no_more_at_end(self, hot_topics_service):
+        """
+        Test that has_more is False when at the end of results.
+        
+        Task: T029
+        Purpose: Verify has_more=False at end of pagination
+        """
+        # Mock 15 total posts
+        hot_topics_service.reddit_posts.query_items.return_value = [
+            {"id": f"post{i}"} for i in range(15)
+        ]
+        hot_topics_service.reddit_comments.query_items.return_value = []
+        hot_topics_service.sentiment_scores.query_items.return_value = [
+            {"content_id": f"post{i}", "sentiment": "positive"} for i in range(15)
+        ]
+        
+        hot_topics_service.reddit_posts.query_items.side_effect = [
+            [{"id": f"post{i}"} for i in range(15)],
+            [
+                {
+                    "id": f"post{i}",
+                    "title": f"Post {i}",
+                    "content": f"Content {i}",
+                    "author": "user",
+                    "subreddit": "test",
+                    "created_utc": "2025-10-20T00:00:00Z",
+                    "url": "url",
+                    "comment_count": 10,
+                    "upvotes": 20,
+                }
+                for i in range(15)
+            ]
+        ]
+        
+        # Request with offset 10, limit 20 (only 5 results left)
+        response = await hot_topics_service.get_related_posts(
+            tool_id="test-tool",
+            offset=10,
+            limit=20
+        )
+        
+        assert response.total == 15
+        assert len(response.posts) == 5  # Only 5 left after offset 10
+        assert response.has_more == False  # No more results
