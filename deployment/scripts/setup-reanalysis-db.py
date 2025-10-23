@@ -44,12 +44,15 @@ def get_cosmos_client(production: bool = False) -> CosmosClient:
                 Colors.RED
             )
             sys.exit(1)
+        return CosmosClient(endpoint, key)
     else:
-        # Local emulator
+        # Local emulator - disable SSL verification
         endpoint = "https://localhost:8081"
         key = "C2y6yDjf5/R+ob0N8A7Cgv30VRDJIWEHLM+4QDU5DE2nQ9nDuVTqobD4b8mGGyPMbIZnqyMsEcaGQy67XIw/Jw=="
-    
-    return CosmosClient(endpoint, key)
+        
+        # Disable SSL verification for local emulator (same as backend)
+        os.environ["AZURE_COSMOS_DISABLE_SSL_VERIFICATION"] = "true"
+        return CosmosClient(endpoint, key, connection_verify=False)
 
 
 async def create_reanalysis_jobs_collection(client: CosmosClient, database_name: str):
