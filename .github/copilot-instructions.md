@@ -131,10 +131,10 @@ app = FastAPI(lifespan=lifespan)
 ```
 
 ## Recent Changes
+- 012-hot-topics-isn: Added Hot Topics dashboard with engagement scoring, related posts API, timeline filtering, Load More pagination
 - 011-the-admin-section: Added Python 3.13.3 (backend), TypeScript 5.3.3 (frontend) + FastAPI 0.109.2, Azure Cosmos SDK 4.5.1, React 18.2.0, TailwindCSS 3.4+, Pydantic 2.x
 
 - 010-admin-tool-management: Added admin tool CRUD operations, alias linking, tool management dashboard
-- 009-glass-ui-redesign: Added TailwindCSS 3.4+, PostCSS 8+, glass morphism design system
 
 ## Admin Tool Management Patterns (Feature 010)
 

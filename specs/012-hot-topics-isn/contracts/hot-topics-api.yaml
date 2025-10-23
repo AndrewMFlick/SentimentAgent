@@ -1,0 +1,307 @@
+openapi: 3.0.3
+info:
+  title: Hot Topics API
+  description: API for viewing trending developer tools with engagement metrics and related Reddit posts
+  version: 1.0.0
+
+servers:
+  - url: http://localhost:8000
+    description: Local development server
+
+paths:
+  /api/hot-topics:
+    get:
+      summary: Get hot topics list
+      description: Returns a ranked list of developer tools by engagement score within the specified time range
+      operationId: getHotTopics
+      tags:
+        - Hot Topics
+      parameters:
+        - name: time_range
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [24h, 7d, 30d]
+            default: 7d
+          description: Time range filter for engagement calculation
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 50
+            default: 10
+          description: Maximum number of hot topics to return
+      responses:
+        '200':
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - hot_topics
+                  - generated_at
+                properties:
+                  hot_topics:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/HotTopic'
+                  generated_at:
+                    type: string
+                    format: date-time
+                    description: Timestamp when results were calculated
+                  time_range:
+                    type: string
+                    enum: [24h, 7d, 30d]
+                    description: Applied time range filter
+        '400':
+          description: Invalid time_range parameter
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /api/hot-topics/{tool_id}/posts:
+    get:
+      summary: Get related posts for a tool
+      description: Returns paginated list of Reddit posts mentioning the specified tool, sorted by engagement
+      operationId: getRelatedPosts
+      tags:
+        - Hot Topics
+      parameters:
+        - name: tool_id
+          in: path
+          required: true
+          schema:
+            type: string
+          description: Tool identifier
+        - name: time_range
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [24h, 7d, 30d]
+            default: 7d
+          description: Time range filter - only posts with engagement in this range
+        - name: offset
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 0
+            default: 0
+          description: Number of posts to skip (for pagination)
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 20
+          description: Number of posts to return
+      responses:
+        '200':
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - posts
+                  - total
+                  - has_more
+                properties:
+                  posts:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/RelatedPost'
+                  total:
+                    type: integer
+                    description: Total number of posts matching criteria (not paginated)
+                  has_more:
+                    type: boolean
+                    description: True if more posts are available beyond current offset+limit
+                  offset:
+                    type: integer
+                    description: Current offset value (echoed from request)
+                  limit:
+                    type: integer
+                    description: Current limit value (echoed from request)
+        '404':
+          description: Tool not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+components:
+  schemas:
+    HotTopic:
+      type: object
+      required:
+        - tool_id
+        - tool_name
+        - tool_slug
+        - engagement_score
+        - total_mentions
+        - total_comments
+        - total_upvotes
+        - sentiment_distribution
+      properties:
+        tool_id:
+          type: string
+          example: "copilot-001"
+          description: Unique tool identifier
+        tool_name:
+          type: string
+          example: "GitHub Copilot"
+          description: Display name of the tool
+        tool_slug:
+          type: string
+          example: "github-copilot"
+          description: URL-safe identifier for routing
+        engagement_score:
+          type: integer
+          example: 1250
+          description: Calculated engagement score (mentions*10 + comments*2 + upvotes)
+        total_mentions:
+          type: integer
+          example: 45
+          description: Number of posts/comments mentioning this tool
+        total_comments:
+          type: integer
+          example: 230
+          description: Sum of comment counts on related posts
+        total_upvotes:
+          type: integer
+          example: 560
+          description: Sum of upvotes on related posts
+        sentiment_distribution:
+          $ref: '#/components/schemas/SentimentDistribution'
+
+    SentimentDistribution:
+      type: object
+      required:
+        - positive_count
+        - negative_count
+        - neutral_count
+        - positive_percent
+        - negative_percent
+        - neutral_percent
+      properties:
+        positive_count:
+          type: integer
+          example: 30
+          description: Number of positive sentiment mentions
+        negative_count:
+          type: integer
+          example: 5
+          description: Number of negative sentiment mentions
+        neutral_count:
+          type: integer
+          example: 10
+          description: Number of neutral sentiment mentions
+        positive_percent:
+          type: number
+          format: float
+          example: 66.7
+          description: Percentage of positive mentions
+        negative_percent:
+          type: number
+          format: float
+          example: 11.1
+          description: Percentage of negative mentions
+        neutral_percent:
+          type: number
+          format: float
+          example: 22.2
+          description: Percentage of neutral mentions
+
+    RelatedPost:
+      type: object
+      required:
+        - post_id
+        - title
+        - excerpt
+        - author
+        - subreddit
+        - created_utc
+        - reddit_url
+        - comment_count
+        - upvotes
+        - sentiment
+        - engagement_score
+      properties:
+        post_id:
+          type: string
+          example: "1a2b3c4d"
+          description: Reddit post ID
+        title:
+          type: string
+          example: "GitHub Copilot vs Amazon CodeWhisperer - Which is better?"
+          description: Post title
+        excerpt:
+          type: string
+          example: "I've been using both Copilot and CodeWhisperer for the past month, and here's my honest comparison..."
+          description: First 100-150 characters of post content
+        author:
+          type: string
+          example: "developer_user"
+          description: Reddit username of post author
+        subreddit:
+          type: string
+          example: "programming"
+          description: Subreddit where post was made
+        created_utc:
+          type: string
+          format: date-time
+          example: "2025-10-20T14:30:00Z"
+          description: When post was created (UTC)
+        reddit_url:
+          type: string
+          format: uri
+          example: "https://reddit.com/r/programming/comments/1a2b3c4d"
+          description: Direct link to Reddit post
+        comment_count:
+          type: integer
+          example: 45
+          description: Number of comments on the post
+        upvotes:
+          type: integer
+          example: 120
+          description: Number of upvotes
+        sentiment:
+          type: string
+          enum: [positive, negative, neutral]
+          example: "positive"
+          description: Overall sentiment classification of the post
+        engagement_score:
+          type: integer
+          example: 165
+          description: Calculated engagement (comment_count + upvotes) for sorting
+
+    Error:
+      type: object
+      required:
+        - detail
+      properties:
+        detail:
+          type: string
+          example: "Invalid time_range parameter. Must be one of: 24h, 7d, 30d"
+          description: Error message
