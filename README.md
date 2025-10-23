@@ -93,6 +93,14 @@ AZURE_OPENAI_API_KEY=your_key
 
 ## API Endpoints
 
+### Hot Topics
+- `GET /api/v1/hot-topics?time_range={24h|7d|30d}` - Get trending tools by engagement score
+  - Returns tools sorted by engagement (mentions × avg_score × upvote_ratio)
+  - Includes sentiment breakdown, statistics, and top engaged posts
+- `GET /api/v1/hot-topics/{tool_id}/posts?time_range={24h|7d|30d}&offset=0&limit=20` - Get related posts for a tool
+  - Paginated Reddit posts mentioning the tool, sorted by engagement
+  - Supports "Load More" pagination with offset parameter
+
 ### Sentiment Analysis
 - `GET /api/v1/sentiment/stats` - Get sentiment statistics
 - `GET /api/v1/sentiment/trends` - Get sentiment trends over time
