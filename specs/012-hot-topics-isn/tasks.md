@@ -339,10 +339,16 @@
   - `TimeRangeFilter`: ARIA role="radiogroup", clear selected state for screen readers
   - Ensure all interactive elements have `:focus-visible` ring styling
 
-- [ ] **T045** [P] [Polish] Update frontend error handling
+- [x] **T045** [P] [Polish] Update frontend error handling
   - Add toast notifications for API errors (using existing toast pattern)
   - Show retry button on error states
   - Distinguish between network errors and data errors (404 vs 500)
+  - ✅ Created custom Toast component system (no external library)
+  - ✅ Created useToast hook for state management
+  - ✅ Enhanced HotTopicsPage with error type distinction (404/Network/500)
+  - ✅ Enhanced RelatedPostsList with same pattern
+  - ✅ Added retry: 2 to both components, refetch() instead of page reload
+  - ✅ Committed as: 8c301ba
 
 - [ ] **T046** [Polish] Run quickstart.md validation checklist
   - Verify all manual testing scenarios pass
