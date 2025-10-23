@@ -15,6 +15,7 @@ from typing import Any, Dict, List
 
 import structlog
 from azure.cosmos import ContainerProxy
+from fastapi import HTTPException
 
 from ..models.hot_topics import (
     HotTopic,
@@ -22,6 +23,7 @@ from ..models.hot_topics import (
     RelatedPostsResponse,
     SentimentDistribution,
 )
+from .database import monitor_query_performance
 
 logger = structlog.get_logger(__name__)
 
@@ -54,6 +56,28 @@ class HotTopicsService:
         self.tools = tools_container
         self._logger = logger.bind(service="hot_topics")
 
+    def _validate_time_range(self, time_range: str) -> None:
+        """Validate time_range parameter.
+        
+        Args:
+            time_range: Time range to validate
+        
+        Raises:
+            HTTPException: 400 if time_range is invalid
+        """
+        valid_ranges = ["24h", "7d", "30d"]
+        if time_range not in valid_ranges:
+            self._logger.warning(
+                "Invalid time_range parameter",
+                time_range=time_range,
+                valid_ranges=valid_ranges,
+            )
+            raise HTTPException(
+                status_code=400,
+                detail=f"Invalid time_range: {time_range}. "
+                       f"Must be one of: {', '.join(valid_ranges)}"
+            )
+
     def _calculate_cutoff_timestamp(self, time_range: str) -> int:
         """Calculate Unix timestamp cutoff for time range filtering.
         
@@ -65,24 +89,23 @@ class HotTopicsService:
             Posts/comments with _ts >= cutoff are included.
         
         Raises:
-            ValueError: If time_range is invalid
+            HTTPException: 400 if time_range is invalid
         
         Example:
             >>> service._calculate_cutoff_timestamp("7d")
             1705776000  # 7 days ago from now
         """
+        # Validate time_range parameter
+        self._validate_time_range(time_range)
+        
         now = datetime.now(timezone.utc)
 
         if time_range == "24h":
             cutoff = now - timedelta(hours=24)
         elif time_range == "7d":
             cutoff = now - timedelta(days=7)
-        elif time_range == "30d":
+        else:  # time_range == "30d"
             cutoff = now - timedelta(days=30)
-        else:
-            raise ValueError(
-                f"Invalid time_range: {time_range}. Must be '24h', '7d', or '30d'"
-            )
 
         # CosmosDB _ts field is Unix timestamp (seconds since epoch)
         timestamp = int(cutoff.timestamp())
@@ -166,6 +189,7 @@ class HotTopicsService:
             neutral_percent=round((neutral_count / total) * 100, 2),
         )
 
+    @monitor_query_performance(slow_query_threshold=2.0)
     async def get_hot_topics(
         self,
         time_range: str = "7d",
@@ -175,7 +199,8 @@ class HotTopicsService:
         
         Algorithm:
         1. Query sentiment_scores for tool mentions within time range
-        2. Calculate engagement score per tool: (mentions × 10) + (comments × 2) + upvotes
+        2. Calculate engagement score per tool:
+           (mentions × 10) + (comments × 2) + upvotes
         3. Calculate sentiment distribution per tool
         4. Rank by engagement_score DESC
         5. Return top N tools
@@ -188,7 +213,7 @@ class HotTopicsService:
             HotTopicsResponse with ranked hot topics list
         
         Raises:
-            ValueError: If time_range is invalid or limit out of range
+            HTTPException: 400 if time_range invalid or limit out of range
         """
         self._logger.info(
             "get_hot_topics called",
@@ -357,6 +382,7 @@ class HotTopicsService:
         
         return engaged_post_ids
 
+    @monitor_query_performance(slow_query_threshold=2.0)
     async def get_related_posts(
         self,
         tool_id: str,
@@ -390,7 +416,7 @@ class HotTopicsService:
             RelatedPostsResponse with paginated posts and metadata
         
         Raises:
-            ValueError: If parameters are invalid
+            HTTPException: 400 if parameters are invalid
         """
         from ..models.hot_topics import RelatedPost
         

@@ -180,6 +180,25 @@ app = FastAPI(
     description="API for analyzing sentiment of AI developer tool discussions on Reddit",
     version="1.0.0",
     lifespan=lifespan,
+    openapi_tags=[
+        {
+            "name": "hot-topics",
+            "description": "Hot Topics endpoints for viewing trending developer tools "
+                           "with engagement metrics and related Reddit posts. "
+                           "Features include time-range filtering (24h/7d/30d), "
+                           "engagement scoring, and sentiment distribution analysis."
+        },
+        {
+            "name": "admin",
+            "description": "Admin endpoints for managing tools, aliases, and merges. "
+                           "Requires X-Admin-Token authentication."
+        },
+        {
+            "name": "sentiment",
+            "description": "Sentiment analysis endpoints for viewing aggregated sentiment "
+                           "data and time series for developer tools."
+        }
+    ]
 )
 
 # Configure CORS
