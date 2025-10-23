@@ -9,9 +9,6 @@ Endpoints:
 - GET /api/hot-topics/{tool_id}/posts - Get related posts for a tool (US2)
 """
 
-from datetime import datetime, timezone
-from typing import Optional
-
 import structlog
 from fastapi import APIRouter, Depends, HTTPException, Query
 

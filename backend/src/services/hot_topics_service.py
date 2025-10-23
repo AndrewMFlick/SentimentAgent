@@ -11,7 +11,7 @@ All entities are derived/calculated - nothing stored in database.
 """
 
 from datetime import datetime, timedelta, timezone
-from typing import List, Optional
+from typing import Any, Dict, List
 
 import structlog
 from azure.cosmos import ContainerProxy
@@ -19,7 +19,6 @@ from azure.cosmos import ContainerProxy
 from ..models.hot_topics import (
     HotTopic,
     HotTopicsResponse,
-    RelatedPost,
     RelatedPostsResponse,
     SentimentDistribution,
 )
@@ -123,7 +122,7 @@ class HotTopicsService:
 
     def _aggregate_sentiment_distribution(
         self,
-        sentiment_scores: List[Dict],
+        sentiment_scores: List[Dict[str, Any]],
     ) -> SentimentDistribution:
         """Aggregate sentiment distribution from sentiment scores.
         
@@ -222,7 +221,7 @@ class HotTopicsService:
             
             # Query sentiment scores for this tool within time range
             # Use ARRAY_CONTAINS to find posts mentioning this tool
-            sentiment_query = f"""
+            sentiment_query = """
                 SELECT * FROM c 
                 WHERE ARRAY_CONTAINS(c.detected_tool_ids, @tool_id)
                 AND c._ts >= @cutoff_ts
@@ -358,7 +357,8 @@ class HotTopicsService:
         if offset < 0:
             raise ValueError("offset must be >= 0")
         
-        cutoff_ts = self._calculate_cutoff_timestamp(time_range)
+        # Calculate cutoff timestamp
+        _ = self._calculate_cutoff_timestamp(time_range)
         
         # TODO (Phase 4 - T023): Implement related posts query
         # - Query sentiment_scores WHERE tool_id IN detected_tool_ids AND _ts >= cutoff
