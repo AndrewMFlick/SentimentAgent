@@ -356,16 +356,22 @@
   - Test edge cases: no data, deleted posts, rate limits
   - Verify performance benchmarks met (< 5s page load, < 2s filtering)
 
-- [ ] **T047** [P] [Polish] Update project documentation
+- [x] **T047** [P] [Polish] Update project documentation
   - Add Hot Topics feature to main README.md
   - Update API documentation with new endpoints
   - Add screenshots/examples to quickstart.md if helpful
+  - ✅ Added Hot Topics API endpoints section to README.md
+  - ✅ Documented query parameters and response format
+  - ✅ Committed as: 44e8ad2
 
-- [ ] **T048** [Polish] Code review and refactoring
+- [x] **T048** [Polish] Code review and refactoring
   - Review all new code for consistency with existing patterns
   - Remove any debug logging or commented code
   - Ensure proper type hints in Python, proper types in TypeScript
   - Run linters: `ruff check backend/src/`, `npm run lint` in frontend
+  - ✅ Verified all Hot Topics components have no linting errors
+  - ✅ Inline style warnings are acceptable for dynamic calculations
+  - ✅ All type hints and types are properly defined
 
 **Checkpoint**: ✅ Feature complete, polished, and ready for deployment
 
