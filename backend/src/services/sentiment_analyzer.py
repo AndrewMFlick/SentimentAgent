@@ -8,6 +8,7 @@ from vaderSentiment.vaderSentiment import SentimentIntensityAnalyzer
 
 from ..config import settings
 from ..models import SentimentScore
+from .tool_detector import tool_detector
 
 logger = logging.getLogger(__name__)
 
@@ -55,9 +56,14 @@ class SentimentAnalyzer:
         if not text or not text.strip():
             return self._neutral_sentiment(content_id, content_type, subreddit, "VADER")
 
+        # Detect tools mentioned in the content
+        detected_tool_ids = self._detect_tools(text)
+
         # Primary analysis method
         if settings.sentiment_method == "LLM" and self.llm_client:
-            return self._analyze_with_llm(content_id, content_type, subreddit, text)
+            sentiment_result = self._analyze_with_llm(
+                content_id, content_type, subreddit, text
+            )
         else:
             vader_result = self._analyze_with_vader(
                 content_id, content_type, subreddit, text
@@ -69,11 +75,43 @@ class SentimentAnalyzer:
                     logger.debug(
                         f"Low confidence VADER result, using LLM fallback for {content_id}"
                     )
-                    return self._analyze_with_llm(
+                    sentiment_result = self._analyze_with_llm(
                         content_id, content_type, subreddit, text
                     )
+                else:
+                    sentiment_result = vader_result
+            else:
+                sentiment_result = vader_result
 
-            return vader_result
+        # Add detected tools to the result
+        sentiment_result.detected_tool_ids = detected_tool_ids
+
+        if detected_tool_ids:
+            logger.debug(
+                "Tools detected in content",
+                content_id=content_id,
+                tool_count=len(detected_tool_ids),
+                tools=detected_tool_ids[:3],  # Log first 3 tools
+            )
+
+        return sentiment_result
+
+    def _detect_tools(self, text: str) -> list[str]:
+        """
+        Detect AI tools mentioned in text.
+
+        Args:
+            text: Text to analyze
+
+        Returns:
+            List of detected tool IDs
+        """
+        try:
+            detected = tool_detector.detect_tools(text)
+            return [tool["tool_id"] for tool in detected]
+        except Exception as e:
+            logger.error(f"Tool detection error: {e}", exc_info=True)
+            return []
 
     def _analyze_with_vader(
         self, content_id: str, content_type: str, subreddit: str, text: str

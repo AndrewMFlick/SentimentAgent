@@ -41,6 +41,58 @@ logging.basicConfig(
 logger = structlog.get_logger(__name__)
 
 
+async def _register_tools_with_detector(database):
+    """Register all active tools with the tool detector for sentiment analysis."""
+    from .services.tool_detector import tool_detector
+
+    try:
+        # Get all active tools from the database
+        tools_container = database.database.get_container_client("Tools")
+        query = "SELECT * FROM c WHERE c.status = 'active' AND c.partitionKey = 'tool'"
+
+        tools = list(tools_container.query_items(
+            query=query,
+            enable_cross_partition_query=False
+        ))
+
+        # Register each tool with its aliases
+        for tool in tools:
+            tool_id = tool["id"]
+            name = tool["name"]
+            aliases = [name.lower()]  # Start with tool name
+
+            # Add slug as alias
+            if "slug" in tool:
+                aliases.append(tool["slug"].lower())
+
+            # TODO: When ToolAliases container is populated, load aliases from there
+            # For now, use common variations of the tool name
+            # e.g., "GitHub Copilot" -> ["github copilot", "copilot", "gh copilot"]
+            if " " in name:
+                parts = name.lower().split()
+                if len(parts) > 1:
+                    aliases.append(parts[-1])  # Last word (e.g., "Copilot")
+
+            tool_detector.register_tool(
+                tool_id=tool_id,
+                aliases=aliases,
+                threshold=0.5  # Lower threshold for better recall
+            )
+
+        logger.info(
+            "Tools registered with detector",
+            tool_count=len(tools)
+        )
+
+    except Exception as e:
+        logger.error(
+            "Failed to register tools with detector",
+            error=str(e),
+            exc_info=True
+        )
+        # Don't fail startup if tool registration fails
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Application lifespan manager with proper startup and shutdown handling."""
@@ -70,6 +122,10 @@ async def lifespan(app: FastAPI):
         sys.modules["src.services.sentiment_aggregator"].sentiment_aggregator = (
             sentiment_aggregator_instance
         )
+
+        # Register tools with the detector for sentiment analysis
+        logger.info("Registering tools with detector")
+        await _register_tools_with_detector(db)
 
         logger.info("AI Tools services initialized")
 
