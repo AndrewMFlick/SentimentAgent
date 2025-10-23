@@ -261,25 +261,25 @@
 
 #### Backend Implementation
 
-- [ ] **T033** [US3] Add time range validation helper in `HotTopicsService`
+- [x] **T033** [US3] Add time range validation helper in `HotTopicsService`
   - Validate time_range parameter: "24h" | "7d" | "30d"
   - Raise HTTPException 400 if invalid
   - Add to both `get_hot_topics()` and `get_related_posts()` methods
 
-- [ ] **T034** [US3] Add performance monitoring to hot topics endpoints
+- [x] **T034** [US3] Add performance monitoring to hot topics endpoints
   - Use existing `monitor_query_performance` decorator on `get_hot_topics()` and `get_related_posts()`
   - Log slow queries (> 3 seconds) for optimization
   - Verify < 2 second response time for filter changes (SC-005)
 
 #### Frontend Implementation
 
-- [ ] **T035** [US3] Enhance `TimeRangeFilter` component with visual feedback
+- [x] **T035** [US3] Enhance `TimeRangeFilter` component with visual feedback
   - Add active state styling for selected time range
   - Add loading indicator during filter change
   - Debounce filter changes (300ms) to avoid rapid API calls
   - Ensure component is keyboard accessible (tab navigation, enter to select)
 
-- [ ] **T036** [US3] Update `HotTopicsPage` to handle time range changes
+- [x] **T036** [US3] Update `HotTopicsPage` to handle time range changes
   - State: `timeRange` (default "7d")
   - On TimeRangeFilter change: update state, React Query auto-invalidates and refetches
   - Show loading overlay (not full skeleton) during refetch
@@ -317,23 +317,23 @@
 
 **Purpose**: Final improvements and validation across all user stories
 
-- [ ] **T041** [P] [Polish] Update `backend/src/api/routes.py` to include hot topics endpoints in API documentation
+- [x] **T041** [P] [Polish] Update `backend/src/api/routes.py` to include hot topics endpoints in API documentation
   - Add tags for Swagger UI grouping
   - Add descriptions and examples to OpenAPI schema
 
-- [ ] **T042** [P] [Polish] Add error handling for edge cases in `HotTopicsService`
+- [x] **T042** [P] [Polish] Add error handling for edge cases in `HotTopicsService`
   - Tool with 0 mentions: return engagement_score=0, show "Not enough data" in UI
   - Tool with <3 mentions: filter out from hot topics list (threshold)
   - No posts in time range: return empty array with appropriate message
   - CosmosDB query timeout: log error, return 500 with retry message
 
-- [ ] **T043** [P] [Polish] Add structured logging to `HotTopicsService`
+- [x] **T043** [P] [Polish] Add structured logging to `HotTopicsService`
   - Log engagement score calculation for each tool (debug level)
   - Log slow aggregation queries (> 2 seconds, warn level)
   - Log cache hits/misses for related posts (info level)
   - Use existing structlog pattern from project
 
-- [ ] **T044** [P] [Polish] Add accessibility improvements to frontend components
+- [x] **T044** [P] [Polish] Add accessibility improvements to frontend components
   - `HotTopicCard`: ARIA labels, keyboard navigation, focus indicators
   - `RelatedPostCard`: Semantic HTML (article tags), alt text for sentiment icons
   - `TimeRangeFilter`: ARIA role="radiogroup", clear selected state for screen readers
