@@ -311,6 +311,52 @@ class HotTopicsService:
             time_range=time_range,
         )
 
+    async def _get_posts_with_engagement(
+        self,
+        cutoff_ts: int,
+    ) -> set[str]:
+        """Get post IDs that have engagement within the time range.
+        
+        A post is considered engaged if:
+        - The post itself was created within the time range (post._ts >= cutoff), OR
+        - The post has comments created within the time range
+        
+        Args:
+            cutoff_ts: Unix timestamp cutoff for time range filtering
+        
+        Returns:
+            Set of post IDs with engagement activity
+        """
+        # Query posts created within time range
+        posts_query = "SELECT c.id FROM c WHERE c._ts >= @cutoff_ts"
+        posts_in_range = list(self.reddit_posts.query_items(
+            query=posts_query,
+            parameters=[{"name": "@cutoff_ts", "value": cutoff_ts}],
+            enable_cross_partition_query=True
+        ))
+        post_ids_from_posts = {p["id"] for p in posts_in_range}
+        
+        # Query comments within time range to find posts with recent comments
+        comments_query = "SELECT DISTINCT c.post_id FROM c WHERE c._ts >= @cutoff_ts"
+        comments_in_range = list(self.reddit_comments.query_items(
+            query=comments_query,
+            parameters=[{"name": "@cutoff_ts", "value": cutoff_ts}],
+            enable_cross_partition_query=True
+        ))
+        post_ids_from_comments = {c["post_id"] for c in comments_in_range}
+        
+        # Combine both sets (posts created in range OR posts with comments in range)
+        engaged_post_ids = post_ids_from_posts | post_ids_from_comments
+        
+        self._logger.debug(
+            "Found engaged posts",
+            posts_in_range=len(post_ids_from_posts),
+            posts_with_recent_comments=len(post_ids_from_comments),
+            total_engaged=len(engaged_post_ids),
+        )
+        
+        return engaged_post_ids
+
     async def get_related_posts(
         self,
         tool_id: str,
@@ -320,13 +366,19 @@ class HotTopicsService:
     ) -> RelatedPostsResponse:
         """Get paginated related posts for a specific tool.
         
+        Returns Reddit posts that mention the specified tool, filtered by
+        engagement within the time range, sorted by engagement score.
+        
         Algorithm:
-        1. Query sentiment_scores for posts mentioning tool_id within time_range
-        2. Get post details from reddit_posts
-        3. Calculate engagement_score = comment_count + upvotes
-        4. Sort by engagement_score DESC
-        5. Apply offset/limit pagination
-        6. Format with reddit_url for deep links
+        1. Calculate cutoff timestamp from time_range
+        2. Get engaged post IDs (posts created or commented on within range)
+        3. Query sentiment_scores for posts mentioning tool_id
+        4. Filter by engaged post IDs
+        5. Get full post details from reddit_posts
+        6. Calculate engagement_score = comment_count + upvotes
+        7. Sort by engagement_score DESC
+        8. Apply offset/limit pagination
+        9. Format with reddit URLs and excerpts
         
         Args:
             tool_id: Tool identifier to find related posts for
@@ -359,30 +411,31 @@ class HotTopicsService:
         # Calculate cutoff timestamp
         cutoff_ts = self._calculate_cutoff_timestamp(time_range)
         
-        # Step 1: Query sentiment_scores for posts mentioning this tool
+        # Get engaged post IDs (posts created or commented on within time range)
+        engaged_post_ids = await self._get_posts_with_engagement(cutoff_ts)
+        
+        # Query sentiment_scores for posts mentioning this tool
+        # Filter by content_type = 'post' to only get post-level sentiment
         sentiment_query = """
-            SELECT c.content_id, c.sentiment 
+            SELECT c.content_id, c.sentiment, c.subreddit
             FROM c 
             WHERE ARRAY_CONTAINS(c.detected_tool_ids, @tool_id)
             AND c.content_type = 'post'
-            AND c._ts >= @cutoff_ts
         """
         
         sentiment_scores = list(self.sentiment_scores.query_items(
             query=sentiment_query,
-            parameters=[
-                {"name": "@tool_id", "value": tool_id},
-                {"name": "@cutoff_ts", "value": cutoff_ts}
-            ],
+            parameters=[{"name": "@tool_id", "value": tool_id}],
             enable_cross_partition_query=True
         ))
         
-        if not sentiment_scores:
-            self._logger.info(
-                "No related posts found for tool",
-                tool_id=tool_id,
-                time_range=time_range
-            )
+        # Filter sentiment scores to only engaged posts
+        engaged_sentiment_scores = [
+            s for s in sentiment_scores 
+            if s["content_id"] in engaged_post_ids
+        ]
+        
+        if not engaged_sentiment_scores:
             return RelatedPostsResponse(
                 posts=[],
                 total=0,
@@ -391,27 +444,25 @@ class HotTopicsService:
                 limit=limit,
             )
         
-        # Create map of post_id -> sentiment
-        post_sentiments = {
-            score["content_id"]: score["sentiment"]
-            for score in sentiment_scores
-        }
+        # Get unique post IDs
+        post_ids = list({s["content_id"] for s in engaged_sentiment_scores})
         
-        post_ids = list(post_sentiments.keys())
-        self._logger.debug(f"Found {len(post_ids)} unique posts for tool {tool_id}")
+        # Create a mapping from post_id to sentiment
+        sentiment_map = {s["content_id"]: s["sentiment"] for s in engaged_sentiment_scores}
         
-        # Step 2: Get full post data and calculate engagement scores
-        post_data = []
-        
-        # Query in batches to avoid parameter limits
+        # Query reddit_posts for full post details
+        # Process in batches to avoid parameter limits
+        all_posts = []
         batch_size = 100
+        
         for i in range(0, len(post_ids), batch_size):
             batch_ids = post_ids[i:i+batch_size]
             
+            # Use IN clause for batch querying
             placeholders = ", ".join([f"@post_id_{j}" for j in range(len(batch_ids))])
             posts_query = f"""
-                SELECT c.id, c.title, c.selftext, c.author, c.subreddit, 
-                       c.created_utc, c.num_comments, c.score, c.permalink
+                SELECT c.id, c.title, c.content, c.author, c.subreddit, 
+                       c.created_utc, c.url, c.comment_count, c.upvotes
                 FROM c 
                 WHERE c.id IN ({placeholders})
             """
@@ -421,84 +472,79 @@ class HotTopicsService:
                 for j, post_id in enumerate(batch_ids)
             ]
             
-            posts = list(self.reddit_posts.query_items(
+            batch_posts = list(self.reddit_posts.query_items(
                 query=posts_query,
                 parameters=parameters,
                 enable_cross_partition_query=True
             ))
             
-            # Calculate engagement score for each post
-            for post in posts:
-                post_id = post["id"]
-                num_comments = post.get("num_comments", 0)
-                upvotes = post.get("score", 0)
-                engagement_score = num_comments + upvotes
-                
-                # Create excerpt from selftext (first 150 chars)
-                selftext = post.get("selftext", "")
-                excerpt = selftext[:150] + "..." if len(selftext) > 150 else selftext
-                if not excerpt:
-                    # If no selftext, use title as excerpt
-                    excerpt = post.get("title", "")[:150]
-                
-                # Generate Reddit URL
-                subreddit = post.get("subreddit", "unknown")
-                permalink = post.get("permalink", "")
-                if permalink:
-                    reddit_url = f"https://reddit.com{permalink}"
-                else:
-                    # Fallback if permalink not available
-                    reddit_url = f"https://reddit.com/r/{subreddit}/comments/{post_id}"
-                
-                # Get created_utc as datetime
-                created_utc = post.get("created_utc")
-                if isinstance(created_utc, (int, float)):
-                    created_utc = datetime.fromtimestamp(created_utc, tz=timezone.utc)
-                elif isinstance(created_utc, str):
-                    try:
-                        created_utc = datetime.fromisoformat(created_utc.replace('Z', '+00:00'))
-                    except Exception:
-                        created_utc = datetime.now(timezone.utc)
-                else:
-                    created_utc = datetime.now(timezone.utc)
-                
-                post_data.append({
-                    "post_id": post_id,
-                    "title": post.get("title", ""),
-                    "excerpt": excerpt,
-                    "author": post.get("author", "unknown"),
-                    "subreddit": subreddit,
-                    "created_utc": created_utc,
-                    "reddit_url": reddit_url,
-                    "comment_count": num_comments,
-                    "upvotes": upvotes,
-                    "sentiment": post_sentiments.get(post_id, "neutral"),
-                    "engagement_score": engagement_score,
-                })
+            all_posts.extend(batch_posts)
         
-        # Step 3: Sort by engagement_score DESC
-        post_data.sort(key=lambda x: x["engagement_score"], reverse=True)
+        # Build RelatedPost objects with engagement scores
+        from ..models.hot_topics import RelatedPost
         
-        total = len(post_data)
+        related_posts = []
+        for post in all_posts:
+            post_id = post["id"]
+            
+            # Calculate engagement score
+            comment_count = post.get("comment_count", 0)
+            upvotes = post.get("upvotes", 0)
+            engagement_score = comment_count + upvotes
+            
+            # Generate excerpt (first 150 characters of content)
+            content = post.get("content", "")
+            excerpt = content[:150] if len(content) > 150 else content
+            
+            # Generate Reddit URL
+            subreddit = post.get("subreddit", "")
+            reddit_url = f"https://reddit.com/r/{subreddit}/comments/{post_id}"
+            
+            # Get sentiment from mapping
+            sentiment = sentiment_map.get(post_id, "neutral")
+            
+            # Parse created_utc - it might be stored as string or datetime
+            created_utc = post.get("created_utc")
+            if isinstance(created_utc, str):
+                from datetime import datetime
+                created_utc = datetime.fromisoformat(created_utc.replace('Z', '+00:00'))
+            
+            related_posts.append(RelatedPost(
+                post_id=post_id,
+                title=post.get("title", ""),
+                excerpt=excerpt,
+                author=post.get("author", ""),
+                subreddit=subreddit,
+                created_utc=created_utc,
+                reddit_url=reddit_url,
+                comment_count=comment_count,
+                upvotes=upvotes,
+                sentiment=sentiment,
+                engagement_score=engagement_score,
+            ))
         
-        # Step 4: Apply pagination
-        paginated_posts = post_data[offset:offset+limit]
+        # Sort by engagement score descending
+        related_posts.sort(key=lambda p: p.engagement_score, reverse=True)
         
-        # Step 5: Create RelatedPost objects
-        related_posts = [RelatedPost(**post) for post in paginated_posts]
-        
+        # Calculate pagination
+        total = len(related_posts)
         has_more = (offset + limit) < total
         
+        # Apply offset and limit
+        paginated_posts = related_posts[offset:offset+limit]
+        
         self._logger.info(
-            "Related posts retrieved successfully",
+            "Related posts retrieved",
             tool_id=tool_id,
             total=total,
-            returned=len(related_posts),
+            returned=len(paginated_posts),
+            offset=offset,
+            limit=limit,
             has_more=has_more,
         )
         
         return RelatedPostsResponse(
-            posts=related_posts,
+            posts=paginated_posts,
             total=total,
             has_more=has_more,
             offset=offset,

@@ -4,7 +4,7 @@ Tests for Feature #012: Hot Topics
 Tests API endpoints for hot topics dashboard and related posts.
 """
 import pytest
-from unittest.mock import patch, AsyncMock
+from unittest.mock import patch, AsyncMock, Mock
 from fastapi.testclient import TestClient
 from datetime import datetime, timezone
 
@@ -392,12 +392,11 @@ class TestHotTopicsEndpoint:
 class TestRelatedPostsEndpoint:
     """Integration tests for GET /api/hot-topics/{tool_id}/posts endpoint."""
     
-    @pytest.mark.skip(reason="API endpoint not yet implemented - Phase 4 (T023)")
     def test_get_related_posts_returns_200(self, client):
         """
         Test GET /api/hot-topics/{tool_id}/posts returns 200 OK.
         
-        Task: T018 (tests T023 implementation for Phase 4/US2)
+        Task: T030 (tests T023 implementation for Phase 4/US2)
         Purpose: Verify endpoint registration and basic functionality
         """
         mock_response = RelatedPostsResponse(
@@ -422,11 +421,15 @@ class TestRelatedPostsEndpoint:
             limit=20
         )
         
-        with patch(
-            'src.services.hot_topics_service.HotTopicsService.get_related_posts',
-            new_callable=AsyncMock,
-            return_value=mock_response
-        ):
+        # Patch the tool query in the database module
+        with patch('src.services.database.db.database.get_container_client') as mock_get_container, \
+             patch('src.services.hot_topics_service.HotTopicsService.get_related_posts', new_callable=AsyncMock, return_value=mock_response):
+            
+            # Set up mock container
+            mock_container = Mock()
+            mock_container.query_items.return_value = [{"id": "test-tool", "name": "Test Tool"}]
+            mock_get_container.return_value = mock_container
+            
             response = client.get("/api/hot-topics/test-tool/posts")
             
             assert response.status_code == 200
@@ -438,12 +441,11 @@ class TestRelatedPostsEndpoint:
             assert "offset" in data
             assert "limit" in data
     
-    @pytest.mark.skip(reason="API endpoint not yet implemented - Phase 4 (T023)")
     def test_get_related_posts_pagination(self, client):
         """
         Test GET /api/hot-topics/{tool_id}/posts pagination with offset and limit.
         
-        Task: T018
+        Task: T030
         Purpose: Verify pagination parameters work correctly
         """
         mock_response = RelatedPostsResponse(
@@ -454,11 +456,13 @@ class TestRelatedPostsEndpoint:
             limit=20
         )
         
-        with patch(
-            'src.services.hot_topics_service.HotTopicsService.get_related_posts',
-            new_callable=AsyncMock,
-            return_value=mock_response
-        ) as mock_service:
+        with patch('src.services.database.db.database.get_container_client') as mock_get_container, \
+             patch('src.services.hot_topics_service.HotTopicsService.get_related_posts', new_callable=AsyncMock, return_value=mock_response) as mock_service:
+            
+            mock_container = Mock()
+            mock_container.query_items.return_value = [{"id": "test-tool"}]
+            mock_get_container.return_value = mock_container
+            
             response = client.get("/api/hot-topics/test-tool/posts?offset=20&limit=20")
             
             assert response.status_code == 200
@@ -475,12 +479,11 @@ class TestRelatedPostsEndpoint:
                 limit=20
             )
     
-    @pytest.mark.skip(reason="API endpoint not yet implemented - Phase 4 (T023)")
     def test_get_related_posts_time_range_filter(self, client):
         """
         Test GET /api/hot-topics/{tool_id}/posts with time_range filter.
         
-        Task: T018
+        Task: T030
         Purpose: Verify time range filtering for related posts
         """
         mock_response = RelatedPostsResponse(
@@ -491,11 +494,13 @@ class TestRelatedPostsEndpoint:
             limit=20
         )
         
-        with patch(
-            'src.services.hot_topics_service.HotTopicsService.get_related_posts',
-            new_callable=AsyncMock,
-            return_value=mock_response
-        ) as mock_service:
+        with patch('src.services.database.db.database.get_container_client') as mock_get_container, \
+             patch('src.services.hot_topics_service.HotTopicsService.get_related_posts', new_callable=AsyncMock, return_value=mock_response) as mock_service:
+            
+            mock_container = Mock()
+            mock_container.query_items.return_value = [{"id": "test-tool"}]
+            mock_get_container.return_value = mock_container
+            
             response = client.get("/api/hot-topics/test-tool/posts?time_range=24h")
             
             assert response.status_code == 200
@@ -506,27 +511,30 @@ class TestRelatedPostsEndpoint:
                 limit=20
             )
     
-    @pytest.mark.skip(reason="API endpoint not yet implemented - Phase 4 (T023)")
     def test_get_related_posts_tool_not_found(self, client):
         """
         Test GET /api/hot-topics/{tool_id}/posts returns 404 for invalid tool.
         
-        Task: T018
+        Task: T030
         Purpose: Verify error handling for non-existent tool
         """
-        response = client.get("/api/hot-topics/nonexistent-tool/posts")
-        
-        assert response.status_code == 404
-        data = response.json()
-        assert "detail" in data
-        assert "not found" in data["detail"].lower()
+        with patch('src.services.database.db.database.get_container_client') as mock_get_container:
+            mock_container = Mock()
+            mock_container.query_items.return_value = []  # Empty result = tool not found
+            mock_get_container.return_value = mock_container
+            
+            response = client.get("/api/hot-topics/nonexistent-tool/posts")
+            
+            assert response.status_code == 404
+            data = response.json()
+            assert "detail" in data
+            assert "not found" in data["detail"].lower()
     
-    @pytest.mark.skip(reason="API endpoint not yet implemented - Phase 4 (T023)")
     def test_get_related_posts_reddit_url_format(self, client):
         """
         Test GET /api/hot-topics/{tool_id}/posts validates Reddit URL format.
         
-        Task: T018
+        Task: T030
         Purpose: Verify Reddit URLs are correctly formatted
         """
         mock_response = RelatedPostsResponse(
@@ -551,11 +559,13 @@ class TestRelatedPostsEndpoint:
             limit=20
         )
         
-        with patch(
-            'src.services.hot_topics_service.HotTopicsService.get_related_posts',
-            new_callable=AsyncMock,
-            return_value=mock_response
-        ):
+        with patch('src.services.database.db.database.get_container_client') as mock_get_container, \
+             patch('src.services.hot_topics_service.HotTopicsService.get_related_posts', new_callable=AsyncMock, return_value=mock_response):
+            
+            mock_container = Mock()
+            mock_container.query_items.return_value = [{"id": "test-tool"}]
+            mock_get_container.return_value = mock_container
+            
             response = client.get("/api/hot-topics/test-tool/posts")
             
             assert response.status_code == 200

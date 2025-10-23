@@ -141,11 +141,14 @@ async def get_related_posts(
         description="Maximum posts to return (1-100)"
     ),
     service: HotTopicsService = Depends(get_hot_topics_service),
+    db: DatabaseService = Depends(get_db),
 ) -> RelatedPostsResponse:
     """Get related posts for a specific tool.
     
     Returns paginated list of Reddit posts mentioning the specified tool,
-    sorted by engagement (comment_count + upvotes).
+    sorted by engagement (comment_count + upvotes). Only includes posts
+    that have engagement activity (created or commented on) within the
+    selected time range.
     
     Args:
         tool_id: Tool identifier
@@ -153,6 +156,7 @@ async def get_related_posts(
         offset: Pagination offset
         limit: Maximum results per page (1-100)
         service: HotTopicsService dependency
+        db: DatabaseService dependency for tool validation
     
     Returns:
         RelatedPostsResponse with paginated posts
@@ -174,6 +178,26 @@ async def get_related_posts(
             limit=limit,
         )
         
+        # Validate tool exists in Tools container
+        tools_container = db.database.get_container_client("Tools")
+        tool_query = "SELECT * FROM c WHERE c.id = @tool_id AND c.partitionKey = 'tool'"
+        tool_results = list(tools_container.query_items(
+            query=tool_query,
+            parameters=[{"name": "@tool_id", "value": tool_id}],
+            enable_cross_partition_query=False
+        ))
+        
+        if not tool_results:
+            logger.warning(
+                "Tool not found",
+                tool_id=tool_id,
+            )
+            raise HTTPException(
+                status_code=404,
+                detail=f"Tool with ID '{tool_id}' not found"
+            )
+        
+        # Call service to get related posts
         result = await service.get_related_posts(
             tool_id=tool_id,
             time_range=time_range,
@@ -184,12 +208,15 @@ async def get_related_posts(
         logger.info(
             "Related posts retrieved successfully",
             tool_id=tool_id,
-            count=len(result.posts),
             total=result.total,
-            has_more=result.has_more,
+            returned=len(result.posts),
         )
         
         return result
+        
+    except HTTPException:
+        # Re-raise HTTP exceptions as-is
+        raise
         
     except ValueError as e:
         logger.warning(
