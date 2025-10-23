@@ -1,0 +1,26 @@
+{
+  "indexingMode": "consistent",
+  "automatic": true,
+  "includedPaths": [
+    {
+      "path": "/*"
+    }
+  ],
+  "excludedPaths": [
+    {
+      "path": "/\"_etag\"/?"
+    }
+  ],
+  "compositeIndexes": [
+    [
+      {
+        "path": "/detected_tool_ids/*",
+        "order": "ascending"
+      },
+      {
+        "path": "/_ts",
+        "order": "descending"
+      }
+    ]
+  ]
+}

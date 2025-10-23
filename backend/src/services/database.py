@@ -1079,3 +1079,14 @@ class DatabaseService:
 
 # Global database instance
 db = DatabaseService()
+
+
+def get_db() -> DatabaseService:
+    """Dependency injection function for FastAPI endpoints.
+    
+    Returns the global database instance for use in route handlers.
+    
+    Returns:
+        DatabaseService instance
+    """
+    return db
