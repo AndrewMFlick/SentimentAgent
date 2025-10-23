@@ -144,7 +144,6 @@ async def get_related_posts(
 ) -> RelatedPostsResponse:
     """Get related posts for a specific tool.
     
-    Placeholder for Phase 4 (US2) implementation.
     Returns paginated list of Reddit posts mentioning the specified tool,
     sorted by engagement (comment_count + upvotes).
     
@@ -168,23 +167,26 @@ async def get_related_posts(
     """
     try:
         logger.info(
-            "Related posts request received (placeholder)",
+            "Related posts request received",
             tool_id=tool_id,
             time_range=time_range,
             offset=offset,
             limit=limit,
         )
         
-        # TODO (Phase 4 - T023): Implement related posts endpoint
-        # - Validate tool exists in Tools container
-        # - Call service.get_related_posts()
-        # - Return paginated results
-        
         result = await service.get_related_posts(
             tool_id=tool_id,
             time_range=time_range,
             offset=offset,
             limit=limit,
+        )
+        
+        logger.info(
+            "Related posts retrieved successfully",
+            tool_id=tool_id,
+            count=len(result.posts),
+            total=result.total,
+            has_more=result.has_more,
         )
         
         return result
