@@ -10,6 +10,12 @@ import {
   LastUpdated,
   PendingTool
 } from '../types';
+import {
+  HotTopicsResponse,
+  RelatedPostsResponse,
+  HotTopicsParams,
+  RelatedPostsParams
+} from '../types/hot-topics';
 
 const API_BASE_URL = '/api/v1';
 
@@ -127,6 +133,51 @@ export const api = {
   // Trending endpoints
   getTrendingTopics: async (limit: number = 20): Promise<TrendingTopic[]> => {
     const response = await axios.get(`${API_BASE_URL}/trending?limit=${limit}`);
+    return response.data;
+  },
+
+  // =========================================================================
+  // Hot Topics endpoints
+  // =========================================================================
+
+  /**
+   * Get hot topics ranked by engagement
+   * @param params - Query parameters (time_range, limit)
+   */
+  getHotTopics: async (params?: HotTopicsParams): Promise<HotTopicsResponse> => {
+    const queryParams = new URLSearchParams();
+    if (params?.time_range) {
+      queryParams.append('time_range', params.time_range);
+    }
+    if (params?.limit) {
+      queryParams.append('limit', params.limit.toString());
+    }
+    
+    const response = await axios.get(`/api/hot-topics?${queryParams}`);
+    return response.data;
+  },
+
+  /**
+   * Get related posts for a specific tool
+   * @param toolId - Tool identifier
+   * @param params - Query parameters (time_range, offset, limit)
+   */
+  getRelatedPosts: async (
+    toolId: string,
+    params?: RelatedPostsParams
+  ): Promise<RelatedPostsResponse> => {
+    const queryParams = new URLSearchParams();
+    if (params?.time_range) {
+      queryParams.append('time_range', params.time_range);
+    }
+    if (params?.offset !== undefined) {
+      queryParams.append('offset', params.offset.toString());
+    }
+    if (params?.limit) {
+      queryParams.append('limit', params.limit.toString());
+    }
+    
+    const response = await axios.get(`/api/hot-topics/${toolId}/posts?${queryParams}`);
     return response.data;
   },
 
