@@ -162,10 +162,9 @@ class ReanalysisService:
             if active_count > 0:
                 raise ValueError("Cannot start job: existing job in progress")
         """
-        query = (
-            "SELECT VALUE COUNT(1) FROM c "
-            "WHERE c.status IN ('queued', 'running')"
-        )
+        # Use SELECT * and count in Python instead of SQL COUNT
+        # to avoid CosmosDB emulator COUNT query issues
+        query = "SELECT * FROM c WHERE c.status IN ('queued', 'running')"
         
         try:
             result = list(self.jobs.query_items(
@@ -173,13 +172,13 @@ class ReanalysisService:
                 enable_cross_partition_query=True
             ))
             
-            # Extract count: emulator returns [{'count': N}] instead of [N]
-            if result and len(result) > 0:
-                first = result[0]
-                count = int(first['count']) if isinstance(first, dict) else int(first)
-            else:
-                count = 0
-                
+            count = len(result)
+            if count > 0:
+                logger.error(
+                    f"FOUND ACTIVE JOBS: count={count}, "
+                    f"job_ids={[j['id'] for j in result]}, "
+                    f"statuses={[j['status'] for j in result]}"
+                )
             logger.debug("Active jobs check", count=count)
             return count
         except Exception as e:

@@ -1696,6 +1696,48 @@ async def get_reanalysis_job_status(
         raise HTTPException(status_code=500, detail="Failed to retrieve job status")
 
 
+@router.get("/reanalysis/debug/all-jobs")
+async def debug_all_jobs(
+    x_admin_token: Optional[str] = Header(None),
+    service: ReanalysisService = Depends(get_reanalysis_service),
+):
+    """DEBUG: Get all jobs without ORDER BY"""
+    verify_admin(x_admin_token)
+    
+    # Query without ORDER BY
+    jobs_no_order = list(service.jobs.query_items(
+        query="SELECT * FROM c WHERE 1=1",
+        enable_cross_partition_query=True
+    ))
+    
+    # Query with ORDER BY
+    try:
+        jobs_with_order = list(service.jobs.query_items(
+            query="SELECT * FROM c WHERE 1=1 ORDER BY c.created_at DESC",
+            enable_cross_partition_query=True
+        ))
+    except Exception as e:
+        jobs_with_order = f"ERROR: {str(e)}"
+    
+    # Count active
+    count_result = list(service.jobs.query_items(
+        query="SELECT VALUE COUNT(1) FROM c WHERE c.status IN ('queued', 'running')",
+        enable_cross_partition_query=True
+    ))
+    
+    return {
+        "no_order_by": len(jobs_no_order),
+        "with_order_by": len(jobs_with_order) if isinstance(jobs_with_order, list) else jobs_with_order,
+        "active_count": count_result,
+        "jobs": [{
+            "id": j["id"],
+            "status": j["status"],
+            "created_at": j.get("created_at", "MISSING"),
+            "has_created_at": "created_at" in j
+        } for j in jobs_no_order]
+    }
+
+
 @router.delete("/reanalysis/jobs/{job_id}")
 async def cancel_reanalysis_job(
     job_id: str,
