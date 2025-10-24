@@ -415,7 +415,18 @@ class ReanalysisService:
                 triggered_by=triggered_by,
                 reason=reason,
                 tool_ids=tool_ids,
-                total_count=total_count
+                total_count=total_count,
+                trigger_type="automatic"
+            )
+            
+            # Log notification-level event for admin visibility (T029)
+            logger.warning(
+                "NOTIFICATION: Automatic reanalysis queued",
+                job_id=job_id,
+                triggered_by=triggered_by,
+                reason=reason,
+                estimated_docs=total_count,
+                poll_url=f"/admin/reanalysis/jobs/{job_id}/status"
             )
         except Exception as e:
             logger.error(
@@ -844,6 +855,19 @@ class ReanalysisService:
                 tools_detected=len(tools_detected)
             )
 
+            # Log notification for automatic jobs (T029)
+            if job_doc.get("trigger_type") == "automatic":
+                logger.warning(
+                    "NOTIFICATION: Automatic reanalysis completed",
+                    job_id=job_id,
+                    triggered_by=job_doc.get("triggered_by"),
+                    reason=job_doc.get("reason"),
+                    documents_processed=processed_count,
+                    tools_detected_count=len(tools_detected),
+                    errors=job_doc["statistics"]["errors_count"],
+                    status="success"
+                )
+
         except Exception as e:
             # Job failed with unrecoverable error
             logger.error(
@@ -859,6 +883,17 @@ class ReanalysisService:
                 "error": f"Job failed: {str(e)}",
                 "timestamp": datetime.now(timezone.utc).isoformat()
             })
+
+            # Log notification for automatic job failures (T029)
+            if job_doc.get("trigger_type") == "automatic":
+                logger.error(
+                    "NOTIFICATION: Automatic reanalysis failed",
+                    job_id=job_id,
+                    triggered_by=job_doc.get("triggered_by"),
+                    reason=job_doc.get("reason"),
+                    error=str(e),
+                    status="failed"
+                )
 
         # Final save
         try:
