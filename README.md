@@ -93,6 +93,67 @@ AZURE_OPENAI_API_KEY=your_key
 
 ## API Endpoints
 
+### Admin Reanalysis Jobs (Feature 013)
+Reanalyze historical sentiment data to categorize posts/comments by AI tools. Useful for backfilling tool associations in existing data or recategorizing after tool changes.
+
+- `POST /api/v1/admin/reanalysis/jobs` - Trigger manual reanalysis job
+  - **Auth**: Requires `X-Admin-Token` header
+  - **Body**: `{"batch_size": 50, "date_range": {"start": "2025-01-01T00:00:00Z", "end": "2025-01-31T23:59:59Z"}, "tool_ids": ["copilot", "claude"]}`
+  - All parameters optional - defaults to full dataset reanalysis
+  - Returns: `202 Accepted` with job ID and poll URL
+
+- `GET /api/v1/admin/reanalysis/jobs` - List reanalysis jobs
+  - **Auth**: Requires `X-Admin-Token` header
+  - **Query params**: `?status=queued&limit=20&offset=0`
+  - Returns paginated job list with status, progress, statistics
+
+- `GET /api/v1/admin/reanalysis/jobs/{job_id}` - Get job details
+  - **Auth**: Requires `X-Admin-Token` header
+  - Returns detailed job info including progress, ETA, error log
+
+- `GET /api/v1/admin/reanalysis/jobs/{job_id}/status` - Poll job status
+  - **Auth**: Requires `X-Admin-Token` header
+  - Returns job status, percentage complete, documents processed, ETA
+
+- `DELETE /api/v1/admin/reanalysis/jobs/{job_id}` - Cancel queued job
+  - **Auth**: Requires `X-Admin-Token` header
+  - Only queued jobs can be cancelled (not running jobs)
+
+**Example: Trigger Full Reanalysis**
+```bash
+curl -X POST http://localhost:8000/api/v1/admin/reanalysis/jobs \
+  -H "Content-Type: application/json" \
+  -H "X-Admin-Token: your-admin-token" \
+  -d '{"batch_size": 100}'
+```
+
+**Example: Reanalyze Date Range for Specific Tools**
+```bash
+curl -X POST http://localhost:8000/api/v1/admin/reanalysis/jobs \
+  -H "Content-Type: application/json" \
+  -H "X-Admin-Token: your-admin-token" \
+  -d '{
+    "batch_size": 50,
+    "date_range": {
+      "start": "2025-01-01T00:00:00Z",
+      "end": "2025-01-31T23:59:59Z"
+    },
+    "tool_ids": ["copilot", "claude", "cursor"]
+  }'
+```
+
+**Automatic Reanalysis Triggers**:
+- **New Tool Creation**: When a new tool is created with `status='active'`, reanalysis automatically runs to find historical mentions
+- **Tool Activation**: Changing a tool from `archived` to `active` triggers reanalysis
+- **Tool Merge**: Merging tools (Tool A → Tool B) automatically updates all sentiment records to reference the target tool
+
+**Rate Limiting**: Reanalysis includes built-in rate limiting to prevent overwhelming CosmosDB:
+- Configurable delay between batches (default: 100ms)
+- Exponential backoff for 429 errors (rate limit exceeded)
+- Max retries: 5 attempts with delays up to 60 seconds
+
+**Idempotency**: Reanalysis jobs are safe to run multiple times on the same data. The system updates `detected_tool_ids` based on current detection algorithms.
+
 ### Hot Topics
 - `GET /api/v1/hot-topics?time_range={24h|7d|30d}` - Get trending tools by engagement score
   - Returns tools sorted by engagement (mentions × avg_score × upvote_ratio)
@@ -271,6 +332,91 @@ python3 monitoring/process_monitor.py --interval 60
 - `--api-url`: Backend URL (default: http://localhost:8000)
 - `--interval`: Check interval in seconds (default: 60)
 - `--quiet`: Only print errors and warnings
+
+## Troubleshooting
+
+### Reanalysis Jobs
+
+**Problem**: Reanalysis job fails with 400 "Cannot start job: X job(s) already active"
+
+**Solution**: Only one reanalysis job can run at a time. Check active jobs:
+```bash
+curl -H "X-Admin-Token: your-admin-token" \
+  http://localhost:8000/api/v1/admin/reanalysis/jobs?status=queued
+```
+
+Cancel the active job if needed:
+```bash
+curl -X DELETE -H "X-Admin-Token: your-admin-token" \
+  http://localhost:8000/api/v1/admin/reanalysis/jobs/{job_id}
+```
+
+**Problem**: Job stuck in "queued" status
+
+**Solution**: Check backend logs for scheduler errors. The job poller runs every 60 seconds to pick up queued jobs. If the scheduler isn't running, restart the backend.
+
+**Problem**: Job completes but sentiment scores not updated
+
+**Solution**: Check job statistics in the job details:
+```bash
+curl -H "X-Admin-Token: your-admin-token" \
+  http://localhost:8000/api/v1/admin/reanalysis/jobs/{job_id}
+```
+
+Look for `errors_count` in statistics. Common issues:
+- Documents missing `content` field (skipped)
+- Tool detection returning empty results (no matching tools found)
+- Database upsert errors (check permissions)
+
+**Problem**: Reanalysis very slow or timing out
+
+**Solution**: Adjust rate limiting in `.env`:
+```env
+REANALYSIS_BATCH_DELAY_MS=50  # Reduce delay between batches (default: 100)
+```
+
+For large datasets (>10k documents), use batch_size parameter:
+```json
+{"batch_size": 200}  // Larger batches = fewer round trips
+```
+
+**Problem**: CosmosDB 429 rate limit errors
+
+**Solution**: The system automatically retries with exponential backoff. If errors persist, reduce batch processing speed in `.env`:
+```env
+REANALYSIS_BATCH_DELAY_MS=200  # Increase delay between batches
+REANALYSIS_MAX_RETRIES=10      # More retry attempts
+```
+
+### Admin Panel Access
+
+**Problem**: Admin panel returns 401 Unauthorized
+
+**Solution**: Set admin token in environment:
+```env
+# backend/.env
+ADMIN_TOKEN=your-secret-token-here
+```
+
+Use the token in requests:
+```bash
+curl -H "X-Admin-Token: your-secret-token-here" http://localhost:8000/api/v1/admin/...
+```
+
+### Database Connection
+
+**Problem**: "Database connection failed" errors
+
+**Solution**: Verify CosmosDB credentials in `.env`:
+- Check `COSMOS_ENDPOINT` matches your Azure CosmosDB account
+- Verify `COSMOS_KEY` is correct (primary or secondary key)
+- Ensure network connectivity to Azure (firewall rules, VPN)
+
+For CosmosDB emulator (localhost:8081):
+```env
+COSMOS_ENDPOINT=https://localhost:8081
+COSMOS_KEY=C2y6yDjf5/R+ob0N8A7Cgv30VRDJIWEHLM+4QDU5DE2nQ9nDuVTqobD4b8mGGyPMbIZnqyMsEcaGQy67XIw/Jw==
+```
 
 ## License
 
