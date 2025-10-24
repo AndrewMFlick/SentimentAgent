@@ -282,7 +282,9 @@ class ReanalysisService:
             )
 
         # Build query to count documents that need reanalysis
-        query_parts = ["SELECT VALUE COUNT(1) FROM c WHERE 1=1"]
+        # Note: CosmosDB emulator doesn't support "WHERE 1=1",
+        # use "WHERE true" instead
+        query_parts = ["SELECT VALUE COUNT(1) FROM c WHERE true"]
         params = []
 
         # Optional date range filter
@@ -422,7 +424,9 @@ class ReanalysisService:
         # The scheduler will process them FIFO
         
         # Build query to count documents that need reanalysis
-        query_parts = ["SELECT VALUE COUNT(1) FROM c WHERE 1=1"]
+        # Note: CosmosDB emulator doesn't support "WHERE 1=1",
+        # use "WHERE true" instead
+        query_parts = ["SELECT VALUE COUNT(1) FROM c WHERE true"]
         params = []
 
         # Optional tool filter - typically used for automatic reanalysis
@@ -781,7 +785,9 @@ class ReanalysisService:
         )
 
         # Build query for sentiment documents
-        query_parts = ["SELECT * FROM c WHERE 1=1"]
+        # Note: CosmosDB emulator doesn't support "WHERE 1=1",
+        # use "WHERE true" instead
+        query_parts = ["SELECT * FROM c WHERE true"]
         params = []
 
         # Resume from checkpoint if exists

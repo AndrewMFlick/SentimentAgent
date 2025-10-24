@@ -82,10 +82,11 @@ class Settings(BaseSettings):
     auto_reanalysis_on_tool_activate: bool = True  # Trigger on tool activation
 
     # Reanalysis Rate Limiting (Feature 013 - T043)
-    reanalysis_batch_delay_ms: int = 100  # Delay between batches in milliseconds
+    # Delay between batches in milliseconds (0 for max performance)
+    reanalysis_batch_delay_ms: int = 0
     reanalysis_max_retries: int = 5  # Max retries for 429 errors
-    reanalysis_retry_base_delay: float = 1.0  # Base delay for exponential backoff (seconds)
-    reanalysis_retry_max_delay: float = 60.0  # Max delay between retries (seconds)
+    reanalysis_retry_base_delay: float = 1.0  # Base delay (seconds)
+    reanalysis_retry_max_delay: float = 60.0  # Max delay (seconds)
 
     @property
     def subreddit_list(self) -> List[str]:
