@@ -278,7 +278,8 @@ class ReanalysisService:
                 "total_count": total_count,
                 "processed_count": 0,
                 "percentage": 0.0,
-                "last_checkpoint_id": None
+                "last_checkpoint_id": None,
+                "estimated_time_remaining": None
             },
             "statistics": {
                 "tools_detected": {},
@@ -391,7 +392,8 @@ class ReanalysisService:
                 "total_count": total_count,
                 "processed_count": 0,
                 "percentage": 0.0,
-                "last_checkpoint_id": None
+                "last_checkpoint_id": None,
+                "estimated_time_remaining": None
             },
             "statistics": {
                 "tools_detected": {},
@@ -814,6 +816,37 @@ class ReanalysisService:
                     if job_doc["progress"]["total_count"] > 0
                     else 100.0
                 )
+                
+                # Calculate estimated time remaining
+                if processed_count > 0:
+                    start_time = datetime.fromisoformat(
+                        job_doc["start_time"].replace("Z", "+00:00")
+                    )
+                    elapsed_seconds = (
+                        datetime.now(timezone.utc) - start_time
+                    ).total_seconds()
+                    
+                    if elapsed_seconds > 0:
+                        processing_rate = processed_count / elapsed_seconds
+                        total_count = job_doc["progress"]["total_count"]
+                        remaining_docs = total_count - processed_count
+                        
+                        if processing_rate > 0:
+                            eta_seconds = remaining_docs / processing_rate
+                            job_doc["progress"][
+                                "estimated_time_remaining"
+                            ] = int(eta_seconds)
+                        else:
+                            job_doc["progress"][
+                                "estimated_time_remaining"
+                            ] = None
+                    else:
+                        job_doc["progress"][
+                            "estimated_time_remaining"
+                        ] = None
+                else:
+                    job_doc["progress"]["estimated_time_remaining"] = None
+                
                 job_doc["statistics"]["tools_detected"] = tools_detected
                 job_doc["statistics"]["categorized_count"] = categorized_count
                 job_doc["statistics"]["uncategorized_count"] = (
@@ -904,5 +937,72 @@ class ReanalysisService:
                 job_id=job_id,
                 error=str(e)
             )
+
+        return job_doc
+
+    async def cancel_job(
+        self, job_id: str, cancelled_by: str
+    ) -> Dict[str, Any]:
+        """
+        Cancel a reanalysis job.
+
+        Only jobs in QUEUED status can be cancelled.
+        Running jobs cannot be stopped mid-execution.
+
+        Args:
+            job_id: The job ID to cancel
+            cancelled_by: Admin user who requested cancellation
+
+        Returns:
+            Updated job document
+
+        Raises:
+            ValueError: If job not found or in invalid state for cancel
+        """
+        # Read job
+        try:
+            job_doc = self.jobs.read_item(
+                item=job_id, partition_key=job_id
+            )
+        except Exception as e:
+            logger.error(
+                "Job not found for cancellation",
+                job_id=job_id,
+                error=str(e)
+            )
+            raise ValueError(f"Job {job_id} not found")
+
+        # Validate state
+        current_status = job_doc["status"]
+        if current_status not in [JobStatus.QUEUED.value]:
+            raise ValueError(
+                f"Cannot cancel job in {current_status} status. "
+                "Only queued jobs can be cancelled."
+            )
+
+        # Update to cancelled
+        job_doc["status"] = JobStatus.CANCELLED.value
+        job_doc["end_time"] = datetime.now(timezone.utc).isoformat()
+        job_doc["error_log"].append({
+            "doc_id": "job_level",
+            "error": f"Job cancelled by {cancelled_by}",
+            "timestamp": datetime.now(timezone.utc).isoformat()
+        })
+
+        # Save
+        try:
+            self.jobs.upsert_item(body=job_doc)
+            logger.info(
+                "Reanalysis job cancelled",
+                job_id=job_id,
+                cancelled_by=cancelled_by
+            )
+        except Exception as e:
+            logger.error(
+                "Failed to cancel job",
+                job_id=job_id,
+                error=str(e)
+            )
+            raise
 
         return job_doc

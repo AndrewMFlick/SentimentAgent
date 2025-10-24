@@ -1690,3 +1690,67 @@ async def get_reanalysis_job_status(
         )
         raise HTTPException(status_code=500, detail="Failed to retrieve job status")
 
+
+@router.delete("/reanalysis/jobs/{job_id}")
+async def cancel_reanalysis_job(
+    job_id: str,
+    x_admin_token: Optional[str] = Header(None),
+    service: ReanalysisService = Depends(get_reanalysis_service),
+):
+    """
+    Cancel a queued reanalysis job.
+
+    Only jobs in QUEUED status can be cancelled. Running jobs cannot be
+    stopped mid-execution.
+
+    **Authentication**: Requires X-Admin-Token header
+
+    Args:
+        job_id: The reanalysis job ID to cancel
+        x_admin_token: Admin authentication token
+        service: ReanalysisService dependency
+
+    Returns:
+        Cancelled job details
+
+    Raises:
+        401: If admin token is invalid
+        404: If job not found
+        400: If job cannot be cancelled (not in QUEUED status)
+        500: If cancellation fails
+    """
+    admin_user = verify_admin(x_admin_token)
+
+    try:
+        job = await service.cancel_job(job_id, cancelled_by=admin_user)
+
+        logger.info(
+            "Reanalysis job cancelled via API",
+            job_id=job_id,
+            admin_user=admin_user
+        )
+
+        return {
+            "job_id": job["id"],
+            "status": job["status"],
+            "cancelled_by": admin_user,
+            "message": "Reanalysis job cancelled successfully"
+        }
+    except ValueError as e:
+        logger.warning(
+            "Invalid cancellation request",
+            job_id=job_id,
+            admin_user=admin_user,
+            error=str(e)
+        )
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        logger.error(
+            "Failed to cancel reanalysis job",
+            job_id=job_id,
+            admin_user=admin_user,
+            error=str(e),
+            exc_info=True
+        )
+        raise HTTPException(status_code=500, detail="Failed to cancel job")
+
