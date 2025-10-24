@@ -173,12 +173,6 @@ class ReanalysisService:
             ))
             
             count = len(result)
-            if count > 0:
-                logger.error(
-                    f"FOUND ACTIVE JOBS: count={count}, "
-                    f"job_ids={[j['id'] for j in result]}, "
-                    f"statuses={[j['status'] for j in result]}"
-                )
             logger.debug("Active jobs check", count=count)
             return count
         except Exception as e:
