@@ -173,7 +173,7 @@ class ReanalysisService:
             ))
             
             count = len(result)
-            logger.debug("Active jobs check", count=count)
+            logger.debug(f"Active jobs check: count={count}")
             return count
         except Exception as e:
             logger.error(
