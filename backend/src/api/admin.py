@@ -1428,3 +1428,265 @@ async def get_audit_log(
             status_code=500,
             detail="Failed to retrieve audit log"
         )
+
+
+# ====================================================================
+# REANALYSIS ENDPOINTS
+# ====================================================================
+
+@router.post(
+    "/reanalysis/jobs",
+    status_code=202,
+    response_model=dict,
+    summary="Trigger manual reanalysis job",
+    description="""
+    Trigger a manual reanalysis job to re-detect tools in historical sentiment data.
+    
+    **User Story**: US1 - Manual Ad-Hoc Tool Recategorization
+    
+    **Process**:
+    1. Validates no active jobs are running
+    2. Counts documents matching filter criteria
+    3. Creates job with QUEUED status
+    4. Returns job details for polling
+    
+    **Background Processing**:
+    The job is processed asynchronously by the scheduler. Poll using
+    GET /admin/reanalysis/jobs/{job_id}/status to check progress.
+    """,
+)
+async def trigger_reanalysis(
+    job_request: ReanalysisJobRequest,
+    x_admin_token: Optional[str] = Header(None),
+    service: ReanalysisService = Depends(get_reanalysis_service),
+):
+    """Trigger a manual sentiment reanalysis job."""
+    admin_user = verify_admin(x_admin_token)
+
+    logger.info(
+        "Admin triggering reanalysis job",
+        admin=admin_user,
+        date_range=job_request.date_range,
+        tool_ids=job_request.tool_ids,
+        batch_size=job_request.batch_size,
+    )
+
+    try:
+        result = await service.trigger_manual_reanalysis(
+            job_request=job_request, triggered_by=admin_user
+        )
+
+        logger.info(
+            "Reanalysis job queued",
+            job_id=result["job_id"],
+            estimated_docs=result["estimated_docs"],
+            admin=admin_user,
+        )
+
+        return {
+            "job_id": result["job_id"],
+            "status": result["status"],
+            "estimated_docs": result["estimated_docs"],
+            "message": "Reanalysis job queued successfully",
+            "poll_url": f"/admin/reanalysis/jobs/{result['job_id']}/status",
+        }
+
+    except ValueError as e:
+        logger.warning(
+            "Reanalysis job validation error",
+            error=str(e),
+            admin=admin_user,
+        )
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        logger.error(
+            "Failed to trigger reanalysis job",
+            error=str(e),
+            admin=admin_user,
+            exc_info=True,
+        )
+        raise HTTPException(
+            status_code=500, detail="Failed to trigger reanalysis job"
+        )
+
+
+@router.get(
+    "/reanalysis/jobs",
+    response_model=dict,
+    summary="List reanalysis jobs",
+    description="""
+    List all reanalysis jobs with optional status filter.
+    
+    **Query Parameters**:
+    - `status`: Filter by job status (queued/running/completed/failed)
+    - `limit`: Max results (default 50, max 100)
+    - `offset`: Pagination offset
+    
+    Returns jobs ordered by created_at DESC (most recent first).
+    """,
+)
+async def list_reanalysis_jobs(
+    status: Optional[str] = Query(None),
+    limit: int = Query(50, ge=1, le=100),
+    offset: int = Query(0, ge=0),
+    x_admin_token: Optional[str] = Header(None),
+    service: ReanalysisService = Depends(get_reanalysis_service),
+):
+    """List all reanalysis jobs with pagination."""
+    admin_user = verify_admin(x_admin_token)
+
+    logger.debug(
+        "Admin listing reanalysis jobs",
+        admin=admin_user,
+        status=status,
+        limit=limit,
+        offset=offset,
+    )
+
+    try:
+        # Build query
+        query_parts = ["SELECT * FROM c WHERE 1=1"]
+        params = []
+
+        if status:
+            query_parts.append("AND c.status = @status")
+            params.append({"name": "@status", "value": status})
+
+        query_parts.append("ORDER BY c.created_at DESC")
+        query = " ".join(query_parts)
+
+        # Get paginated results
+        paginated_query = f"{query} OFFSET {offset} LIMIT {limit}"
+
+        jobs = list(
+            service.jobs.query_items(
+                query=paginated_query,
+                parameters=params if params else None,
+                enable_cross_partition_query=True,
+            )
+        )
+
+        # Get total count
+        count_query = f"SELECT VALUE COUNT(1) FROM c WHERE 1=1"
+        if status:
+            count_query += " AND c.status = @status"
+
+        total_result = list(
+            service.jobs.query_items(
+                query=count_query,
+                parameters=params if params else None,
+                enable_cross_partition_query=True,
+            )
+        )
+        total_count = total_result[0] if total_result else 0
+
+        return {"jobs": jobs, "total_count": total_count, "limit": limit, "offset": offset}
+
+    except Exception as e:
+        logger.error(
+            "Failed to list reanalysis jobs",
+            error=str(e),
+            admin=admin_user,
+            exc_info=True,
+        )
+        raise HTTPException(
+            status_code=500, detail="Failed to list reanalysis jobs"
+        )
+
+
+@router.get(
+    "/reanalysis/jobs/{job_id}",
+    response_model=dict,
+    summary="Get reanalysis job details",
+    description="""
+    Get full details for a specific reanalysis job.
+    
+    **Returns**:
+    - Job status, progress, statistics
+    - Error log entries
+    - Tools detected breakdown
+    - Timestamps (created_at, start_time, end_time)
+    """,
+)
+async def get_reanalysis_job(
+    job_id: str,
+    x_admin_token: Optional[str] = Header(None),
+    service: ReanalysisService = Depends(get_reanalysis_service),
+):
+    """Get full details for a reanalysis job."""
+    admin_user = verify_admin(x_admin_token)
+
+    logger.debug(
+        "Admin fetching reanalysis job details", job_id=job_id, admin=admin_user
+    )
+
+    try:
+        job = service.jobs.read_item(item=job_id, partition_key=job_id)
+
+        return {"job": job}
+
+    except Exception as e:
+        if "Resource Not Found" in str(e) or "not found" in str(e).lower():
+            raise HTTPException(status_code=404, detail=f"Job '{job_id}' not found")
+
+        logger.error(
+            "Failed to get reanalysis job",
+            job_id=job_id,
+            error=str(e),
+            admin=admin_user,
+            exc_info=True,
+        )
+        raise HTTPException(
+            status_code=500, detail="Failed to retrieve job details"
+        )
+
+
+@router.get(
+    "/reanalysis/jobs/{job_id}/status",
+    response_model=dict,
+    summary="Get reanalysis job status (lightweight)",
+    description="""
+    Lightweight endpoint for polling job status.
+    
+    **Returns**:
+    - job_id
+    - status (queued/running/completed/failed)
+    - progress percentage
+    
+    Use this for UI polling instead of full job details endpoint.
+    """,
+)
+async def get_reanalysis_job_status(
+    job_id: str,
+    x_admin_token: Optional[str] = Header(None),
+    service: ReanalysisService = Depends(get_reanalysis_service),
+):
+    """Get lightweight status for a reanalysis job (for polling)."""
+    admin_user = verify_admin(x_admin_token)
+
+    try:
+        job = service.jobs.read_item(item=job_id, partition_key=job_id)
+
+        return {
+            "job_id": job["id"],
+            "status": job["status"],
+            "progress": {
+                "percentage": job["progress"]["percentage"],
+                "processed_count": job["progress"]["processed_count"],
+                "total_count": job["progress"]["total_count"],
+            },
+        }
+
+    except Exception as e:
+        if "Resource Not Found" in str(e) or "not found" in str(e).lower():
+            raise HTTPException(status_code=404, detail=f"Job '{job_id}' not found")
+
+        logger.error(
+            "Failed to get job status",
+            job_id=job_id,
+            error=str(e),
+            admin=admin_user,
+            exc_info=True,
+        )
+        raise HTTPException(status_code=500, detail="Failed to retrieve job status")
+
