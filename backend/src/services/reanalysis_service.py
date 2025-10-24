@@ -184,3 +184,135 @@ class ReanalysisService:
             )
             # Fail-safe: assume no active jobs to avoid blocking
             return 0
+
+    async def trigger_manual_reanalysis(
+        self,
+        job_request: ReanalysisJobRequest,
+        triggered_by: str
+    ) -> Dict[str, Any]:
+        """
+        Trigger a manual reanalysis job.
+
+        Args:
+            job_request: Job parameters (date_range, tool_ids, batch_size)
+            triggered_by: Admin username who triggered the job
+
+        Returns:
+            Created job document with job_id, status, estimated_docs
+
+        Raises:
+            ValueError: If active job exists or parameters are invalid
+        """
+        # Check for concurrent jobs
+        active_count = await self.check_active_jobs()
+        if active_count > 0:
+            raise ValueError(
+                f"Cannot start job: {active_count} job(s) already active"
+            )
+
+        # Build query to count documents that need reanalysis
+        query_parts = ["SELECT VALUE COUNT(1) FROM c WHERE 1=1"]
+        params = []
+
+        # Optional date range filter
+        if job_request.date_range:
+            date_range = job_request.date_range
+            if date_range.get("start"):
+                query_parts.append("AND c._ts >= @start_ts")
+                # Convert ISO 8601 to Unix timestamp
+                start_dt = datetime.fromisoformat(
+                    date_range["start"].replace("Z", "+00:00")
+                )
+                params.append({
+                    "name": "@start_ts",
+                    "value": int(start_dt.timestamp())
+                })
+            if date_range.get("end"):
+                query_parts.append("AND c._ts <= @end_ts")
+                end_dt = datetime.fromisoformat(
+                    date_range["end"].replace("Z", "+00:00")
+                )
+                params.append({
+                    "name": "@end_ts",
+                    "value": int(end_dt.timestamp())
+                })
+
+        # Optional tool filter (for re-processing specific tools)
+        if job_request.tool_ids:
+            # This would reprocess docs that mention these tools
+            # For initial backfill, we typically process all docs
+            pass
+
+        count_query = " ".join(query_parts)
+        
+        try:
+            result = list(self.sentiment.query_items(
+                query=count_query,
+                parameters=params if params else None,
+                enable_cross_partition_query=True
+            ))
+            total_count = result[0] if result else 0
+        except Exception as e:
+            logger.error(
+                "Failed to count documents for reanalysis",
+                error=str(e),
+                exc_info=True
+            )
+            raise ValueError(f"Failed to estimate job size: {str(e)}")
+
+        # Create job document
+        job_id = str(uuid.uuid4())
+        now = datetime.now(timezone.utc).isoformat()
+
+        job_doc = {
+            "id": job_id,
+            "status": JobStatus.QUEUED.value,
+            "trigger_type": "manual",
+            "triggered_by": triggered_by,
+            "parameters": {
+                "date_range": job_request.date_range,
+                "tool_ids": job_request.tool_ids,
+                "batch_size": job_request.batch_size
+            },
+            "progress": {
+                "total_count": total_count,
+                "processed_count": 0,
+                "percentage": 0.0,
+                "last_checkpoint_id": None
+            },
+            "statistics": {
+                "tools_detected": {},
+                "errors_count": 0,
+                "categorized_count": 0,
+                "uncategorized_count": 0
+            },
+            "error_log": [],
+            "start_time": None,
+            "end_time": None,
+            "created_at": now
+        }
+
+        # Save to database
+        try:
+            self.jobs.create_item(body=job_doc)
+            logger.info(
+                "Reanalysis job created",
+                job_id=job_id,
+                triggered_by=triggered_by,
+                total_count=total_count,
+                batch_size=job_request.batch_size
+            )
+        except Exception as e:
+            logger.error(
+                "Failed to create reanalysis job",
+                error=str(e),
+                exc_info=True
+            )
+            raise ValueError(f"Failed to create job: {str(e)}")
+
+        return {
+            "job_id": job_id,
+            "status": JobStatus.QUEUED.value,
+            "estimated_docs": total_count,
+            "created_at": now
+        }
