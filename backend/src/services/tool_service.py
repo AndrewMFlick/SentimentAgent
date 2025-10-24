@@ -98,6 +98,16 @@ class ToolService:
         # Trigger automatic reanalysis if tool is active (T024)
         if tool["status"] == "active":
             try:
+                from ..config import settings
+                
+                # Check if automatic reanalysis is enabled (T028)
+                if not settings.enable_auto_reanalysis or not settings.auto_reanalysis_on_tool_create:
+                    logger.debug(
+                        "Automatic reanalysis disabled for tool creation",
+                        tool_id=tool_id
+                    )
+                    return tool
+                
                 from .reanalysis_service import ReanalysisService
                 
                 # Get containers for reanalysis service
@@ -504,6 +514,16 @@ class ToolService:
                 and tool["status"] == "active"
             ):
                 try:
+                    from ..config import settings
+                    
+                    # Check if automatic reanalysis is enabled (T028)
+                    if not settings.enable_auto_reanalysis or not settings.auto_reanalysis_on_tool_activate:
+                        logger.debug(
+                            "Automatic reanalysis disabled for tool activation",
+                            tool_id=tool_id
+                        )
+                        return tool
+                    
                     from .reanalysis_service import ReanalysisService
                     
                     # Get containers for reanalysis service

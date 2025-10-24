@@ -76,6 +76,11 @@ class Settings(BaseSettings):
     admin_tool_description_max_length: int = 500
     admin_alias_max_per_tool: int = 50
 
+    # Automatic Reanalysis (Feature 013)
+    enable_auto_reanalysis: bool = True  # Enable automatic reanalysis triggers
+    auto_reanalysis_on_tool_create: bool = True  # Trigger on new tool creation
+    auto_reanalysis_on_tool_activate: bool = True  # Trigger on tool activation
+
     @property
     def subreddit_list(self) -> List[str]:
         """Get list of subreddits to monitor."""
