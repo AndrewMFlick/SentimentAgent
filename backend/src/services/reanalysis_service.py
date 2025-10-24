@@ -727,6 +727,43 @@ class ReanalysisService:
         job_doc["status"] = JobStatus.RUNNING.value
         job_doc["start_time"] = datetime.now(timezone.utc).isoformat()
 
+        # ========================================
+        # ADMIN NOTIFICATION - JOB START (T046)
+        # ========================================
+        total_docs = job_doc["progress"]["total_count"]
+        batch_size = job_doc["parameters"]["batch_size"]
+        estimated_batches = (total_docs // batch_size) + 1
+        
+        notification_msg = (
+            f"\n{'='*60}\n"
+            f"▶️  REANALYSIS JOB STARTED\n"
+            f"{'='*60}\n"
+            f"Job ID: {job_id}\n"
+            f"Type: {job_doc.get('trigger_type', 'manual').upper()}\n"
+            f"Triggered by: {job_doc.get('triggered_by', 'unknown')}\n"
+            f"\n"
+            f"📋 PARAMETERS:\n"
+            f"  • Total documents: {total_docs:,}\n"
+            f"  • Batch size: {batch_size}\n"
+            f"  • Estimated batches: {estimated_batches}\n"
+        )
+        
+        # Add filters if present
+        if job_doc["parameters"].get("date_range"):
+            date_range = job_doc["parameters"]["date_range"]
+            notification_msg += (
+                f"  • Date range: {date_range.get('start', 'N/A')} "
+                f"to {date_range.get('end', 'N/A')}\n"
+            )
+        
+        if job_doc["parameters"].get("tool_ids"):
+            tool_ids = job_doc["parameters"]["tool_ids"]
+            notification_msg += f"  • Tool filters: {', '.join(tool_ids)}\n"
+        
+        notification_msg += f"{'='*60}\n"
+        
+        logger.warning(notification_msg)
+
         try:
             self.jobs.upsert_item(body=job_doc)
         except Exception as e:
@@ -949,6 +986,27 @@ class ReanalysisService:
                 # Save checkpoint
                 try:
                     self.jobs.upsert_item(body=job_doc)
+                    
+                    # Log progress notification every 10 batches (T046)
+                    if batch_num % 10 == 0:
+                        eta_str = "calculating..."
+                        if job_doc["progress"].get("estimated_time_remaining"):
+                            eta_seconds = job_doc["progress"][
+                                "estimated_time_remaining"
+                            ]
+                            eta_minutes = eta_seconds / 60
+                            eta_str = f"{eta_minutes:.1f} minutes"
+                        
+                        pct = job_doc['progress']['percentage']
+                        total = job_doc['progress']['total_count']
+                        logger.info(
+                            f"📊 Progress: {pct:.1f}% "
+                            f"({processed_count:,}/{total:,}) | "
+                            f"ETA: {eta_str} | "
+                            f"Tools: {len(tools_detected)} | "
+                            f"Errors: {job_doc['statistics']['errors_count']}"
+                        )
+                    
                     logger.debug(
                         "Checkpoint saved",
                         job_id=job_id,
@@ -972,6 +1030,13 @@ class ReanalysisService:
             job_doc["end_time"] = datetime.now(timezone.utc).isoformat()
             job_doc["progress"]["percentage"] = 100.0
 
+            # Calculate elapsed time for notification
+            start_time = datetime.fromisoformat(
+                job_doc["start_time"].replace("Z", "+00:00")
+            )
+            end_time = datetime.now(timezone.utc)
+            elapsed_seconds = (end_time - start_time).total_seconds()
+            
             logger.info(
                 "Reanalysis job completed",
                 job_id=job_id,
@@ -979,19 +1044,57 @@ class ReanalysisService:
                 categorized=categorized_count,
                 uncategorized=uncategorized_count,
                 errors=job_doc["statistics"]["errors_count"],
-                tools_detected=len(tools_detected)
+                tools_detected=len(tools_detected),
+                elapsed_seconds=elapsed_seconds
             )
 
-            # Log notification for automatic jobs (T029)
+            # ========================================
+            # ADMIN NOTIFICATION (T046)
+            # ========================================
+            # Log prominent completion notification for all jobs
+            notification_msg = (
+                f"\n{'='*60}\n"
+                f"🎉 REANALYSIS JOB COMPLETED\n"
+                f"{'='*60}\n"
+                f"Job ID: {job_id}\n"
+                f"Type: {job_doc.get('trigger_type', 'manual').upper()}\n"
+                f"Triggered by: {job_doc.get('triggered_by', 'unknown')}\n"
+                f"Duration: {elapsed_seconds:.1f} seconds\n"
+                f"\n"
+                f"📊 STATISTICS:\n"
+                f"  • Documents processed: {processed_count:,}\n"
+                f"  • Categorized: {categorized_count:,}\n"
+                f"  • Uncategorized: {uncategorized_count:,}\n"
+                f"  • Errors: {job_doc['statistics']['errors_count']}\n"
+                f"  • Tools detected: {len(tools_detected)}\n"
+                f"\n"
+                f"🔧 TOOLS BREAKDOWN:\n"
+            )
+            
+            # Add top 10 tools by count
+            sorted_tools = sorted(
+                tools_detected.items(),
+                key=lambda x: x[1],
+                reverse=True
+            )[:10]
+            for tool_id, count in sorted_tools:
+                notification_msg += f"  • {tool_id}: {count:,} mentions\n"
+            
+            if len(tools_detected) > 10:
+                notification_msg += (
+                    f"  • ... and {len(tools_detected) - 10} more tools\n"
+                )
+            
+            notification_msg += f"{'='*60}\n"
+            
+            logger.warning(notification_msg)
+            
+            # Additional context for automatic jobs
             if job_doc.get("trigger_type") == "automatic":
                 logger.warning(
-                    "NOTIFICATION: Automatic reanalysis completed",
+                    "Automatic reanalysis completed",
                     job_id=job_id,
-                    triggered_by=job_doc.get("triggered_by"),
                     reason=job_doc.get("reason"),
-                    documents_processed=processed_count,
-                    tools_detected_count=len(tools_detected),
-                    errors=job_doc["statistics"]["errors_count"],
                     status="success"
                 )
 
@@ -1011,12 +1114,49 @@ class ReanalysisService:
                 "timestamp": datetime.now(timezone.utc).isoformat()
             })
 
-            # Log notification for automatic job failures (T029)
+            # ========================================
+            # ADMIN NOTIFICATION - FAILURE (T046)
+            # ========================================
+            # Calculate elapsed time
+            if "start_time" in job_doc and job_doc["start_time"]:
+                start_time = datetime.fromisoformat(
+                    job_doc["start_time"].replace("Z", "+00:00")
+                )
+                end_time = datetime.now(timezone.utc)
+                elapsed_seconds = (end_time - start_time).total_seconds()
+            else:
+                elapsed_seconds = 0
+            
+            notification_msg = (
+                f"\n{'='*60}\n"
+                f"❌ REANALYSIS JOB FAILED\n"
+                f"{'='*60}\n"
+                f"Job ID: {job_id}\n"
+                f"Type: {job_doc.get('trigger_type', 'manual').upper()}\n"
+                f"Triggered by: {job_doc.get('triggered_by', 'unknown')}\n"
+                f"Duration: {elapsed_seconds:.1f} seconds\n"
+                f"\n"
+                f"❗ ERROR:\n"
+                f"  {str(e)}\n"
+                f"\n"
+                f"📊 PARTIAL STATISTICS:\n"
+                f"  • Documents processed: {processed_count:,}\n"
+                f"  • Errors logged: {len(job_doc['error_log'])}\n"
+                f"\n"
+                f"💡 TROUBLESHOOTING:\n"
+                f"  • Check error_log in job details for specific failures\n"
+                f"  • Review database connectivity and permissions\n"
+                f"  • Verify CosmosDB isn't throttling (429 errors)\n"
+                f"{'='*60}\n"
+            )
+            
+            logger.error(notification_msg)
+            
+            # Additional context for automatic job failures
             if job_doc.get("trigger_type") == "automatic":
                 logger.error(
-                    "NOTIFICATION: Automatic reanalysis failed",
+                    "Automatic reanalysis failed",
                     job_id=job_id,
-                    triggered_by=job_doc.get("triggered_by"),
                     reason=job_doc.get("reason"),
                     error=str(e),
                     status="failed"
