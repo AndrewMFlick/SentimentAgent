@@ -4,6 +4,8 @@ from datetime import datetime, timezone
 from typing import List, Optional, Dict, Any
 import structlog
 import uuid
+import asyncio
+import time
 
 from ..models.reanalysis import (
     JobStatus,
@@ -37,6 +39,76 @@ class ReanalysisService:
         self.sentiment = sentiment_container
         self.tools = tools_container
         self.aliases = aliases_container
+
+    async def _rate_limit_delay(self, batch_num: int = 0) -> None:
+        """
+        Apply configurable rate limiting delay between batches.
+        
+        Args:
+            batch_num: Batch number (for logging purposes)
+        """
+        from ..config import settings
+        
+        if settings.reanalysis_batch_delay_ms > 0:
+            delay_seconds = settings.reanalysis_batch_delay_ms / 1000.0
+            await asyncio.sleep(delay_seconds)
+            logger.debug(
+                f"Rate limit delay applied: {delay_seconds}s",
+                batch_num=batch_num
+            )
+
+    async def _retry_with_backoff(
+        self,
+        operation,
+        max_retries: int = None,
+        operation_name: str = "operation"
+    ):
+        """
+        Retry an operation with exponential backoff for 429 errors.
+        
+        Args:
+            operation: Callable to execute (should return a value)
+            max_retries: Max retry attempts (defaults to config setting)
+            operation_name: Name for logging
+            
+        Returns:
+            Result of the operation
+            
+        Raises:
+            Exception: If all retries exhausted
+        """
+        from ..config import settings
+        from azure.core.exceptions import HttpResponseError
+        
+        if max_retries is None:
+            max_retries = settings.reanalysis_max_retries
+        
+        base_delay = settings.reanalysis_retry_base_delay
+        max_delay = settings.reanalysis_retry_max_delay
+        
+        for attempt in range(max_retries + 1):
+            try:
+                return operation()
+            except HttpResponseError as e:
+                if e.status_code == 429 and attempt < max_retries:
+                    # Calculate exponential backoff delay
+                    delay = min(base_delay * (2 ** attempt), max_delay)
+                    
+                    logger.warning(
+                        f"Rate limit hit (429), retrying {operation_name}",
+                        attempt=attempt + 1,
+                        max_retries=max_retries,
+                        delay_seconds=delay
+                    )
+                    
+                    await asyncio.sleep(delay)
+                    continue
+                else:
+                    # Either not a 429 or retries exhausted
+                    raise
+            except Exception as e:
+                # Non-HTTP errors, don't retry
+                raise
 
     async def _resolve_tool_aliases(self, tool_id: str) -> List[str]:
         """
@@ -718,15 +790,24 @@ class ReanalysisService:
         try:
             # Process in batches using OFFSET/LIMIT
             offset = 0
+            batch_num = 0
             while True:
                 batch_query = f"{query} OFFSET {offset} LIMIT {batch_size}"
                 
+                # Apply rate limiting delay between batches
+                if batch_num > 0:
+                    await self._rate_limit_delay(batch_num)
+                
                 try:
-                    items = list(self.sentiment.query_items(
-                        query=batch_query,
-                        parameters=params if params else None,
-                        enable_cross_partition_query=True
-                    ))
+                    # Query with retry and exponential backoff for 429 errors
+                    items = await self._retry_with_backoff(
+                        lambda: list(self.sentiment.query_items(
+                            query=batch_query,
+                            parameters=params if params else None,
+                            enable_cross_partition_query=True
+                        )),
+                        operation_name=f"batch_query_offset_{offset}"
+                    )
                 except Exception as e:
                     logger.error(
                         "Batch query failed",
@@ -784,8 +865,11 @@ class ReanalysisService:
                             f"{major}.{minor}.{int(patch) + 1}"
                         )
 
-                        # Save updated document
-                        self.sentiment.upsert_item(body=item)
+                        # Save updated document with retry logic for 429 errors
+                        await self._retry_with_backoff(
+                            lambda: self.sentiment.upsert_item(body=item),
+                            operation_name=f"upsert_sentiment_{doc_id}"
+                        )
 
                         # Update statistics
                         if detected_tool_ids:
@@ -881,6 +965,7 @@ class ReanalysisService:
                     # Continue processing even if checkpoint fails
 
                 offset += batch_size
+                batch_num += 1
 
             # Job completed successfully
             job_doc["status"] = JobStatus.COMPLETED.value
