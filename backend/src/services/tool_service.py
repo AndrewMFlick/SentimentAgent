@@ -1367,6 +1367,52 @@ class ToolService:
             merged_by=merged_by
         )
 
+        # Update detected_tool_ids in sentiment_scores (T026-T027)
+        try:
+            from .reanalysis_service import ReanalysisService
+            
+            # Get containers for reanalysis service
+            jobs_container = self.tools_container.database.get_container_client("ReanalysisJobs")
+            sentiment_container = self.tools_container.database.get_container_client("sentiment_scores")
+            
+            # Create reanalysis service
+            reanalysis_service = ReanalysisService(
+                reanalysis_jobs_container=jobs_container,
+                sentiment_container=sentiment_container,
+                tools_container=self.tools_container,
+                aliases_container=self.aliases_container
+            )
+            
+            # Update tool IDs synchronously (important for data consistency)
+            replacement_stats = await reanalysis_service.update_tool_ids_after_merge(
+                source_tool_ids=source_tool_ids,
+                target_tool_id=target_tool_id,
+                merged_by=merged_by
+            )
+            
+            logger.info(
+                "Sentiment data updated after merge",
+                target_tool_id=target_tool_id,
+                documents_updated=replacement_stats["documents_updated"],
+                replacements_made=replacement_stats["replacements_made"]
+            )
+            
+            # Add replacement stats to merge record
+            merge_record["sentiment_updates"] = replacement_stats
+            
+        except Exception as e:
+            # Log error but don't fail the merge
+            logger.error(
+                "Failed to update sentiment data after merge",
+                target_tool_id=target_tool_id,
+                source_tool_ids=source_tool_ids,
+                error=str(e),
+                exc_info=True
+            )
+            warnings.append(
+                f"Merge completed but sentiment data update failed: {str(e)}"
+            )
+
         return {
             "merge_record": merge_record,
             "target_tool": target_tool,

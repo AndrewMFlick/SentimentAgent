@@ -433,6 +433,153 @@ class ReanalysisService:
             "reason": reason
         }
 
+    async def update_tool_ids_after_merge(
+        self,
+        source_tool_ids: List[str],
+        target_tool_id: str,
+        merged_by: str
+    ) -> Dict[str, int]:
+        """
+        Update detected_tool_ids in sentiment_scores after tool merge.
+
+        Replaces all occurrences of source tool IDs with target tool ID.
+        This ensures sentiment data reflects the merged tool structure.
+
+        Args:
+            source_tool_ids: Tool IDs being merged (to be replaced)
+            target_tool_id: Primary tool ID (replacement)
+            merged_by: Admin who performed the merge
+
+        Returns:
+            Dict with update statistics:
+            - documents_scanned: Total docs checked
+            - documents_updated: Docs with changes
+            - replacements_made: Total ID replacements
+
+        Example:
+            Before: detected_tool_ids = ["copilot-old", "cursor"]
+            After:  detected_tool_ids = ["copilot", "cursor"]
+        """
+        logger.info(
+            "Starting tool ID replacement after merge",
+            source_tool_ids=source_tool_ids,
+            target_tool_id=target_tool_id,
+            merged_by=merged_by
+        )
+
+        documents_scanned = 0
+        documents_updated = 0
+        replacements_made = 0
+
+        try:
+            # Query for documents that contain any of the source tool IDs
+            # Using ARRAY_CONTAINS with OR logic
+            conditions = []
+            params = []
+            
+            for idx, source_id in enumerate(source_tool_ids):
+                conditions.append(f"ARRAY_CONTAINS(c.detected_tool_ids, @source{idx})")
+                params.append({"name": f"@source{idx}", "value": source_id})
+            
+            where_clause = " OR ".join(conditions)
+            query = f"SELECT * FROM c WHERE {where_clause}"
+
+            # Process in batches to avoid memory issues
+            batch_size = 100
+            offset = 0
+
+            while True:
+                batch_query = f"{query} OFFSET {offset} LIMIT {batch_size}"
+                
+                try:
+                    items = list(self.sentiment.query_items(
+                        query=batch_query,
+                        parameters=params,
+                        enable_cross_partition_query=True
+                    ))
+                except Exception as e:
+                    logger.error(
+                        "Batch query failed during tool ID replacement",
+                        offset=offset,
+                        error=str(e),
+                        exc_info=True
+                    )
+                    offset += batch_size
+                    continue
+
+                if not items:
+                    break
+
+                for item in items:
+                    documents_scanned += 1
+                    doc_id = item["id"]
+                    original_ids = item.get("detected_tool_ids", [])
+                    
+                    if not original_ids:
+                        continue
+
+                    # Replace source IDs with target ID
+                    updated_ids = []
+                    changed = False
+                    
+                    for tool_id in original_ids:
+                        if tool_id in source_tool_ids:
+                            # Only add target_id if not already present
+                            if target_tool_id not in updated_ids:
+                                updated_ids.append(target_tool_id)
+                                replacements_made += 1
+                            changed = True
+                        else:
+                            updated_ids.append(tool_id)
+                    
+                    # Update document if changes were made
+                    if changed:
+                        try:
+                            item["detected_tool_ids"] = updated_ids
+                            item["last_analyzed_at"] = (
+                                datetime.now(timezone.utc).isoformat()
+                            )
+                            # Note: Don't increment analysis_version for merges
+                            # This is a data migration, not re-analysis
+                            
+                            self.sentiment.upsert_item(body=item)
+                            documents_updated += 1
+                            
+                        except Exception as e:
+                            logger.error(
+                                "Failed to update document after tool merge",
+                                doc_id=doc_id,
+                                error=str(e),
+                                exc_info=True
+                            )
+
+                offset += batch_size
+
+            logger.info(
+                "Tool ID replacement completed",
+                source_tool_ids=source_tool_ids,
+                target_tool_id=target_tool_id,
+                documents_scanned=documents_scanned,
+                documents_updated=documents_updated,
+                replacements_made=replacements_made
+            )
+
+            return {
+                "documents_scanned": documents_scanned,
+                "documents_updated": documents_updated,
+                "replacements_made": replacements_made
+            }
+
+        except Exception as e:
+            logger.error(
+                "Tool ID replacement failed",
+                source_tool_ids=source_tool_ids,
+                target_tool_id=target_tool_id,
+                error=str(e),
+                exc_info=True
+            )
+            raise
+
     async def process_reanalysis_job(
         self,
         job_id: str,
