@@ -316,3 +316,295 @@ class ReanalysisService:
             "estimated_docs": total_count,
             "created_at": now
         }
+
+    async def process_reanalysis_job(
+        self,
+        job_id: str,
+        sentiment_analyzer
+    ) -> Dict[str, Any]:
+        """
+        Process a reanalysis job - main batch processing loop.
+
+        This method:
+        1. Updates job status to RUNNING
+        2. Queries sentiment_scores in batches
+        3. Re-runs tool detection on each document
+        4. Updates detected_tool_ids and analysis metadata
+        5. Checkpoints progress after each batch
+        6. Handles errors gracefully (catch-log-continue pattern)
+        7. Updates job status to COMPLETED or FAILED
+
+        Args:
+            job_id: The job ID to process
+            sentiment_analyzer: SentimentAnalyzer instance for tool detection
+
+        Returns:
+            Final job document with statistics
+
+        Raises:
+            ValueError: If job not found or already completed
+        """
+        # Load job
+        try:
+            job_doc = self.jobs.read_item(
+                item=job_id,
+                partition_key=job_id
+            )
+        except Exception as e:
+            logger.error(
+                "Failed to load reanalysis job",
+                job_id=job_id,
+                error=str(e)
+            )
+            raise ValueError(f"Job not found: {job_id}")
+
+        # Validate state
+        current_status = JobStatus(job_doc["status"])
+        if current_status in {JobStatus.COMPLETED, JobStatus.FAILED}:
+            raise ValueError(
+                f"Job {job_id} already {current_status.value}"
+            )
+
+        # Transition to RUNNING
+        self._validate_state_transition(current_status, JobStatus.RUNNING)
+        job_doc["status"] = JobStatus.RUNNING.value
+        job_doc["start_time"] = datetime.now(timezone.utc).isoformat()
+
+        try:
+            self.jobs.upsert_item(body=job_doc)
+        except Exception as e:
+            logger.error(
+                "Failed to update job status to RUNNING",
+                job_id=job_id,
+                error=str(e)
+            )
+            raise
+
+        logger.info(
+            "Reanalysis job started",
+            job_id=job_id,
+            total_count=job_doc["progress"]["total_count"]
+        )
+
+        # Build query for sentiment documents
+        query_parts = ["SELECT * FROM c WHERE 1=1"]
+        params = []
+
+        # Resume from checkpoint if exists
+        if job_doc["progress"]["last_checkpoint_id"]:
+            query_parts.append("AND c.id > @checkpoint_id")
+            params.append({
+                "name": "@checkpoint_id",
+                "value": job_doc["progress"]["last_checkpoint_id"]
+            })
+
+        # Date range filter
+        if job_doc["parameters"].get("date_range"):
+            date_range = job_doc["parameters"]["date_range"]
+            if date_range.get("start"):
+                query_parts.append("AND c._ts >= @start_ts")
+                start_dt = datetime.fromisoformat(
+                    date_range["start"].replace("Z", "+00:00")
+                )
+                params.append({
+                    "name": "@start_ts",
+                    "value": int(start_dt.timestamp())
+                })
+            if date_range.get("end"):
+                query_parts.append("AND c._ts <= @end_ts")
+                end_dt = datetime.fromisoformat(
+                    date_range["end"].replace("Z", "+00:00")
+                )
+                params.append({
+                    "name": "@end_ts",
+                    "value": int(end_dt.timestamp())
+                })
+
+        # Order by ID for consistent pagination and checkpointing
+        query_parts.append("ORDER BY c.id")
+        
+        query = " ".join(query_parts)
+        batch_size = job_doc["parameters"]["batch_size"]
+        processed_count = job_doc["progress"]["processed_count"]
+        tools_detected = job_doc["statistics"]["tools_detected"]
+        categorized_count = job_doc["statistics"]["categorized_count"]
+        uncategorized_count = job_doc["statistics"]["uncategorized_count"]
+
+        try:
+            # Process in batches using OFFSET/LIMIT
+            offset = 0
+            while True:
+                batch_query = f"{query} OFFSET {offset} LIMIT {batch_size}"
+                
+                try:
+                    items = list(self.sentiment.query_items(
+                        query=batch_query,
+                        parameters=params if params else None,
+                        enable_cross_partition_query=True
+                    ))
+                except Exception as e:
+                    logger.error(
+                        "Batch query failed",
+                        job_id=job_id,
+                        offset=offset,
+                        error=str(e),
+                        exc_info=True
+                    )
+                    # Log to job error_log
+                    job_doc["error_log"].append({
+                        "doc_id": f"batch_offset_{offset}",
+                        "error": f"Query failed: {str(e)}",
+                        "timestamp": datetime.now(timezone.utc).isoformat()
+                    })
+                    job_doc["statistics"]["errors_count"] += 1
+                    offset += batch_size
+                    continue
+
+                if not items:
+                    # No more documents
+                    break
+
+                # Process each document in batch
+                for item in items:
+                    doc_id = item["id"]
+                    
+                    try:
+                        # Get original content for tool detection
+                        content = item.get("content", "")
+                        if not content:
+                            logger.warning(
+                                "Document has no content",
+                                doc_id=doc_id
+                            )
+                            uncategorized_count += 1
+                            processed_count += 1
+                            continue
+
+                        # Detect tools using SentimentAnalyzer
+                        detected_tool_ids = (
+                            sentiment_analyzer.detect_tools_in_content(
+                                content
+                            )
+                        )
+
+                        # Update document
+                        item["detected_tool_ids"] = detected_tool_ids
+                        item["last_analyzed_at"] = (
+                            datetime.now(timezone.utc).isoformat()
+                        )
+                        # Increment version
+                        current_version = item.get("analysis_version", "1.0.0")
+                        major, minor, patch = current_version.split(".")
+                        item["analysis_version"] = (
+                            f"{major}.{minor}.{int(patch) + 1}"
+                        )
+
+                        # Save updated document
+                        self.sentiment.upsert_item(body=item)
+
+                        # Update statistics
+                        if detected_tool_ids:
+                            categorized_count += 1
+                            for tool_id in detected_tool_ids:
+                                tools_detected[tool_id] = (
+                                    tools_detected.get(tool_id, 0) + 1
+                                )
+                        else:
+                            uncategorized_count += 1
+
+                        processed_count += 1
+
+                    except Exception as e:
+                        # Catch-log-continue pattern for individual errors
+                        logger.error(
+                            "Failed to process document",
+                            job_id=job_id,
+                            doc_id=doc_id,
+                            error=str(e),
+                            exc_info=True
+                        )
+                        job_doc["error_log"].append({
+                            "doc_id": doc_id,
+                            "error": str(e),
+                            "timestamp": datetime.now(timezone.utc).isoformat()
+                        })
+                        job_doc["statistics"]["errors_count"] += 1
+                        processed_count += 1
+
+                # Checkpoint after batch
+                last_doc_id = items[-1]["id"] if items else None
+                job_doc["progress"]["processed_count"] = processed_count
+                job_doc["progress"]["last_checkpoint_id"] = last_doc_id
+                job_doc["progress"]["percentage"] = (
+                    (processed_count / job_doc["progress"]["total_count"] * 100)
+                    if job_doc["progress"]["total_count"] > 0
+                    else 100.0
+                )
+                job_doc["statistics"]["tools_detected"] = tools_detected
+                job_doc["statistics"]["categorized_count"] = categorized_count
+                job_doc["statistics"]["uncategorized_count"] = (
+                    uncategorized_count
+                )
+
+                # Save checkpoint
+                try:
+                    self.jobs.upsert_item(body=job_doc)
+                    logger.debug(
+                        "Checkpoint saved",
+                        job_id=job_id,
+                        processed=processed_count,
+                        total=job_doc["progress"]["total_count"],
+                        percentage=job_doc["progress"]["percentage"]
+                    )
+                except Exception as e:
+                    logger.error(
+                        "Failed to save checkpoint",
+                        job_id=job_id,
+                        error=str(e)
+                    )
+                    # Continue processing even if checkpoint fails
+
+                offset += batch_size
+
+            # Job completed successfully
+            job_doc["status"] = JobStatus.COMPLETED.value
+            job_doc["end_time"] = datetime.now(timezone.utc).isoformat()
+            job_doc["progress"]["percentage"] = 100.0
+
+            logger.info(
+                "Reanalysis job completed",
+                job_id=job_id,
+                processed=processed_count,
+                categorized=categorized_count,
+                uncategorized=uncategorized_count,
+                errors=job_doc["statistics"]["errors_count"],
+                tools_detected=len(tools_detected)
+            )
+
+        except Exception as e:
+            # Job failed with unrecoverable error
+            logger.error(
+                "Reanalysis job failed",
+                job_id=job_id,
+                error=str(e),
+                exc_info=True
+            )
+            job_doc["status"] = JobStatus.FAILED.value
+            job_doc["end_time"] = datetime.now(timezone.utc).isoformat()
+            job_doc["error_log"].append({
+                "doc_id": "job_level",
+                "error": f"Job failed: {str(e)}",
+                "timestamp": datetime.now(timezone.utc).isoformat()
+            })
+
+        # Final save
+        try:
+            self.jobs.upsert_item(body=job_doc)
+        except Exception as e:
+            logger.error(
+                "Failed to save final job state",
+                job_id=job_id,
+                error=str(e)
+            )
+
+        return job_doc
