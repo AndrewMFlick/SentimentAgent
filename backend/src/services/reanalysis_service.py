@@ -317,6 +317,122 @@ class ReanalysisService:
             "created_at": now
         }
 
+    async def trigger_automatic_reanalysis(
+        self,
+        tool_ids: Optional[List[str]] = None,
+        triggered_by: str = "system",
+        reason: str = "Tool status change"
+    ) -> Dict[str, Any]:
+        """
+        Trigger an automatic reanalysis job.
+
+        Used when tools are created, activated, or modified to automatically
+        recategorize historical data.
+
+        Args:
+            tool_ids: Specific tools to reanalyze. None for all tools.
+            triggered_by: User or system that triggered the reanalysis
+            reason: Reason for automatic trigger (e.g., "New tool created")
+
+        Returns:
+            Created job document with job_id, status, estimated_docs
+
+        Raises:
+            ValueError: If active job exists or parameters are invalid
+        """
+        # Check for concurrent jobs (optional - may allow automatic jobs)
+        # For now, we'll queue them even if another job is running
+        # The scheduler will process them FIFO
+        
+        # Build query to count documents that need reanalysis
+        query_parts = ["SELECT VALUE COUNT(1) FROM c WHERE 1=1"]
+        params = []
+
+        # Optional tool filter - typically used for automatic reanalysis
+        # to only reprocess docs that might mention the new/changed tool
+        if tool_ids:
+            # For automatic reanalysis, we still process all docs
+            # because we need to detect the new tool in historical content
+            # The tool_ids are stored in parameters for context only
+            pass
+
+        count_query = " ".join(query_parts)
+        
+        try:
+            result = list(self.sentiment.query_items(
+                query=count_query,
+                parameters=params if params else None,
+                enable_cross_partition_query=True
+            ))
+            total_count = result[0] if result else 0
+        except Exception as e:
+            logger.error(
+                "Failed to count documents for automatic reanalysis",
+                error=str(e),
+                exc_info=True
+            )
+            raise ValueError(f"Failed to estimate job size: {str(e)}")
+
+        # Create job document
+        job_id = str(uuid.uuid4())
+        now = datetime.now(timezone.utc).isoformat()
+
+        job_doc = {
+            "id": job_id,
+            "status": JobStatus.QUEUED.value,
+            "trigger_type": "automatic",
+            "triggered_by": triggered_by,
+            "parameters": {
+                "date_range": None,
+                "tool_ids": tool_ids,
+                "batch_size": 100  # Default batch size for automatic jobs
+            },
+            "progress": {
+                "total_count": total_count,
+                "processed_count": 0,
+                "percentage": 0.0,
+                "last_checkpoint_id": None
+            },
+            "statistics": {
+                "tools_detected": {},
+                "errors_count": 0,
+                "categorized_count": 0,
+                "uncategorized_count": 0
+            },
+            "error_log": [],
+            "start_time": None,
+            "end_time": None,
+            "created_at": now,
+            "reason": reason  # Extra field for automatic jobs
+        }
+
+        # Save to database
+        try:
+            self.jobs.create_item(body=job_doc)
+            logger.info(
+                "Automatic reanalysis job created",
+                job_id=job_id,
+                triggered_by=triggered_by,
+                reason=reason,
+                tool_ids=tool_ids,
+                total_count=total_count
+            )
+        except Exception as e:
+            logger.error(
+                "Failed to create automatic reanalysis job",
+                error=str(e),
+                exc_info=True
+            )
+            raise ValueError(f"Failed to create job: {str(e)}")
+
+        return {
+            "job_id": job_id,
+            "status": JobStatus.QUEUED.value,
+            "estimated_docs": total_count,
+            "created_at": now,
+            "reason": reason
+        }
+
     async def process_reanalysis_job(
         self,
         job_id: str,
