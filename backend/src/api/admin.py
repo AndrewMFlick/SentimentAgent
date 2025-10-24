@@ -11,9 +11,14 @@ from ..models.tool import (
     AliasLinkRequest,
     ToolMergeRequest,
 )
+from ..models.reanalysis import (
+    ReanalysisJobRequest,
+    ReanalysisJobResponse,
+)
 from ..services.database import db
 from ..services.tool_manager import tool_manager
 from ..services.tool_service import ToolService
+from ..services.reanalysis_service import ReanalysisService
 
 logger = structlog.get_logger(__name__)
 
@@ -42,6 +47,25 @@ async def get_tool_service() -> ToolService:
         aliases_container=aliases_container,
         admin_logs_container=admin_logs_container,
         sentiment_container=sentiment_container
+    )
+
+
+# Dependency to get ReanalysisService instance
+async def get_reanalysis_service() -> ReanalysisService:
+    """Get ReanalysisService instance from database containers."""
+    if not db.client or not db.database:
+        raise HTTPException(status_code=500, detail="Database not initialized")
+
+    jobs_container = db.database.get_container_client("ReanalysisJobs")
+    sentiment_container = db.database.get_container_client("sentiment_scores")
+    tools_container = db.database.get_container_client("Tools")
+    aliases_container = db.database.get_container_client("ToolAliases")
+
+    return ReanalysisService(
+        reanalysis_jobs_container=jobs_container,
+        sentiment_container=sentiment_container,
+        tools_container=tools_container,
+        aliases_container=aliases_container
     )
 
 
