@@ -83,10 +83,52 @@ Frontend will be running at <http://localhost:3000>
 
 ## Step 4: Verify Installation
 
-1. Open <http://localhost:3000> in your browser
-2. You should see the dashboard (may be empty initially)
-3. Backend API docs available at <http://localhost:8000/docs>
-4. Wait ~30 seconds for first data collection to begin
+1. **Check Health**: Open <http://localhost:8000/api/v1/health>
+   - Should return `{"status": "healthy"}`
+   - Verify database connection is `true`
+   - Check process PID and uptime
+
+2. **Open Dashboard**: Navigate to <http://localhost:3000>
+   - Dashboard should load (may be empty initially)
+   - API docs available at <http://localhost:8000/docs>
+
+3. **Wait for Data Collection**:
+   - First collection starts ~30 seconds after backend startup
+   - Check backend logs for "Data collection" messages
+   - Posts should appear in dashboard after first collection (~5 minutes)
+
+4. **Verify Database Setup**:
+   ```bash
+   # Check if containers exist
+   curl http://localhost:8000/api/v1/health
+   ```
+   
+   Required containers should be created automatically:
+   - `reddit_posts`, `reddit_comments`, `sentiment_scores`
+   - `trending_topics`, `Tools`, `ToolAliases`
+   - `AdminActions`, `ReanalysisJobs` (for Feature 013)
+
+5. **Test Reanalysis Feature** (Optional but recommended):
+   ```bash
+   # Trigger a test reanalysis job
+   curl -X POST http://localhost:8000/api/v1/admin/reanalysis/jobs \
+     -H "Content-Type: application/json" \
+     -H "X-Admin-Token: your-admin-token" \
+     -d '{"batch_size": 50}'
+   
+   # Check job status (replace {job_id} with response from above)
+   curl -H "X-Admin-Token: your-admin-token" \
+     http://localhost:8000/api/v1/admin/reanalysis/jobs/{job_id}/status
+   
+   # Should return status: "queued" then "running" then "completed"
+   # Verify sentiment_scores documents updated with detected_tool_ids
+   ```
+
+6. **Test Frontend UI**:
+   - Navigate to <http://localhost:3000/admin>
+   - Enter admin token from `.env`
+   - Click "Reanalysis Jobs" tab
+   - Should see job history and monitoring UI
 
 ## Step 5: Admin Tool Management Setup (Optional)
 
@@ -152,6 +194,33 @@ The admin panel allows you to manage tools tracked for sentiment analysis.
 - **Slow UI loading**: Enable skeleton loaders (already implemented)
 - **Backend memory usage high**: Reduce `SUBREDDITS` count or collection frequency
 - **Frontend bundle size**: Run `npm run build` and check bundle analysis
+
+### Reanalysis job issues
+
+- **400 "Cannot start job: X job(s) already active"**: 
+  - Only one reanalysis job can run at a time
+  - List active jobs: `curl -H "X-Admin-Token: token" http://localhost:8000/api/v1/admin/reanalysis/jobs?status=queued`
+  - Cancel if needed: `curl -X DELETE -H "X-Admin-Token: token" http://localhost:8000/api/v1/admin/reanalysis/jobs/{job_id}`
+
+- **Job stuck in "queued" status**:
+  - Check backend logs for scheduler errors
+  - Job poller runs every 60 seconds
+  - Restart backend if scheduler isn't running
+
+- **Slow reanalysis performance**:
+  - Reduce batch delay: `REANALYSIS_BATCH_DELAY_MS=50` in `.env`
+  - Increase batch size: `{"batch_size": 200}` in API request
+  - Check CosmosDB metrics for throttling
+
+- **CosmosDB 429 rate limit errors**:
+  - System automatically retries with exponential backoff
+  - Increase delay if errors persist: `REANALYSIS_BATCH_DELAY_MS=200`
+  - Increase max retries: `REANALYSIS_MAX_RETRIES=10`
+
+- **Sentiment scores not updated after reanalysis**:
+  - Check job statistics: `GET /api/v1/admin/reanalysis/jobs/{job_id}`
+  - Look for `errors_count` in response
+  - Common issues: missing content field, no matching tools, database permissions
 
 ## Next Steps
 
