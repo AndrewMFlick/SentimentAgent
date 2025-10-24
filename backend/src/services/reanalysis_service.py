@@ -173,8 +173,14 @@ class ReanalysisService:
                 enable_cross_partition_query=True
             ))
             
-            count = result[0] if result else 0
-            logger.debug("Active jobs check", count=count)
+            # Extract count: emulator returns [{'count': N}] instead of [N]
+            if result and len(result) > 0:
+                first = result[0]
+                count = int(first['count']) if isinstance(first, dict) else int(first)
+            else:
+                count = 0
+                
+            logger.error(f"ACTIVE JOBS CHECK: result={result}, count={count}")
             return count
         except Exception as e:
             logger.error(
@@ -251,7 +257,12 @@ class ReanalysisService:
                 parameters=params if params else None,
                 enable_cross_partition_query=True
             ))
-            total_count = result[0] if result else 0
+            # Extract count: emulator returns [{'count': N}] instead of [N]
+            if result and len(result) > 0:
+                first = result[0]
+                total_count = int(first['count']) if isinstance(first, dict) else int(first)
+            else:
+                total_count = 0
         except Exception as e:
             logger.error(
                 "Failed to count documents for reanalysis",
@@ -365,7 +376,12 @@ class ReanalysisService:
                 parameters=params if params else None,
                 enable_cross_partition_query=True
             ))
-            total_count = result[0] if result else 0
+            # Extract count: emulator returns [{'count': N}] instead of [N]
+            if result and len(result) > 0:
+                first = result[0]
+                total_count = int(first['count']) if isinstance(first, dict) else int(first)
+            else:
+                total_count = 0
         except Exception as e:
             logger.error(
                 "Failed to count documents for automatic reanalysis",

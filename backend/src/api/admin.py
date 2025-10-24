@@ -1578,7 +1578,12 @@ async def list_reanalysis_jobs(
                 enable_cross_partition_query=True,
             )
         )
-        total_count = total_result[0] if total_result else 0
+        # Extract count: emulator returns [{'count': N}] instead of [N]
+        if total_result and len(total_result) > 0:
+            first = total_result[0]
+            total_count = int(first['count']) if isinstance(first, dict) else int(first)
+        else:
+            total_count = 0
 
         return {"jobs": jobs, "total_count": total_count, "limit": limit, "offset": offset}
 
