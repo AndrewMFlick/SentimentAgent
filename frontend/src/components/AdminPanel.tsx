@@ -2,18 +2,22 @@
  * AdminPanel Component
  * 
  * Admin panel with tabs for:
- * 1. Tool Approval - Review and approve/reject auto-detected tools
- * 2. Tool Management - Manually add new tools
+ * 1. Tool Management - Manually add new tools
+ * 2. Tool Approval - Review and approve/reject auto-detected tools
+ * 3. Reanalysis - Monitor sentiment reanalysis jobs
  */
 import { useState } from 'react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { usePendingTools, useApproveTool, useRejectTool } from '../services/toolApi';
 import { AdminToolManagement } from './AdminToolManagement';
+import { AdminReanalysisPanel } from './AdminReanalysisPanel';
+import { ReanalysisJobMonitor } from './ReanalysisJobMonitor';
+import { ReanalysisJobResponse } from '../types/reanalysis';
 
 // Create a client
 const queryClient = new QueryClient();
 
-type TabType = 'approval' | 'management';
+type TabType = 'management' | 'approval' | 'reanalysis';
 
 const AdminPanelContent = () => {
   const [activeTab, setActiveTab] = useState<TabType>('management');
@@ -22,6 +26,9 @@ const AdminPanelContent = () => {
   const [tokenError, setTokenError] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
   const [actionSuccess, setActionSuccess] = useState<string | null>(null);
+  
+  // Reanalysis job refresh trigger (increment to force refresh)
+  const [reanalysisRefreshTrigger, setReanalysisRefreshTrigger] = useState(0);
 
   // Fetch pending tools (only if token is set and approval tab is active)
   const shouldFetchPending = isTokenSet && activeTab === 'approval';
@@ -35,6 +42,17 @@ const AdminPanelContent = () => {
   // Approval/rejection hooks
   const { approveTool, isLoading: isApproving } = useApproveTool(adminToken);
   const { rejectTool, isLoading: isRejecting } = useRejectTool(adminToken);
+  
+  // Reanalysis job creation handler
+  const handleJobCreated = (jobResponse: ReanalysisJobResponse) => {
+    setActionSuccess(
+      `Reanalysis job created! Job ID: ${jobResponse.job_id.substring(0, 8)}...`
+    );
+    // Trigger refresh of job monitor
+    setReanalysisRefreshTrigger((prev) => prev + 1);
+    // Switch to reanalysis tab to view
+    setActiveTab('reanalysis');
+  };
 
   const handleSetToken = (e: React.FormEvent) => {
     e.preventDefault();
@@ -173,12 +191,43 @@ const AdminPanelContent = () => {
             >
               Pending Approval ({pendingTools.length})
             </button>
+            <button
+              onClick={() => setActiveTab('reanalysis')}
+              className={`
+                px-6 py-3 rounded-lg font-semibold transition-all duration-200
+                ${
+                  activeTab === 'reanalysis'
+                    ? 'bg-blue-600/30 border-2 border-blue-500/50 text-white'
+                    : 'bg-dark-elevated/50 border-2 border-transparent text-gray-400 hover:bg-dark-elevated hover:text-gray-200'
+                }
+              `}
+            >
+              Reanalysis Jobs
+            </button>
           </div>
 
           {/* Tab Content */}
           {activeTab === 'management' && (
             <div>
               <AdminToolManagement adminToken={adminToken} />
+            </div>
+          )}
+          
+          {activeTab === 'reanalysis' && (
+            <div className="space-y-8">
+              {actionSuccess && (
+                <div className="p-4 bg-emerald-900/30 border border-emerald-700/50 rounded-lg text-emerald-300">
+                  <strong>Success:</strong> {actionSuccess}
+                </div>
+              )}
+              <AdminReanalysisPanel 
+                adminToken={adminToken} 
+                onJobCreated={handleJobCreated}
+              />
+              <ReanalysisJobMonitor 
+                adminToken={adminToken}
+                refreshTrigger={reanalysisRefreshTrigger}
+              />
             </div>
           )}
 
