@@ -256,6 +256,7 @@ class DatabaseService:
         self.trending_container = None
         self.tools_container = None
         self.aliases_container = None
+        self.reanalysis_jobs_container = None
 
         logger.info("Database service initialized")
 
@@ -279,6 +280,7 @@ class DatabaseService:
             self._create_container("Tools", "/id")
             self._create_container("ToolAliases", "/id")
             self._create_container("AdminActionLogs", "/id")
+            self._create_container("ReanalysisJobs", "/id")
 
             # Get container clients
             self.posts_container = self.database.get_container_client(
@@ -298,6 +300,9 @@ class DatabaseService:
             self.tools_container = self.database.get_container_client("Tools")
             self.aliases_container = self.database.get_container_client(
                 "ToolAliases"
+            )
+            self.reanalysis_jobs_container = (
+                self.database.get_container_client("ReanalysisJobs")
             )
 
             logger.info("Database containers initialized")

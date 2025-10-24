@@ -96,9 +96,11 @@ class SentimentAnalyzer:
 
         return sentiment_result
 
-    def _detect_tools(self, text: str) -> list[str]:
+    def detect_tools_in_content(self, text: str) -> list[str]:
         """
         Detect AI tools mentioned in text.
+        
+        Public method for use by reanalysis service and other consumers.
 
         Args:
             text: Text to analyze
@@ -112,6 +114,13 @@ class SentimentAnalyzer:
         except Exception as e:
             logger.error(f"Tool detection error: {e}", exc_info=True)
             return []
+    
+    def _detect_tools(self, text: str) -> list[str]:
+        """
+        Internal wrapper for backwards compatibility.
+        Delegates to public detect_tools_in_content method.
+        """
+        return self.detect_tools_in_content(text)
 
     def _analyze_with_vader(
         self, content_id: str, content_type: str, subreddit: str, text: str

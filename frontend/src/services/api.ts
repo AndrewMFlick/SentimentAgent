@@ -575,5 +575,86 @@ export const api = {
       }
     );
     return response.data;
+  },
+
+  // Reanalysis Job endpoints (Feature 013)
+  triggerReanalysis: async (
+    request: {
+      date_range?: { start?: string; end?: string };
+      tool_ids?: string[];
+      batch_size?: number;
+    },
+    adminToken: string
+  ) => {
+    const response = await axios.post(
+      `${API_BASE_URL}/admin/reanalysis/jobs`,
+      request,
+      {
+        headers: {
+          'X-Admin-Token': adminToken
+        }
+      }
+    );
+    return response.data;
+  },
+
+  listReanalysisJobs: async (
+    adminToken: string,
+    params?: {
+      status?: string;
+      limit?: number;
+      offset?: number;
+    }
+  ) => {
+    const queryParams = new URLSearchParams();
+    if (params?.status) queryParams.append('status', params.status);
+    if (params?.limit) queryParams.append('limit', params.limit.toString());
+    if (params?.offset) queryParams.append('offset', params.offset.toString());
+    
+    const response = await axios.get(
+      `${API_BASE_URL}/admin/reanalysis/jobs?${queryParams}`,
+      {
+        headers: {
+          'X-Admin-Token': adminToken
+        }
+      }
+    );
+    return response.data;
+  },
+
+  getReanalysisJob: async (jobId: string, adminToken: string) => {
+    const response = await axios.get(
+      `${API_BASE_URL}/admin/reanalysis/jobs/${jobId}`,
+      {
+        headers: {
+          'X-Admin-Token': adminToken
+        }
+      }
+    );
+    return response.data;
+  },
+
+  getReanalysisJobStatus: async (jobId: string, adminToken: string) => {
+    const response = await axios.get(
+      `${API_BASE_URL}/admin/reanalysis/jobs/${jobId}/status`,
+      {
+        headers: {
+          'X-Admin-Token': adminToken
+        }
+      }
+    );
+    return response.data;
+  },
+
+  cancelReanalysisJob: async (jobId: string, adminToken: string) => {
+    const response = await axios.delete(
+      `${API_BASE_URL}/admin/reanalysis/jobs/${jobId}`,
+      {
+        headers: {
+          'X-Admin-Token': adminToken
+        }
+      }
+    );
+    return response.data;
   }
 };

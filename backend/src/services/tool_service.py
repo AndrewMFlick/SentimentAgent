@@ -95,6 +95,57 @@ class ToolService:
             categories=tool_data.categories
         )
 
+        # Trigger automatic reanalysis if tool is active (T024)
+        if tool["status"] == "active":
+            try:
+                from ..config import settings
+                
+                # Check if automatic reanalysis is enabled (T028)
+                if not settings.enable_auto_reanalysis or not settings.auto_reanalysis_on_tool_create:
+                    logger.debug(
+                        "Automatic reanalysis disabled for tool creation",
+                        tool_id=tool_id
+                    )
+                    return tool
+                
+                from .reanalysis_service import ReanalysisService
+                
+                # Get containers for reanalysis service
+                jobs_container = self.tools_container.database.get_container_client("ReanalysisJobs")
+                sentiment_container = self.tools_container.database.get_container_client("sentiment_scores")
+                
+                # Create reanalysis service
+                reanalysis_service = ReanalysisService(
+                    reanalysis_jobs_container=jobs_container,
+                    sentiment_container=sentiment_container,
+                    tools_container=self.tools_container,
+                    aliases_container=self.aliases_container
+                )
+                
+                # Trigger automatic reanalysis
+                import asyncio
+                asyncio.create_task(
+                    reanalysis_service.trigger_automatic_reanalysis(
+                        tool_ids=[tool_id],
+                        triggered_by=tool.get("created_by", "admin"),
+                        reason=f"New tool created: {tool_data.name}"
+                    )
+                )
+                
+                logger.info(
+                    "Automatic reanalysis queued for new tool",
+                    tool_id=tool_id,
+                    tool_name=tool_data.name
+                )
+            except Exception as e:
+                # Don't fail tool creation if reanalysis trigger fails
+                logger.warning(
+                    "Failed to trigger automatic reanalysis for new tool",
+                    tool_id=tool_id,
+                    error=str(e),
+                    exc_info=True
+                )
+
         return tool
 
     async def get_tool(self, tool_id: str) -> Optional[Dict[str, Any]]:
@@ -455,6 +506,61 @@ class ToolService:
                 ip_address=ip_address,
                 user_agent=user_agent
             )
+
+            # Trigger automatic reanalysis if status changed to active (T025)
+            if (
+                "status" in update_dict
+                and before_state.get("status") != "active"
+                and tool["status"] == "active"
+            ):
+                try:
+                    from ..config import settings
+                    
+                    # Check if automatic reanalysis is enabled (T028)
+                    if not settings.enable_auto_reanalysis or not settings.auto_reanalysis_on_tool_activate:
+                        logger.debug(
+                            "Automatic reanalysis disabled for tool activation",
+                            tool_id=tool_id
+                        )
+                        return tool
+                    
+                    from .reanalysis_service import ReanalysisService
+                    
+                    # Get containers for reanalysis service
+                    jobs_container = self.tools_container.database.get_container_client("ReanalysisJobs")
+                    sentiment_container = self.tools_container.database.get_container_client("sentiment_scores")
+                    
+                    # Create reanalysis service
+                    reanalysis_service = ReanalysisService(
+                        reanalysis_jobs_container=jobs_container,
+                        sentiment_container=sentiment_container,
+                        tools_container=self.tools_container,
+                        aliases_container=self.aliases_container
+                    )
+                    
+                    # Trigger automatic reanalysis
+                    import asyncio
+                    asyncio.create_task(
+                        reanalysis_service.trigger_automatic_reanalysis(
+                            tool_ids=[tool_id],
+                            triggered_by=updated_by,
+                            reason=f"Tool activated: {tool['name']}"
+                        )
+                    )
+                    
+                    logger.info(
+                        "Automatic reanalysis queued for activated tool",
+                        tool_id=tool_id,
+                        tool_name=tool["name"]
+                    )
+                except Exception as e:
+                    # Don't fail tool update if reanalysis trigger fails
+                    logger.warning(
+                        "Failed to trigger automatic reanalysis for activated tool",
+                        tool_id=tool_id,
+                        error=str(e),
+                        exc_info=True
+                    )
 
             return tool
         except exceptions.CosmosHttpResponseError as e:
@@ -1280,6 +1386,52 @@ class ToolService:
             sentiment_count=sentiment_count,
             merged_by=merged_by
         )
+
+        # Update detected_tool_ids in sentiment_scores (T026-T027)
+        try:
+            from .reanalysis_service import ReanalysisService
+            
+            # Get containers for reanalysis service
+            jobs_container = self.tools_container.database.get_container_client("ReanalysisJobs")
+            sentiment_container = self.tools_container.database.get_container_client("sentiment_scores")
+            
+            # Create reanalysis service
+            reanalysis_service = ReanalysisService(
+                reanalysis_jobs_container=jobs_container,
+                sentiment_container=sentiment_container,
+                tools_container=self.tools_container,
+                aliases_container=self.aliases_container
+            )
+            
+            # Update tool IDs synchronously (important for data consistency)
+            replacement_stats = await reanalysis_service.update_tool_ids_after_merge(
+                source_tool_ids=source_tool_ids,
+                target_tool_id=target_tool_id,
+                merged_by=merged_by
+            )
+            
+            logger.info(
+                "Sentiment data updated after merge",
+                target_tool_id=target_tool_id,
+                documents_updated=replacement_stats["documents_updated"],
+                replacements_made=replacement_stats["replacements_made"]
+            )
+            
+            # Add replacement stats to merge record
+            merge_record["sentiment_updates"] = replacement_stats
+            
+        except Exception as e:
+            # Log error but don't fail the merge
+            logger.error(
+                "Failed to update sentiment data after merge",
+                target_tool_id=target_tool_id,
+                source_tool_ids=source_tool_ids,
+                error=str(e),
+                exc_info=True
+            )
+            warnings.append(
+                f"Merge completed but sentiment data update failed: {str(e)}"
+            )
 
         return {
             "merge_record": merge_record,

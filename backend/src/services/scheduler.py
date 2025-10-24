@@ -119,6 +119,15 @@ class CollectionScheduler:
             replace_existing=True,
         )
 
+        # Schedule reanalysis job poller (every minute)
+        self.scheduler.add_job(
+            self.poll_reanalysis_jobs,
+            trigger=IntervalTrigger(minutes=1),
+            id="reanalysis_poller",
+            name="Poll for queued reanalysis jobs",
+            replace_existing=True,
+        )
+
         self.scheduler.start()
         self.is_running = True
 
@@ -504,6 +513,98 @@ class CollectionScheduler:
             )
         except Exception as e:
             logger.error(f"Sentiment data cleanup failed: {e}", exc_info=True)
+
+    async def poll_reanalysis_jobs(self):
+        """
+        Poll for queued reanalysis jobs and process them.
+        
+        This method:
+        1. Queries ReanalysisJobs for status='queued'
+        2. Picks the oldest job (FIFO)
+        3. Calls process_reanalysis_job() in background
+        4. Uses catch-log-continue pattern for background processing
+        """
+        logger.debug("Polling for queued reanalysis jobs")
+        
+        try:
+            from .reanalysis_service import ReanalysisService
+            
+            # Get containers
+            jobs_container = db.database.get_container_client("ReanalysisJobs")
+            sentiment_container = db.database.get_container_client("sentiment_scores")
+            tools_container = db.database.get_container_client("Tools")
+            aliases_container = db.database.get_container_client("ToolAliases")
+            
+            # Create service
+            service = ReanalysisService(
+                reanalysis_jobs_container=jobs_container,
+                sentiment_container=sentiment_container,
+                tools_container=tools_container,
+                aliases_container=aliases_container,
+            )
+            
+            # Query for queued jobs
+            query = """
+                SELECT * FROM c 
+                WHERE c.status = 'queued'
+                ORDER BY c.created_at ASC
+            """
+            
+            queued_jobs = list(jobs_container.query_items(
+                query=query,
+                enable_cross_partition_query=True
+            ))
+            
+            if not queued_jobs:
+                logger.debug("No queued reanalysis jobs found")
+                return
+            
+            # Process the oldest job (FIFO)
+            job = queued_jobs[0]
+            job_id = job["id"]
+            
+            logger.info(
+                "Processing queued reanalysis job",
+                job_id=job_id,
+                triggered_by=job.get("triggered_by"),
+                created_at=job.get("created_at")
+            )
+            
+            try:
+                # Run in executor to avoid blocking scheduler
+                loop = asyncio.get_event_loop()
+                await loop.run_in_executor(
+                    self.executor,
+                    lambda: asyncio.run(
+                        service.process_reanalysis_job(
+                            job_id=job_id,
+                            sentiment_analyzer=self.analyzer
+                        )
+                    )
+                )
+                
+                logger.info(
+                    "Reanalysis job processing completed",
+                    job_id=job_id
+                )
+            except Exception as e:
+                # Catch-log-continue: Log error but don't crash scheduler
+                logger.error(
+                    "Reanalysis job processing failed",
+                    job_id=job_id,
+                    error=str(e),
+                    error_type=type(e).__name__,
+                    exc_info=True
+                )
+                
+        except Exception as e:
+            # Catch-log-continue: Log error but don't crash scheduler
+            logger.error(
+                "Reanalysis job poller failed",
+                error=str(e),
+                error_type=type(e).__name__,
+                exc_info=True
+            )
 
 
 # Global scheduler instance

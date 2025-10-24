@@ -1,0 +1,474 @@
+openapi: 3.0.3
+info:
+  title: Admin Sentiment Reanalysis API
+  description: |
+    API endpoints for triggering and monitoring sentiment reanalysis jobs.
+    Enables admins to backfill tool categorization in existing sentiment data.
+  version: 1.0.0
+  contact:
+    name: SentimentAgent API
+    
+servers:
+  - url: http://localhost:8000/api/v1
+    description: Local development
+  - url: https://api.sentimentagent.com/api/v1
+    description: Production
+
+paths:
+  /admin/reanalysis/jobs:
+    post:
+      summary: Trigger manual reanalysis job
+      description: |
+        Creates and starts a new reanalysis job to backfill tool categorization.
+        Requires admin authentication. Returns immediately with job ID.
+      operationId: triggerReanalysisJob
+      tags:
+        - Admin Reanalysis
+      security:
+        - AdminToken: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ReanalysisJobRequest'
+            examples:
+              full_backfill:
+                summary: Full dataset backfill
+                value:
+                  batch_size: 100
+              date_range:
+                summary: Reanalyze specific date range
+                value:
+                  date_range:
+                    start: "2025-01-01T00:00:00Z"
+                    end: "2025-10-23T23:59:59Z"
+                  batch_size: 100
+              specific_tools:
+                summary: Reanalyze for specific tools only
+                value:
+                  tool_ids: ["github-copilot", "claude"]
+                  batch_size: 50
+      responses:
+        '202':
+          description: Job accepted and queued
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReanalysisJobResponse'
+              example:
+                job_id: "job-a1b2c3d4"
+                status: "queued"
+                message: "Reanalysis job created successfully"
+                parameters:
+                  batch_size: 100
+                created_at: "2025-10-23T10:00:00Z"
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '409':
+          description: Conflict - Active job already running
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error: "Conflict"
+                message: "Reanalysis job already in progress. Job ID: job-xyz123"
+                details:
+                  active_job_id: "job-xyz123"
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+    
+    get:
+      summary: List reanalysis jobs
+      description: |
+        Returns paginated list of reanalysis jobs with filtering options.
+        Sorted by creation time (newest first).
+      operationId: listReanalysisJobs
+      tags:
+        - Admin Reanalysis
+      security:
+        - AdminToken: []
+      parameters:
+        - name: status
+          in: query
+          description: Filter by job status
+          required: false
+          schema:
+            type: string
+            enum: [queued, running, completed, failed]
+        - name: trigger_type
+          in: query
+          description: Filter by trigger type
+          required: false
+          schema:
+            type: string
+            enum: [manual, automatic]
+        - name: limit
+          in: query
+          description: Maximum jobs to return
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 20
+        - name: offset
+          in: query
+          description: Number of jobs to skip
+          required: false
+          schema:
+            type: integer
+            minimum: 0
+            default: 0
+      responses:
+        '200':
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReanalysisJobList'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+  
+  /admin/reanalysis/jobs/{job_id}:
+    get:
+      summary: Get reanalysis job details
+      description: |
+        Returns detailed information about a specific reanalysis job,
+        including progress, statistics, and error log.
+      operationId: getReanalysisJob
+      tags:
+        - Admin Reanalysis
+      security:
+        - AdminToken: []
+      parameters:
+        - name: job_id
+          in: path
+          description: Job ID
+          required: true
+          schema:
+            type: string
+            pattern: '^job-[a-f0-9-]+$'
+      responses:
+        '200':
+          description: Job found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReanalysisJobDetail'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+    
+    delete:
+      summary: Cancel reanalysis job
+      description: |
+        Cancels a queued or running reanalysis job. Completed/failed jobs
+        cannot be cancelled. Running jobs stop at next checkpoint.
+      operationId: cancelReanalysisJob
+      tags:
+        - Admin Reanalysis
+      security:
+        - AdminToken: []
+      parameters:
+        - name: job_id
+          in: path
+          description: Job ID
+          required: true
+          schema:
+            type: string
+            pattern: '^job-[a-f0-9-]+$'
+      responses:
+        '200':
+          description: Job cancelled successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+                  job_id:
+                    type: string
+              example:
+                message: "Reanalysis job cancelled"
+                job_id: "job-a1b2c3d4"
+        '400':
+          description: Bad request - Job already completed/failed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+components:
+  securitySchemes:
+    AdminToken:
+      type: apiKey
+      in: header
+      name: X-Admin-Token
+      description: Admin authentication token
+  
+  schemas:
+    ReanalysisJobRequest:
+      type: object
+      properties:
+        date_range:
+          type: object
+          description: Optional date range filter for sentiment scores
+          properties:
+            start:
+              type: string
+              format: date-time
+              description: Start date (ISO 8601). Null = no start limit
+            end:
+              type: string
+              format: date-time
+              description: End date (ISO 8601). Null = no end limit
+        tool_ids:
+          type: array
+          description: Optional list of tool IDs to reanalyze. Empty = all tools
+          items:
+            type: string
+          example: ["github-copilot", "claude"]
+        batch_size:
+          type: integer
+          description: Documents to process per checkpoint
+          minimum: 1
+          maximum: 1000
+          default: 100
+    
+    ReanalysisJobResponse:
+      type: object
+      required:
+        - job_id
+        - status
+        - message
+        - created_at
+      properties:
+        job_id:
+          type: string
+          description: Unique job identifier
+          example: "job-a1b2c3d4"
+        status:
+          type: string
+          enum: [queued, running]
+          description: Initial job status
+        message:
+          type: string
+          description: Human-readable success message
+        parameters:
+          $ref: '#/components/schemas/ReanalysisJobRequest'
+        created_at:
+          type: string
+          format: date-time
+          description: Job creation timestamp (ISO 8601)
+    
+    ReanalysisJobDetail:
+      type: object
+      required:
+        - id
+        - status
+        - trigger_type
+        - triggered_by
+        - parameters
+        - progress
+        - statistics
+        - created_at
+      properties:
+        id:
+          type: string
+          description: Job identifier
+          example: "job-a1b2c3d4"
+        status:
+          type: string
+          enum: [queued, running, completed, failed]
+          description: Current job status
+        trigger_type:
+          type: string
+          enum: [manual, automatic]
+          description: How job was triggered
+        triggered_by:
+          type: string
+          description: Admin user or system identifier
+          example: "admin@example.com"
+        parameters:
+          $ref: '#/components/schemas/ReanalysisJobRequest'
+        progress:
+          type: object
+          required:
+            - total_count
+            - processed_count
+            - percentage
+          properties:
+            total_count:
+              type: integer
+              description: Total documents to process
+              example: 5699
+            processed_count:
+              type: integer
+              description: Documents completed
+              example: 2500
+            percentage:
+              type: number
+              format: float
+              description: Progress percentage (0-100)
+              example: 43.9
+            last_checkpoint_id:
+              type: string
+              nullable: true
+              description: Last processed document ID (for resumption)
+        statistics:
+          type: object
+          required:
+            - tools_detected
+            - errors_count
+            - categorized_count
+            - uncategorized_count
+          properties:
+            tools_detected:
+              type: object
+              description: Tool ID to detection count mapping
+              additionalProperties:
+                type: integer
+              example:
+                github-copilot: 245
+                claude: 123
+            errors_count:
+              type: integer
+              description: Total errors encountered
+              example: 2
+            categorized_count:
+              type: integer
+              description: Documents with tools detected
+              example: 368
+            uncategorized_count:
+              type: integer
+              description: Documents with no tools found
+              example: 5331
+        error_log:
+          type: array
+          description: List of errors encountered
+          items:
+            type: object
+            properties:
+              doc_id:
+                type: string
+                description: Sentiment score document ID
+              error:
+                type: string
+                description: Error message
+              timestamp:
+                type: string
+                format: date-time
+                description: Error timestamp (ISO 8601)
+        start_time:
+          type: string
+          format: date-time
+          nullable: true
+          description: Job start timestamp (ISO 8601)
+        end_time:
+          type: string
+          format: date-time
+          nullable: true
+          description: Job end timestamp (ISO 8601)
+        created_at:
+          type: string
+          format: date-time
+          description: Job creation timestamp (ISO 8601)
+    
+    ReanalysisJobList:
+      type: object
+      required:
+        - jobs
+        - total
+        - limit
+        - offset
+      properties:
+        jobs:
+          type: array
+          items:
+            $ref: '#/components/schemas/ReanalysisJobDetail'
+        total:
+          type: integer
+          description: Total number of jobs matching filter
+          example: 42
+        limit:
+          type: integer
+          description: Maximum jobs per page
+          example: 20
+        offset:
+          type: integer
+          description: Number of jobs skipped
+          example: 0
+    
+    Error:
+      type: object
+      required:
+        - error
+        - message
+      properties:
+        error:
+          type: string
+          description: Error type
+        message:
+          type: string
+          description: Human-readable error message
+        details:
+          type: object
+          description: Additional error context
+          additionalProperties: true
+  
+  responses:
+    BadRequest:
+      description: Bad request - Invalid parameters
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          example:
+            error: "Bad Request"
+            message: "Invalid date_range: start must be before end"
+    
+    Unauthorized:
+      description: Unauthorized - Missing or invalid admin token
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          example:
+            error: "Unauthorized"
+            message: "Invalid or missing X-Admin-Token header"
+    
+    NotFound:
+      description: Not found - Resource does not exist
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          example:
+            error: "Not Found"
+            message: "Reanalysis job not found"
+    
+    InternalServerError:
+      description: Internal server error
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          example:
+            error: "Internal Server Error"
+            message: "Failed to process request"
