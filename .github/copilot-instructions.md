@@ -7,6 +7,7 @@ Auto-generated from all feature plans. Last updated: 2025-01-15
 - Azure Cosmos DB (SQL API) - Tools and ToolAliases containers already exis (011-the-admin-section)
 - Python 3.13.3 + FastAPI 0.109.2, Azure Cosmos SDK 4.5.1, APScheduler 3.10.4, Pydantic 2.x, structlog 24.1.0 (013-admin-feature-to)
 - Azure CosmosDB (SQL API) - sentiment_scores, Tools, ToolAliases collections; ReanalysisJobs collection (NEW) (013-admin-feature-to)
+- Azure Cosmos DB (SQL API) - emulator on localhost:8081, production on Azure (017-pre-cached-sentiment)
 
 - Python 3.13.3 + Azure Cosmos SDK 4.5.1, FastAPI 0.109.2, structlog 24.1.0 (004-fix-the-cosmosdb)
 - Azure CosmosDB (PostgreSQL mode emulator on localhost:8081, production on Azure) (004-fix-the-cosmosdb)
@@ -133,9 +134,9 @@ app = FastAPI(lifespan=lifespan)
 ```
 
 ## Recent Changes
+- 017-pre-cached-sentiment: Added Python 3.13.3 + FastAPI 0.109.2, Azure Cosmos SDK 4.5.1, APScheduler 3.10.4, Pydantic 2.x, structlog 24.1.0
 - 013-admin-feature-to: Added Python 3.13.3 + FastAPI 0.109.2, Azure Cosmos SDK 4.5.1, APScheduler 3.10.4, Pydantic 2.x, structlog 24.1.0
 - 012-hot-topics-isn: Added Hot Topics dashboard with engagement scoring, related posts API, timeline filtering, Load More pagination
-- 011-the-admin-section: Added Python 3.13.3 (backend), TypeScript 5.3.3 (frontend) + FastAPI 0.109.2, Azure Cosmos SDK 4.5.1, React 18.2.0, TailwindCSS 3.4+, Pydantic 2.x
 
 
 ## Admin Tool Management Patterns (Feature 010)
