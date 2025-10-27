@@ -1,0 +1,285 @@
+openapi: 3.0.3
+info:
+  title: Sentiment Cache API
+  description: API contracts for pre-cached sentiment analysis feature
+  version: 1.0.0
+
+paths:
+  /api/v1/tools/{tool_id}/sentiment:
+    get:
+      summary: Get tool sentiment data (with caching)
+      description: |
+        Retrieves sentiment analysis for a specific tool over a time period.
+        This endpoint is MODIFIED to use the cache when available.
+        
+        Cache behavior:
+        - If cached data exists and is fresh (< 30 min old), return from cache
+        - If cache miss, calculate on-demand, populate cache, and return
+        - Cache key is based on tool_id and hours parameter
+        
+        Time period mapping:
+        - hours=1 → HOUR_1 cache
+        - hours=24 → HOUR_24 cache
+        - hours=168 (7 days) → DAY_7 cache
+        - hours=720 (30 days) → DAY_30 cache
+        - Other values → on-demand calculation (not cached)
+      parameters:
+        - name: tool_id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+          description: Unique identifier of the tool
+        - name: hours
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 720
+            default: 24
+          description: Number of hours to look back (default 24, max 720 = 30 days)
+      responses:
+        '200':
+          description: Sentiment data retrieved successfully
+          headers:
+            X-Cache-Status:
+              description: Indicates if response came from cache
+              schema:
+                type: string
+                enum: [HIT, MISS, BYPASS]
+            X-Cache-Age:
+              description: Age of cached data in seconds (only present on cache HIT)
+              schema:
+                type: integer
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - tool_id
+                  - period_hours
+                  - total_mentions
+                  - positive_count
+                  - negative_count
+                  - neutral_count
+                  - positive_percentage
+                  - negative_percentage
+                  - neutral_percentage
+                  - average_sentiment
+                  - period_start
+                  - period_end
+                  - cached_at
+                  - is_cached
+                properties:
+                  tool_id:
+                    type: string
+                    format: uuid
+                  period_hours:
+                    type: integer
+                    description: Number of hours covered by this data
+                  total_mentions:
+                    type: integer
+                    description: Total mentions of the tool
+                  positive_count:
+                    type: integer
+                  negative_count:
+                    type: integer
+                  neutral_count:
+                    type: integer
+                  positive_percentage:
+                    type: number
+                    format: float
+                    minimum: 0
+                    maximum: 100
+                  negative_percentage:
+                    type: number
+                    format: float
+                    minimum: 0
+                    maximum: 100
+                  neutral_percentage:
+                    type: number
+                    format: float
+                    minimum: 0
+                    maximum: 100
+                  average_sentiment:
+                    type: number
+                    format: float
+                    minimum: -1.0
+                    maximum: 1.0
+                  period_start:
+                    type: string
+                    format: date-time
+                    description: Start of the time period (ISO 8601)
+                  period_end:
+                    type: string
+                    format: date-time
+                    description: End of the time period (ISO 8601)
+                  cached_at:
+                    type: string
+                    format: date-time
+                    description: When this data was cached (null if not from cache)
+                    nullable: true
+                  is_cached:
+                    type: boolean
+                    description: Whether this response came from cache
+              examples:
+                cached_response:
+                  summary: Response from cache (typical case)
+                  value:
+                    tool_id: "877eb2d8-661b-4643-ae62-cfc49e74c31e"
+                    period_hours: 24
+                    total_mentions: 1789
+                    positive_count: 892
+                    negative_count: 534
+                    neutral_count: 363
+                    positive_percentage: 49.9
+                    negative_percentage: 29.9
+                    neutral_percentage: 20.3
+                    average_sentiment: 0.15
+                    period_start: "2025-10-26T00:00:00Z"
+                    period_end: "2025-10-27T00:00:00Z"
+                    cached_at: "2025-10-27T12:00:00Z"
+                    is_cached: true
+                on_demand_response:
+                  summary: On-demand calculation (cache miss)
+                  value:
+                    tool_id: "877eb2d8-661b-4643-ae62-cfc49e74c31e"
+                    period_hours: 48
+                    total_mentions: 3421
+                    positive_count: 1705
+                    negative_count: 1026
+                    neutral_count: 690
+                    positive_percentage: 49.8
+                    negative_percentage: 30.0
+                    neutral_percentage: 20.2
+                    average_sentiment: 0.14
+                    period_start: "2025-10-25T00:00:00Z"
+                    period_end: "2025-10-27T00:00:00Z"
+                    cached_at: null
+                    is_cached: false
+        '404':
+          description: Tool not found
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  detail:
+                    type: string
+                    example: "Tool not found"
+        '500':
+          description: Server error
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  detail:
+                    type: string
+
+  /api/v1/cache/health:
+    get:
+      summary: Get cache health metrics
+      description: Returns cache performance metrics for monitoring
+      responses:
+        '200':
+          description: Cache health metrics
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - total_entries
+                  - last_refresh
+                  - cache_hit_rate
+                  - status
+                properties:
+                  total_entries:
+                    type: integer
+                    description: Current number of cache entries
+                  last_refresh:
+                    type: string
+                    format: date-time
+                    description: When cache was last refreshed
+                  last_refresh_duration_ms:
+                    type: integer
+                    description: Duration of last refresh in milliseconds
+                  cache_hit_rate:
+                    type: number
+                    format: float
+                    minimum: 0
+                    maximum: 1
+                    description: Cache hit rate (0.0 to 1.0)
+                  cache_hits_24h:
+                    type: integer
+                  cache_misses_24h:
+                    type: integer
+                  error_count_24h:
+                    type: integer
+                  tools_refreshed:
+                    type: array
+                    items:
+                      type: string
+                      format: uuid
+                    description: Tool IDs refreshed in last cycle
+                  status:
+                    type: string
+                    enum: [healthy, degraded, unhealthy]
+                    description: |
+                      - healthy: hit rate > 90%, errors < 5
+                      - degraded: hit rate 70-90% or errors 5-20
+                      - unhealthy: hit rate < 70% or errors > 20
+              example:
+                total_entries: 60
+                last_refresh: "2025-10-27T12:00:00Z"
+                last_refresh_duration_ms: 12500
+                cache_hit_rate: 0.965
+                cache_hits_24h: 1250
+                cache_misses_24h: 45
+                error_count_24h: 2
+                tools_refreshed: ["877eb2d8-661b-4643-ae62-cfc49e74c31e", "a5c3e9f1-2b4d-4e1c-9a8b-3c5d7f9e1a2b"]
+                status: "healthy"
+
+  /api/v1/cache/invalidate/{tool_id}:
+    post:
+      summary: Invalidate cache for a specific tool
+      description: |
+        Manually invalidate cached sentiment data for a tool.
+        Typically called after reanalysis completes.
+        Requires admin authentication.
+      parameters:
+        - name: tool_id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      security:
+        - AdminToken: []
+      responses:
+        '200':
+          description: Cache invalidated successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+                    example: "Cache invalidated for tool 877eb2d8-661b-4643-ae62-cfc49e74c31e"
+                  entries_deleted:
+                    type: integer
+                    description: Number of cache entries deleted
+        '401':
+          description: Unauthorized - admin token required
+        '404':
+          description: Tool not found
+
+components:
+  securitySchemes:
+    AdminToken:
+      type: apiKey
+      in: header
+      name: X-Admin-Token
