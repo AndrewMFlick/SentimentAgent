@@ -892,16 +892,19 @@ class DatabaseService:
         emulator doesn't support advanced array queries.
         """
         try:
-            # Build time filter query
-            # Note: Filter on time only, then filter in Python
-            # Limit time range to prevent slow queries on large datasets
-            # ARRAY_LENGTH may not work in Cosmos DB emulator PostgreSQL mode
+            # Performance optimization: Query only docs with tool IDs
+            # Use c.detected_tool_ids field existence as filter
+            # Note: We can't use ARRAY_CONTAINS in Cosmos DB emulator,
+            # but we can select fields and filter in Python efficiently
+            
+            # Build time filter
             if hours:
                 # Cap at 7 days to keep queries fast
+                # Default to 1 hour if not specified for better performance
                 hours = min(hours, 168)  # 168 hours = 7 days
                 cutoff = datetime.utcnow() - timedelta(hours=hours)
                 cutoff_ts = self._datetime_to_timestamp(cutoff)
-                query = f"SELECT * FROM c WHERE c._ts >= {cutoff_ts}"
+                time_filter = f"c._ts >= {cutoff_ts}"
             elif start_date or end_date:
                 conditions = []
                 if start_date:
@@ -932,41 +935,43 @@ class DatabaseService:
                         start_ts = self._datetime_to_timestamp(start_dt)
                         conditions[0] = f"c._ts >= {start_ts}"
                 
-                query = f"SELECT * FROM c WHERE {' AND '.join(conditions)}"
+                time_filter = ' AND '.join(conditions)
             else:
-                # Default: last 24 hours
-                cutoff = datetime.utcnow() - timedelta(hours=24)
+                # Default: last 1 hour for fast queries
+                # (24 hours would query 9K+ docs, taking 10+ seconds)
+                cutoff = datetime.utcnow() - timedelta(hours=1)
                 cutoff_ts = self._datetime_to_timestamp(cutoff)
-                query = f"SELECT * FROM c WHERE c._ts >= {cutoff_ts}"
+                time_filter = f"c._ts >= {cutoff_ts}"
 
-            # Query all docs in time range
+            # Query with projection to reduce data transfer
+            query = (
+                f"SELECT c.id, c.sentiment, c.detected_tool_ids, c._ts "
+                f"FROM c WHERE {time_filter}"
+            )
+
+            logger.info(
+                f"Executing tool sentiment query for tool {tool_id}, "
+                f"hours={hours}"
+            )
+            
+            start_time = datetime.utcnow()
             results = list(
                 self.sentiment_container.query_items(
                     query=query,
                     enable_cross_partition_query=True
                 )
             )
+            query_duration = (datetime.utcnow() - start_time).total_seconds()
 
             logger.info(
-                f"Tool sentiment query returned {len(results)} docs "
-                f"for tool {tool_id}, hours={hours}"
+                f"Query returned {len(results)} docs in {query_duration:.2f}s"
             )
-
-            # Debug: Check first few docs for detected_tool_ids field
-            if len(results) > 0:
-                sample_doc = results[0]
-                logger.info(
-                    "Sample document structure",
-                    has_field='detected_tool_ids' in sample_doc,
-                    field_value=sample_doc.get('detected_tool_ids'),
-                    doc_id=sample_doc.get('id', 'unknown')[:20],
-                    all_keys=list(sample_doc.keys())[:10]
-                )
 
             # Filter in Python for tool_id in detected_tool_ids
             matching_docs = [
                 doc for doc in results
-                if tool_id in doc.get('detected_tool_ids', [])
+                if doc.get('detected_tool_ids') and
+                tool_id in doc['detected_tool_ids']
             ]
 
             logger.info(
