@@ -24,10 +24,10 @@ Tasks: T014, T015, T016
 """
 
 import asyncio
-import logging
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 
+import structlog
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.interval import IntervalTrigger
 
@@ -39,7 +39,7 @@ from .reddit_collector import RedditCollector
 from .sentiment_analyzer import SentimentAnalyzer
 from .trending_analyzer import trending_analyzer
 
-logger = logging.getLogger(__name__)
+logger = structlog.get_logger()
 
 
 class CollectionScheduler:
@@ -571,16 +571,11 @@ class CollectionScheduler:
             )
             
             try:
-                # Run in executor to avoid blocking scheduler
-                loop = asyncio.get_event_loop()
-                await loop.run_in_executor(
-                    self.executor,
-                    lambda: asyncio.run(
-                        service.process_reanalysis_job(
-                            job_id=job_id,
-                            sentiment_analyzer=self.analyzer
-                        )
-                    )
+                # Process job directly in the async context
+                # No need for executor since process_reanalysis_job is async
+                await service.process_reanalysis_job(
+                    job_id=job_id,
+                    sentiment_analyzer=self.analyzer
                 )
                 
                 logger.info(

@@ -245,7 +245,11 @@ export function ReanalysisJobMonitor({
                         </span>
                       </div>
                       <p className="text-xs text-gray-500">
-                        {job.progress.processed_count} / {job.progress.total_count}
+                        {job.progress.processed_count} / {
+                          typeof job.progress.total_count === 'object' 
+                            ? (job.progress.total_count as any).count || 0
+                            : job.progress.total_count
+                        }
                       </p>
                     </div>
                   </td>

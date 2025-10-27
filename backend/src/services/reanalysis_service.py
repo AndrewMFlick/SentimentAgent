@@ -878,23 +878,135 @@ class ReanalysisService:
                     doc_id = item["id"]
                     
                     try:
-                        # Get original content for tool detection
-                        content = item.get("content", "")
-                        if not content:
+                        # Fetch original content from posts or comments
+                        content_id = item.get("content_id")
+                        content_type = item.get("content_type")
+                        
+                        if not content_id or not content_type:
                             logger.warning(
-                                "Document has no content",
+                                "Missing content_id or content_type",
                                 doc_id=doc_id
                             )
                             uncategorized_count += 1
                             processed_count += 1
                             continue
 
-                        # Detect tools using SentimentAnalyzer
+                        # Fetch original post or comment to get text
+                        try:
+                            # Get database service to access containers
+                            from ..services.database import get_db
+                            db_service = get_db()
+                            
+                            if content_type == "post":
+                                if not db_service.posts_container:
+                                    logger.error("Posts container unavailable")
+                                    uncategorized_count += 1
+                                    processed_count += 1
+                                    continue
+                                
+                                # Posts partition by subreddit
+                                subreddit = item.get("subreddit")
+                                content_doc = (
+                                    db_service.posts_container.read_item(
+                                        item=content_id,
+                                        partition_key=subreddit
+                                    )
+                                )
+                                # Post: title + content
+                                title = content_doc.get('title', '')
+                                body = content_doc.get('content', '')
+                                content = f"{title} {body}"
+                            elif content_type == "comment":
+                                if not db_service.comments_container:
+                                    logger.error(
+                                        "Comments container unavailable"
+                                    )
+                                    uncategorized_count += 1
+                                    processed_count += 1
+                                    continue
+                                
+                                # Comments partition by post_id
+                                # Use cross-partition query if post_id not
+                                # in sentiment doc
+                                post_id = item.get("post_id")
+                                if post_id:
+                                    content_doc = (
+                                        db_service
+                                        .comments_container
+                                        .read_item(
+                                            item=content_id,
+                                            partition_key=post_id
+                                        )
+                                    )
+                                else:
+                                    # Fall back to cross-partition query
+                                    query = "SELECT * FROM c WHERE c.id = @id"
+                                    params = [
+                                        {"name": "@id", "value": content_id}
+                                    ]
+                                    results = list(
+                                        db_service
+                                        .comments_container
+                                        .query_items(
+                                            query=query,
+                                            parameters=params,
+                                            enable_cross_partition_query=True
+                                        )
+                                    )
+                                    if not results:
+                                        raise Exception("Comment not found")
+                                    content_doc = results[0]
+                                
+                                content = content_doc.get("content", "")
+                            else:
+                                logger.warning(
+                                    "Unknown content_type",
+                                    doc_id=doc_id,
+                                    content_type=content_type
+                                )
+                                uncategorized_count += 1
+                                processed_count += 1
+                                continue
+                        except Exception as e:
+                            logger.warning(
+                                "Failed to fetch original content",
+                                doc_id=doc_id,
+                                content_id=content_id,
+                                content_type=content_type,
+                                error=str(e)
+                            )
+                            uncategorized_count += 1
+                            processed_count += 1
+                            continue
+
+                        if not content or not content.strip():
+                            logger.warning(
+                                "Empty content",
+                                doc_id=doc_id,
+                                content_id=content_id
+                            )
+                            uncategorized_count += 1
+                            processed_count += 1
+                            continue
+
+                        # Detect tools
                         detected_tool_ids = (
                             sentiment_analyzer.detect_tools_in_content(
                                 content
                             )
                         )
+
+                        # Debug: Log first few analyses
+                        if processed_count < 5:
+                            logger.info(
+                                "Reanalysis sample",
+                                doc_id=doc_id,
+                                content_id=content_id,
+                                content_type=content_type,
+                                content_length=len(content),
+                                content_sample=content[:100],
+                                detected_tools=detected_tool_ids
+                            )
 
                         # Update document
                         item["detected_tool_ids"] = detected_tool_ids
@@ -902,7 +1014,9 @@ class ReanalysisService:
                             datetime.now(timezone.utc).isoformat()
                         )
                         # Increment version
-                        current_version = item.get("analysis_version", "1.0.0")
+                        current_version = item.get(
+                            "analysis_version", "1.0.0"
+                        )
                         major, minor, patch = current_version.split(".")
                         item["analysis_version"] = (
                             f"{major}.{minor}.{int(patch) + 1}"
@@ -947,10 +1061,9 @@ class ReanalysisService:
                 last_doc_id = items[-1]["id"] if items else None
                 job_doc["progress"]["processed_count"] = processed_count
                 job_doc["progress"]["last_checkpoint_id"] = last_doc_id
+                total = job_doc["progress"]["total_count"]
                 job_doc["progress"]["percentage"] = (
-                    (processed_count / job_doc["progress"]["total_count"] * 100)
-                    if job_doc["progress"]["total_count"] > 0
-                    else 100.0
+                    (processed_count / total * 100) if total > 0 else 100.0
                 )
                 
                 # Calculate estimated time remaining

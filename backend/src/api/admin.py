@@ -1545,25 +1545,61 @@ async def list_reanalysis_jobs(
 
     try:
         # Build query
-        query_parts = ["SELECT * FROM c WHERE 1=1"]
+        # Note: CosmosDB emulator doesn't support "WHERE 1=1", use "WHERE true" instead
+        query_parts = ["SELECT * FROM c WHERE true"]
         params = []
 
         if status:
             query_parts.append("AND c.status = @status")
             params.append({"name": "@status", "value": status})
 
-        query_parts.append("ORDER BY c.created_at DESC")
+        # NOTE: ORDER BY requires index in CosmosDB
+        # Temporarily disabled for emulator compatibility
+        # query_parts.append("ORDER BY c.created_at DESC")
         query = " ".join(query_parts)
 
-        # Get paginated results
-        paginated_query = f"{query} OFFSET {offset} LIMIT {limit}"
+                # Get paginated results
+        # NOTE: OFFSET/LIMIT might not work reliably in emulator
+        # Let's get all results and paginate in memory
+        logger.info(
+            "Listing reanalysis jobs",
+            query=query,
+            params=params,
+            admin=admin_user
+        )
 
-        jobs = list(
+        all_jobs = list(
             service.jobs.query_items(
-                query=paginated_query,
+                query=query,
                 parameters=params if params else None,
                 enable_cross_partition_query=True,
             )
+        )
+        
+        # Normalize job data (fix legacy data issues)
+        for job in all_jobs:
+            if "progress" in job and "total_count" in job["progress"]:
+                # Fix total_count if it's an object {count: N}
+                tc = job["progress"]["total_count"]
+                if isinstance(tc, dict) and "count" in tc:
+                    job["progress"]["total_count"] = int(tc["count"])
+                elif not isinstance(tc, (int, float)):
+                    job["progress"]["total_count"] = 0
+        
+        logger.info(
+            "All jobs from query",
+            total_count=len(all_jobs),
+            job_ids=[j.get('id') for j in all_jobs] if all_jobs else [],
+            admin=admin_user
+        )
+        
+        # Manual pagination
+        jobs = all_jobs[offset:offset + limit]
+        logger.info(
+            "Found jobs from query",
+            job_count=len(jobs),
+            job_ids=[j.get('id') for j in jobs] if jobs else [],
+            admin=admin_user
         )
 
         # Get total count
@@ -1577,6 +1613,11 @@ async def list_reanalysis_jobs(
                 parameters=params if params else None,
                 enable_cross_partition_query=True,
             )
+        )
+        logger.info(
+            "Count query result",
+            result=total_result,
+            admin=admin_user
         )
         # Extract count: emulator returns [{'count': N}] instead of [N]
         if total_result and len(total_result) > 0:
@@ -1627,6 +1668,14 @@ async def get_reanalysis_job(
 
     try:
         job = service.jobs.read_item(item=job_id, partition_key=job_id)
+        
+        # Normalize job data (fix legacy data issues)
+        if "progress" in job and "total_count" in job["progress"]:
+            tc = job["progress"]["total_count"]
+            if isinstance(tc, dict) and "count" in tc:
+                job["progress"]["total_count"] = int(tc["count"])
+            elif not isinstance(tc, (int, float)):
+                job["progress"]["total_count"] = 0
 
         return {"job": job}
 
