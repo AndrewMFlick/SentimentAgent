@@ -51,10 +51,9 @@ async def _register_tools_with_detector(database):
         tools_container = database.database.get_container_client("Tools")
         query = "SELECT * FROM c WHERE c.status = 'active' AND c.partitionKey = 'tool'"
 
-        tools = list(tools_container.query_items(
-            query=query,
-            enable_cross_partition_query=False
-        ))
+        tools = list(
+            tools_container.query_items(query=query, enable_cross_partition_query=False)
+        )
 
         # Register each tool with its aliases
         for tool in tools:
@@ -77,19 +76,14 @@ async def _register_tools_with_detector(database):
             tool_detector.register_tool(
                 tool_id=tool_id,
                 aliases=aliases,
-                threshold=0.5  # Lower threshold for better recall
+                threshold=0.5,  # Lower threshold for better recall
             )
 
-        logger.info(
-            "Tools registered with detector",
-            tool_count=len(tools)
-        )
+        logger.info("Tools registered with detector", tool_count=len(tools))
 
     except Exception as e:
         logger.error(
-            "Failed to register tools with detector",
-            error=str(e),
-            exc_info=True
+            "Failed to register tools with detector", error=str(e), exc_info=True
         )
         # Don't fail startup if tool registration fails
 
@@ -112,6 +106,7 @@ async def lifespan(app: FastAPI):
         # Create global instances
         import sys
 
+        from .services.cache_service import CacheService
         from .services.sentiment_aggregator import SentimentAggregator
         from .services.tool_manager import ToolManager
 
@@ -119,10 +114,40 @@ async def lifespan(app: FastAPI):
         sentiment_aggregator_instance = SentimentAggregator(db)
 
         # Update module globals
-        sys.modules["src.services.tool_manager"].tool_manager = tool_manager_instance
+        sys.modules["src.services.tool_manager"].tool_manager = (
+            tool_manager_instance
+        )
         sys.modules["src.services.sentiment_aggregator"].sentiment_aggregator = (
             sentiment_aggregator_instance
         )
+
+        # Initialize cache service (Feature 017)
+        if settings.enable_sentiment_cache:
+            logger.info("Initializing sentiment cache service")
+            cache_container = db.database.get_container_client(
+                settings.cosmos_container_sentiment_cache
+            )
+            sentiment_container = db.database.get_container_client(
+                settings.cosmos_container_sentiment
+            )
+            tools_container = db.database.get_container_client("Tools")
+
+            cache_service_instance = CacheService(
+                cache_container=cache_container,
+                sentiment_container=sentiment_container,
+                tools_container=tools_container,
+            )
+
+            # Update module global
+            sys.modules["src.services.cache_service"].cache_service = (
+                cache_service_instance
+            )
+            logger.info("Sentiment cache service initialized")
+        else:
+            logger.info(
+                "Sentiment cache disabled",
+                enable_sentiment_cache=settings.enable_sentiment_cache,
+            )
 
         # Register tools with the detector for sentiment analysis
         logger.info("Registering tools with detector")
@@ -184,21 +209,21 @@ app = FastAPI(
         {
             "name": "hot-topics",
             "description": "Hot Topics endpoints for viewing trending developer tools "
-                           "with engagement metrics and related Reddit posts. "
-                           "Features include time-range filtering (24h/7d/30d), "
-                           "engagement scoring, and sentiment distribution analysis."
+            "with engagement metrics and related Reddit posts. "
+            "Features include time-range filtering (24h/7d/30d), "
+            "engagement scoring, and sentiment distribution analysis.",
         },
         {
             "name": "admin",
             "description": "Admin endpoints for managing tools, aliases, and merges. "
-                           "Requires X-Admin-Token authentication."
+            "Requires X-Admin-Token authentication.",
         },
         {
             "name": "sentiment",
             "description": "Sentiment analysis endpoints for viewing aggregated sentiment "
-                           "data and time series for developer tools."
-        }
-    ]
+            "data and time series for developer tools.",
+        },
+    ],
 )
 
 # Configure CORS

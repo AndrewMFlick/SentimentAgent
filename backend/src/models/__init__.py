@@ -5,6 +5,21 @@ from typing import Optional
 
 from pydantic import BaseModel, Field
 
+# Cache models (Feature 017)
+from .cache import CacheMetadata, CachePeriod, SentimentCacheEntry
+
+__all__ = [
+    "RedditPost",
+    "RedditComment",
+    "SentimentScore",
+    "AITool",
+    "TrendingTopic",
+    "DataCollectionCycle",
+    "CachePeriod",
+    "SentimentCacheEntry",
+    "CacheMetadata",
+]
+
 
 class RedditPost(BaseModel):
     """Reddit post model."""
