@@ -17,12 +17,8 @@ import structlog
 from azure.cosmos import ContainerProxy
 from fastapi import HTTPException
 
-from ..models.hot_topics import (
-    HotTopic,
-    HotTopicsResponse,
-    RelatedPostsResponse,
-    SentimentDistribution,
-)
+from ..models.hot_topics import (HotTopic, HotTopicsResponse,
+                                 RelatedPostsResponse, SentimentDistribution)
 from .database import monitor_query_performance
 
 logger = structlog.get_logger(__name__)
@@ -30,7 +26,7 @@ logger = structlog.get_logger(__name__)
 
 class HotTopicsService:
     """Service for calculating hot topics and related posts.
-    
+
     Methods are placeholders for Phase 3+ implementation.
     Phase 2 establishes service structure and helper functions.
     """
@@ -43,7 +39,7 @@ class HotTopicsService:
         tools_container: ContainerProxy,
     ):
         """Initialize service with database containers.
-        
+
         Args:
             sentiment_scores_container: Container with detected_tool_ids
             reddit_posts_container: Container with post data
@@ -58,10 +54,10 @@ class HotTopicsService:
 
     def _validate_time_range(self, time_range: str) -> None:
         """Validate time_range parameter.
-        
+
         Args:
             time_range: Time range to validate
-        
+
         Raises:
             HTTPException: 400 if time_range is invalid
         """
@@ -75,29 +71,29 @@ class HotTopicsService:
             raise HTTPException(
                 status_code=400,
                 detail=f"Invalid time_range: {time_range}. "
-                       f"Must be one of: {', '.join(valid_ranges)}"
+                f"Must be one of: {', '.join(valid_ranges)}",
             )
 
     def _calculate_cutoff_timestamp(self, time_range: str) -> int:
         """Calculate Unix timestamp cutoff for time range filtering.
-        
+
         Args:
             time_range: One of "24h", "7d", "30d"
-        
+
         Returns:
             Unix timestamp (seconds since epoch) marking the cutoff.
             Posts/comments with _ts >= cutoff are included.
-        
+
         Raises:
             HTTPException: 400 if time_range is invalid
-        
+
         Example:
             >>> service._calculate_cutoff_timestamp("7d")
             1705776000  # 7 days ago from now
         """
         # Validate time_range parameter
         self._validate_time_range(time_range)
-        
+
         now = datetime.now(timezone.utc)
 
         if time_range == "24h":
@@ -109,14 +105,14 @@ class HotTopicsService:
 
         # CosmosDB _ts field is Unix timestamp (seconds since epoch)
         timestamp = int(cutoff.timestamp())
-        
+
         self._logger.debug(
             "Calculated cutoff timestamp",
             time_range=time_range,
             cutoff_iso=cutoff.isoformat(),
             cutoff_ts=timestamp,
         )
-        
+
         return timestamp
 
     def calculate_engagement_score(
@@ -126,17 +122,17 @@ class HotTopicsService:
         upvotes: int,
     ) -> int:
         """Calculate engagement score for a tool.
-        
+
         Formula: (mentions × 10) + (comments × 2) + upvotes
-        
+
         Args:
             mentions: Number of posts/comments mentioning the tool
             comments: Sum of comment counts on related posts
             upvotes: Sum of upvotes on related posts
-        
+
         Returns:
             Integer engagement score (higher is more engaged)
-        
+
         Example:
             >>> service.calculate_engagement_score(5, 20, 100)
             190  # (5 × 10) + (20 × 2) + 100
@@ -148,17 +144,17 @@ class HotTopicsService:
         sentiment_scores: List[Dict[str, Any]],
     ) -> SentimentDistribution:
         """Aggregate sentiment distribution from sentiment scores.
-        
+
         Args:
             sentiment_scores: List of sentiment score documents
-        
+
         Returns:
             SentimentDistribution with counts and percentages
         """
         positive_count = 0
         negative_count = 0
         neutral_count = 0
-        
+
         for score in sentiment_scores:
             sentiment = score.get("sentiment", "neutral")
             if sentiment == "positive":
@@ -167,9 +163,9 @@ class HotTopicsService:
                 negative_count += 1
             else:
                 neutral_count += 1
-        
+
         total = positive_count + negative_count + neutral_count
-        
+
         if total == 0:
             return SentimentDistribution(
                 positive_count=0,
@@ -179,7 +175,7 @@ class HotTopicsService:
                 negative_percent=0.0,
                 neutral_percent=0.0,
             )
-        
+
         return SentimentDistribution(
             positive_count=positive_count,
             negative_count=negative_count,
@@ -196,7 +192,7 @@ class HotTopicsService:
         limit: int = 10,
     ) -> HotTopicsResponse:
         """Get hot topics ranked by engagement within time range.
-        
+
         Algorithm:
         1. Query sentiment_scores for tool mentions within time range
         2. Calculate engagement score per tool:
@@ -204,14 +200,14 @@ class HotTopicsService:
         3. Calculate sentiment distribution per tool
         4. Rank by engagement_score DESC
         5. Return top N tools
-        
+
         Args:
             time_range: Filter by "24h", "7d", or "30d" (default: "7d")
             limit: Maximum number of hot topics to return (1-50)
-        
+
         Returns:
             HotTopicsResponse with ranked hot topics list
-        
+
         Raises:
             HTTPException: 400 if time_range invalid or limit out of range
         """
@@ -220,32 +216,35 @@ class HotTopicsService:
             time_range=time_range,
             limit=limit,
         )
-        
+
         # Validate parameters
         if limit < 1 or limit > 50:
             raise ValueError("limit must be between 1 and 50")
-        
+
         cutoff_ts = self._calculate_cutoff_timestamp(time_range)
-        
+
         self._logger.info(
             "Fetching hot topics",
             time_range=time_range,
             cutoff_ts=cutoff_ts,
             limit=limit,
         )
-        
+
         # Get all active tools
-        tools_query = "SELECT * FROM c WHERE c.status = 'active' AND c.partitionKey = 'tool'"
-        tools = list(self.tools.query_items(
-            query=tools_query,
-            enable_cross_partition_query=False
-        ))
-        
+        tools_query = (
+            "SELECT * FROM c WHERE c.status = 'active' AND c.partitionKey = 'tool'"
+        )
+        tools = list(
+            self.tools.query_items(
+                query=tools_query, enable_cross_partition_query=False
+            )
+        )
+
         self._logger.info(
             "Active tools retrieved",
             tool_count=len(tools),
         )
-        
+
         if not tools:
             self._logger.warning("No active tools found in database")
             return HotTopicsResponse(
@@ -253,36 +252,38 @@ class HotTopicsService:
                 generated_at=datetime.now(timezone.utc),
                 time_range=time_range,
             )
-        
+
         # For each tool, calculate engagement metrics
         hot_topics = []
         tools_processed = 0
         tools_filtered = 0
-        
+
         for tool in tools:
             tools_processed += 1
             tool_id = tool["id"]
             tool_name = tool["name"]
             tool_slug = tool.get("slug", tool_name.lower().replace(" ", "-"))
-            
+
             try:
                 # Query sentiment scores for this tool within time range
                 # Use ARRAY_CONTAINS to find posts mentioning this tool
                 sentiment_query = """
-                    SELECT * FROM c 
+                    SELECT * FROM c
                     WHERE ARRAY_CONTAINS(c.detected_tool_ids, @tool_id)
                     AND c._ts >= @cutoff_ts
                 """
-                
-                sentiment_scores = list(self.sentiment_scores.query_items(
-                    query=sentiment_query,
-                    parameters=[
-                        {"name": "@tool_id", "value": tool_id},
-                        {"name": "@cutoff_ts", "value": cutoff_ts}
-                    ],
-                    enable_cross_partition_query=True
-                ))
-                
+
+                sentiment_scores = list(
+                    self.sentiment_scores.query_items(
+                        query=sentiment_query,
+                        parameters=[
+                            {"name": "@tool_id", "value": tool_id},
+                            {"name": "@cutoff_ts", "value": cutoff_ts},
+                        ],
+                        enable_cross_partition_query=True,
+                    )
+                )
+
             except Exception as e:
                 # Log error but continue processing other tools
                 self._logger.error(
@@ -293,9 +294,9 @@ class HotTopicsService:
                     exc_info=True,
                 )
                 continue
-            
+
             mentions = len(sentiment_scores)
-            
+
             # Log engagement calculation for each tool (debug level)
             self._logger.debug(
                 "Tool mentions found",
@@ -303,7 +304,7 @@ class HotTopicsService:
                 tool_name=tool_name,
                 mentions=mentions,
             )
-            
+
             # Skip tools with fewer than 3 mentions (threshold)
             # Edge case: Tools with 0-2 mentions filtered out
             if mentions < 3:
@@ -316,44 +317,48 @@ class HotTopicsService:
                     threshold=3,
                 )
                 continue
-            
+
             # Get post IDs to calculate engagement metrics
             post_ids = [score["post_id"] for score in sentiment_scores]
-            
+
             # Query reddit posts for comment counts and upvotes
             total_comments = 0
             total_upvotes = 0
-            
+
             if post_ids:
                 # Query in batches to avoid parameter limits
                 batch_size = 100
                 for i in range(0, len(post_ids), batch_size):
-                    batch_ids = post_ids[i:i+batch_size]
-                    
+                    batch_ids = post_ids[i : i + batch_size]
+
                     # Use IN clause for batch querying
-                    placeholders = ", ".join([f"@post_id_{j}" for j in range(len(batch_ids))])
+                    placeholders = ", ".join(
+                        [f"@post_id_{j}" for j in range(len(batch_ids))]
+                    )
                     posts_query = f"SELECT c.num_comments, c.score FROM c WHERE c.id IN ({placeholders})"
-                    
+
                     parameters = [
                         {"name": f"@post_id_{j}", "value": post_id}
                         for j, post_id in enumerate(batch_ids)
                     ]
-                    
-                    posts = list(self.reddit_posts.query_items(
-                        query=posts_query,
-                        parameters=parameters,
-                        enable_cross_partition_query=True
-                    ))
-                    
+
+                    posts = list(
+                        self.reddit_posts.query_items(
+                            query=posts_query,
+                            parameters=parameters,
+                            enable_cross_partition_query=True,
+                        )
+                    )
+
                     for post in posts:
                         total_comments += post.get("num_comments", 0)
                         total_upvotes += post.get("score", 0)
-            
+
             # Calculate engagement score
             engagement_score = self.calculate_engagement_score(
                 mentions, total_comments, total_upvotes
             )
-            
+
             # Log engagement calculation (debug level)
             self._logger.debug(
                 "Engagement score calculated",
@@ -364,27 +369,31 @@ class HotTopicsService:
                 total_comments=total_comments,
                 total_upvotes=total_upvotes,
             )
-            
+
             # Calculate sentiment distribution
-            sentiment_distribution = self._aggregate_sentiment_distribution(sentiment_scores)
-            
-            hot_topics.append(HotTopic(
-                tool_id=tool_id,
-                tool_name=tool_name,
-                tool_slug=tool_slug,
-                engagement_score=engagement_score,
-                total_mentions=mentions,
-                total_comments=total_comments,
-                total_upvotes=total_upvotes,
-                sentiment_distribution=sentiment_distribution,
-            ))
-        
+            sentiment_distribution = self._aggregate_sentiment_distribution(
+                sentiment_scores
+            )
+
+            hot_topics.append(
+                HotTopic(
+                    tool_id=tool_id,
+                    tool_name=tool_name,
+                    tool_slug=tool_slug,
+                    engagement_score=engagement_score,
+                    total_mentions=mentions,
+                    total_comments=total_comments,
+                    total_upvotes=total_upvotes,
+                    sentiment_distribution=sentiment_distribution,
+                )
+            )
+
         # Sort by engagement score descending
         hot_topics.sort(key=lambda x: x.engagement_score, reverse=True)
-        
+
         # Limit results
         hot_topics = hot_topics[:limit]
-        
+
         self._logger.info(
             "Hot topics calculation complete",
             total_tools=len(tools),
@@ -394,7 +403,7 @@ class HotTopicsService:
             returned_count=len(hot_topics),
             time_range=time_range,
         )
-        
+
         # Edge case: No tools with sufficient engagement
         if not hot_topics:
             self._logger.warning(
@@ -402,7 +411,7 @@ class HotTopicsService:
                 time_range=time_range,
                 min_mentions_threshold=3,
             )
-        
+
         return HotTopicsResponse(
             hot_topics=hot_topics,
             generated_at=datetime.now(timezone.utc),
@@ -414,45 +423,49 @@ class HotTopicsService:
         cutoff_ts: int,
     ) -> set[str]:
         """Get post IDs that have engagement within the time range.
-        
+
         A post is considered engaged if:
         - The post itself was created within the time range (post._ts >= cutoff), OR
         - The post has comments created within the time range
-        
+
         Args:
             cutoff_ts: Unix timestamp cutoff for time range filtering
-        
+
         Returns:
             Set of post IDs with engagement activity
         """
         # Query posts created within time range
         posts_query = "SELECT c.id FROM c WHERE c._ts >= @cutoff_ts"
-        posts_in_range = list(self.reddit_posts.query_items(
-            query=posts_query,
-            parameters=[{"name": "@cutoff_ts", "value": cutoff_ts}],
-            enable_cross_partition_query=True
-        ))
+        posts_in_range = list(
+            self.reddit_posts.query_items(
+                query=posts_query,
+                parameters=[{"name": "@cutoff_ts", "value": cutoff_ts}],
+                enable_cross_partition_query=True,
+            )
+        )
         post_ids_from_posts = {p["id"] for p in posts_in_range}
-        
+
         # Query comments within time range to find posts with recent comments
         comments_query = "SELECT DISTINCT c.post_id FROM c WHERE c._ts >= @cutoff_ts"
-        comments_in_range = list(self.reddit_comments.query_items(
-            query=comments_query,
-            parameters=[{"name": "@cutoff_ts", "value": cutoff_ts}],
-            enable_cross_partition_query=True
-        ))
+        comments_in_range = list(
+            self.reddit_comments.query_items(
+                query=comments_query,
+                parameters=[{"name": "@cutoff_ts", "value": cutoff_ts}],
+                enable_cross_partition_query=True,
+            )
+        )
         post_ids_from_comments = {c["post_id"] for c in comments_in_range}
-        
+
         # Combine both sets (posts created in range OR posts with comments in range)
         engaged_post_ids = post_ids_from_posts | post_ids_from_comments
-        
+
         self._logger.debug(
             "Found engaged posts",
             posts_in_range=len(post_ids_from_posts),
             posts_with_recent_comments=len(post_ids_from_comments),
             total_engaged=len(engaged_post_ids),
         )
-        
+
         return engaged_post_ids
 
     @monitor_query_performance(slow_query_threshold=2.0)
@@ -464,10 +477,10 @@ class HotTopicsService:
         limit: int = 20,
     ) -> RelatedPostsResponse:
         """Get paginated related posts for a specific tool.
-        
+
         Returns Reddit posts that mention the specified tool, filtered by
         engagement within the time range, sorted by engagement score.
-        
+
         Algorithm:
         1. Calculate cutoff timestamp from time_range
         2. Get engaged post IDs (posts created or commented on within range)
@@ -478,21 +491,21 @@ class HotTopicsService:
         7. Sort by engagement_score DESC
         8. Apply offset/limit pagination
         9. Format with reddit URLs and excerpts
-        
+
         Args:
             tool_id: Tool identifier to find related posts for
             time_range: Filter by "24h", "7d", or "30d" (default: "7d")
             offset: Number of posts to skip (for pagination)
             limit: Maximum posts to return (1-100, default: 20)
-        
+
         Returns:
             RelatedPostsResponse with paginated posts and metadata
-        
+
         Raises:
             HTTPException: 400 if parameters are invalid
         """
         from ..models.hot_topics import RelatedPost
-        
+
         self._logger.info(
             "get_related_posts called",
             tool_id=tool_id,
@@ -500,16 +513,16 @@ class HotTopicsService:
             offset=offset,
             limit=limit,
         )
-        
+
         # Validate parameters
         if limit < 1 or limit > 100:
             raise ValueError("limit must be between 1 and 100")
         if offset < 0:
             raise ValueError("offset must be >= 0")
-        
+
         # Calculate cutoff timestamp
         cutoff_ts = self._calculate_cutoff_timestamp(time_range)
-        
+
         self._logger.info(
             "Fetching related posts",
             tool_id=tool_id,
@@ -518,42 +531,43 @@ class HotTopicsService:
             offset=offset,
             limit=limit,
         )
-        
+
         # Get engaged post IDs (posts created or commented on within time range)
         engaged_post_ids = await self._get_posts_with_engagement(cutoff_ts)
-        
+
         self._logger.debug(
             "Engaged posts retrieved",
             engaged_count=len(engaged_post_ids),
         )
-        
+
         # Query sentiment_scores for posts mentioning this tool
         # Filter by content_type = 'post' to only get post-level sentiment
         sentiment_query = """
             SELECT c.content_id, c.sentiment, c.subreddit
-            FROM c 
+            FROM c
             WHERE ARRAY_CONTAINS(c.detected_tool_ids, @tool_id)
             AND c.content_type = 'post'
         """
-        
-        sentiment_scores = list(self.sentiment_scores.query_items(
-            query=sentiment_query,
-            parameters=[{"name": "@tool_id", "value": tool_id}],
-            enable_cross_partition_query=True
-        ))
-        
+
+        sentiment_scores = list(
+            self.sentiment_scores.query_items(
+                query=sentiment_query,
+                parameters=[{"name": "@tool_id", "value": tool_id}],
+                enable_cross_partition_query=True,
+            )
+        )
+
         # Filter sentiment scores to only engaged posts
         engaged_sentiment_scores = [
-            s for s in sentiment_scores
-            if s["content_id"] in engaged_post_ids
+            s for s in sentiment_scores if s["content_id"] in engaged_post_ids
         ]
-        
+
         self._logger.debug(
             "Sentiment scores filtered",
             total_sentiment_scores=len(sentiment_scores),
             engaged_sentiment_scores=len(engaged_sentiment_scores),
         )
-        
+
         # Edge case: No engaged posts found for this tool
         if not engaged_sentiment_scores:
             self._logger.info(
@@ -568,96 +582,103 @@ class HotTopicsService:
                 offset=offset,
                 limit=limit,
             )
-        
+
         # Get unique post IDs
         post_ids = list({s["content_id"] for s in engaged_sentiment_scores})
-        
+
         # Create a mapping from post_id to sentiment
-        sentiment_map = {s["content_id"]: s["sentiment"] for s in engaged_sentiment_scores}
-        
+        sentiment_map = {
+            s["content_id"]: s["sentiment"] for s in engaged_sentiment_scores
+        }
+
         # Query reddit_posts for full post details
         # Process in batches to avoid parameter limits
         all_posts = []
         batch_size = 100
-        
+
         for i in range(0, len(post_ids), batch_size):
-            batch_ids = post_ids[i:i+batch_size]
-            
+            batch_ids = post_ids[i : i + batch_size]
+
             # Use IN clause for batch querying
             placeholders = ", ".join([f"@post_id_{j}" for j in range(len(batch_ids))])
             posts_query = f"""
-                SELECT c.id, c.title, c.content, c.author, c.subreddit, 
+                SELECT c.id, c.title, c.content, c.author, c.subreddit,
                        c.created_utc, c.url, c.comment_count, c.upvotes
-                FROM c 
+                FROM c
                 WHERE c.id IN ({placeholders})
             """
-            
+
             parameters = [
                 {"name": f"@post_id_{j}", "value": post_id}
                 for j, post_id in enumerate(batch_ids)
             ]
-            
-            batch_posts = list(self.reddit_posts.query_items(
-                query=posts_query,
-                parameters=parameters,
-                enable_cross_partition_query=True
-            ))
-            
+
+            batch_posts = list(
+                self.reddit_posts.query_items(
+                    query=posts_query,
+                    parameters=parameters,
+                    enable_cross_partition_query=True,
+                )
+            )
+
             all_posts.extend(batch_posts)
-        
+
         # Build RelatedPost objects with engagement scores
         from ..models.hot_topics import RelatedPost
-        
+
         related_posts = []
         for post in all_posts:
             post_id = post["id"]
-            
+
             # Calculate engagement score
             comment_count = post.get("comment_count", 0)
             upvotes = post.get("upvotes", 0)
             engagement_score = comment_count + upvotes
-            
+
             # Generate excerpt (first 150 characters of content)
             content = post.get("content", "")
             excerpt = content[:150] if len(content) > 150 else content
-            
+
             # Generate Reddit URL
             subreddit = post.get("subreddit", "")
             reddit_url = f"https://reddit.com/r/{subreddit}/comments/{post_id}"
-            
+
             # Get sentiment from mapping
             sentiment = sentiment_map.get(post_id, "neutral")
-            
+
             # Parse created_utc - it might be stored as string or datetime
             created_utc = post.get("created_utc")
             if isinstance(created_utc, str):
                 from datetime import datetime
-                created_utc = datetime.fromisoformat(created_utc.replace('Z', '+00:00'))
-            
-            related_posts.append(RelatedPost(
-                post_id=post_id,
-                title=post.get("title", ""),
-                excerpt=excerpt,
-                author=post.get("author", ""),
-                subreddit=subreddit,
-                created_utc=created_utc,
-                reddit_url=reddit_url,
-                comment_count=comment_count,
-                upvotes=upvotes,
-                sentiment=sentiment,
-                engagement_score=engagement_score,
-            ))
-        
+
+                created_utc = datetime.fromisoformat(created_utc.replace("Z", "+00:00"))
+
+            related_posts.append(
+                RelatedPost(
+                    post_id=post_id,
+                    title=post.get("title", ""),
+                    excerpt=excerpt,
+                    author=post.get("author", ""),
+                    subreddit=subreddit,
+                    created_utc=created_utc,
+                    reddit_url=reddit_url,
+                    comment_count=comment_count,
+                    upvotes=upvotes,
+                    sentiment=sentiment,
+                    engagement_score=engagement_score,
+                )
+            )
+
         # Sort by engagement score descending
         related_posts.sort(key=lambda p: p.engagement_score, reverse=True)
-        
+
         # Calculate pagination
         total = len(related_posts)
         has_more = (offset + limit) < total
-        
+
         # Apply offset and limit
-        paginated_posts = related_posts[offset:offset+limit]
-        
+        paginated_posts = related_posts[offset : offset + limit]
+
         self._logger.info(
             "Related posts retrieved",
             tool_id=tool_id,
@@ -667,7 +688,7 @@ class HotTopicsService:
             limit=limit,
             has_more=has_more,
         )
-        
+
         return RelatedPostsResponse(
             posts=paginated_posts,
             total=total,

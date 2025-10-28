@@ -1,15 +1,13 @@
 """Tool management service for CRUD operations and alias resolution."""
 
-from azure.cosmos import exceptions
 import uuid
 from datetime import datetime, timezone
-from typing import List, Optional, Dict, Any, Tuple
-import structlog
+from typing import Any, Dict, List, Optional, Tuple
 
-from ..models.tool import (
-    ToolCreateRequest,
-    ToolUpdateRequest,
-)
+import structlog
+from azure.cosmos import exceptions
+
+from ..models.tool import ToolCreateRequest, ToolUpdateRequest
 
 logger = structlog.get_logger()
 
@@ -23,7 +21,7 @@ class ToolService:
         aliases_container,
         merge_records_container=None,
         admin_logs_container=None,
-        sentiment_container=None
+        sentiment_container=None,
     ):
         """
         Initialize ToolService.
@@ -67,7 +65,11 @@ class ToolService:
         # Replace literal \n with actual newlines
         description = description.replace("\\n", "\n")
         # Replace em-dash and other special chars that cause issues
-        description = description.replace("—", "-").replace("'", "'").replace(""", '"').replace(""", '"')
+        description = (
+            description.replace("—", "-")
+            .replace("'", "'")
+            .replace(""", '"').replace(""", '"')
+        )
         description = description.strip()
 
         tool = {
@@ -83,7 +85,7 @@ class ToolService:
             "created_at": now,
             "updated_at": now,
             "created_by": "admin",  # TODO: Get from auth context
-            "updated_by": "admin"
+            "updated_by": "admin",
         }
 
         # Sync operation - no await
@@ -92,50 +94,60 @@ class ToolService:
             "Tool created",
             tool_id=tool_id,
             name=tool_data.name,
-            categories=tool_data.categories
+            categories=tool_data.categories,
         )
 
         # Trigger automatic reanalysis if tool is active (T024)
         if tool["status"] == "active":
             try:
                 from ..config import settings
-                
+
                 # Check if automatic reanalysis is enabled (T028)
-                if not settings.enable_auto_reanalysis or not settings.auto_reanalysis_on_tool_create:
+                if (
+                    not settings.enable_auto_reanalysis
+                    or not settings.auto_reanalysis_on_tool_create
+                ):
                     logger.debug(
                         "Automatic reanalysis disabled for tool creation",
-                        tool_id=tool_id
+                        tool_id=tool_id,
                     )
                     return tool
-                
+
                 from .reanalysis_service import ReanalysisService
-                
+
                 # Get containers for reanalysis service
-                jobs_container = self.tools_container.database.get_container_client("ReanalysisJobs")
-                sentiment_container = self.tools_container.database.get_container_client("sentiment_scores")
-                
+                jobs_container = self.tools_container.database.get_container_client(
+                    "ReanalysisJobs"
+                )
+                sentiment_container = (
+                    self.tools_container.database.get_container_client(
+                        "sentiment_scores"
+                    )
+                )
+
                 # Create reanalysis service
                 reanalysis_service = ReanalysisService(
                     reanalysis_jobs_container=jobs_container,
                     sentiment_container=sentiment_container,
                     tools_container=self.tools_container,
-                    aliases_container=self.aliases_container
+                    aliases_container=self.aliases_container,
                 )
-                
+
                 # Trigger automatic reanalysis
                 import asyncio
+
                 asyncio.create_task(
                     reanalysis_service.trigger_automatic_reanalysis(
                         tool_ids=[tool_id],
                         triggered_by=tool.get("created_by", "admin"),
-                        reason=f"New tool created: {tool_data.name}"
+                        reason=f"New tool created: {tool_data.name}",
                     )
                 )
-                
+
                 logger.info(
                     "Automatic reanalysis queued for new tool",
                     tool_id=tool_id,
-                    tool_name=tool_data.name
+                    tool_name=tool_data.name,
                 )
             except Exception as e:
                 # Don't fail tool creation if reanalysis trigger fails
@@ -143,7 +155,7 @@ class ToolService:
                     "Failed to trigger automatic reanalysis for new tool",
                     tool_id=tool_id,
                     error=str(e),
-                    exc_info=True
+                    exc_info=True,
                 )
 
         return tool
@@ -166,8 +178,7 @@ class ToolService:
             )
             # Sync iteration - no await
             items = self.tools_container.query_items(
-                query=query,
-                parameters=[{"name": "@id", "value": tool_id}]
+                query=query, parameters=[{"name": "@id", "value": tool_id}]
             )
 
             results = list(items)
@@ -195,8 +206,7 @@ class ToolService:
             )
             # Sync iteration - no await
             items = self.tools_container.query_items(
-                query=query,
-                parameters=[{"name": "@name", "value": name}]
+                query=query, parameters=[{"name": "@name", "value": name}]
             )
 
             results = list(items)
@@ -215,7 +225,7 @@ class ToolService:
         categories: Optional[List[str]] = None,
         vendor: Optional[str] = None,
         sort_by: str = "name",
-        sort_order: str = "asc"
+        sort_order: str = "asc",
     ) -> List[Dict[str, Any]]:
         """
         List all tools with pagination, filtering, search, and sorting.
@@ -253,9 +263,7 @@ class ToolService:
         if categories:
             category_conditions = []
             for cat in categories:
-                category_conditions.append(
-                    f"ARRAY_CONTAINS(t.categories, '{cat}')"
-                )
+                category_conditions.append(f"ARRAY_CONTAINS(t.categories, '{cat}')")
             query += f" AND ({' OR '.join(category_conditions)})"
 
         # Vendor filter
@@ -281,7 +289,7 @@ class ToolService:
                 search=search,
                 status=status,
                 categories=categories,
-                vendor=vendor
+                vendor=vendor,
             )
             return results
         except Exception as e:
@@ -293,7 +301,7 @@ class ToolService:
         search: str = "",
         status: Optional[str] = None,
         categories: Optional[List[str]] = None,
-        vendor: Optional[str] = None
+        vendor: Optional[str] = None,
     ) -> int:
         """
         Count total tools matching filters.
@@ -307,10 +315,7 @@ class ToolService:
         Returns:
             Total count
         """
-        query = (
-            "SELECT VALUE COUNT(1) FROM Tools t "
-            "WHERE t.partitionKey = 'tool'"
-        )
+        query = "SELECT VALUE COUNT(1) FROM Tools t " "WHERE t.partitionKey = 'tool'"
 
         # Status filter (default to active only)
         if status and status != "all":
@@ -325,9 +330,7 @@ class ToolService:
         if categories:
             category_conditions = []
             for cat in categories:
-                category_conditions.append(
-                    f"ARRAY_CONTAINS(t.categories, '{cat}')"
-                )
+                category_conditions.append(f"ARRAY_CONTAINS(t.categories, '{cat}')")
             query += f" AND ({' OR '.join(category_conditions)})"
 
         if vendor:
@@ -343,7 +346,7 @@ class ToolService:
             count_value = results[0]
             if isinstance(count_value, dict):
                 # Extract count from dict (CosmosDB may return {'$1': count})
-                return count_value.get('$1', count_value.get('count', 0))
+                return count_value.get("$1", count_value.get("count", 0))
             return count_value
         except Exception as e:
             logger.error("Failed to count tools", error=str(e))
@@ -359,7 +362,7 @@ class ToolService:
         after_state: Optional[Dict[str, Any]] = None,
         metadata: Optional[Dict[str, Any]] = None,
         ip_address: Optional[str] = None,
-        user_agent: Optional[str] = None
+        user_agent: Optional[str] = None,
     ):
         """
         Log administrative action to AdminActionLogs container.
@@ -394,7 +397,7 @@ class ToolService:
             "after_state": after_state,
             "metadata": metadata or {},
             "ip_address": ip_address,
-            "user_agent": user_agent
+            "user_agent": user_agent,
         }
 
         try:
@@ -403,14 +406,14 @@ class ToolService:
                 "Admin action logged",
                 action_type=action_type,
                 tool_id=tool_id,
-                admin_id=admin_id
+                admin_id=admin_id,
             )
         except Exception as e:
             logger.error(
                 "Failed to log admin action",
                 error=str(e),
                 action_type=action_type,
-                tool_id=tool_id
+                tool_id=tool_id,
             )
 
     async def update_tool(
@@ -420,7 +423,7 @@ class ToolService:
         updated_by: str,
         etag: Optional[str] = None,
         ip_address: Optional[str] = None,
-        user_agent: Optional[str] = None
+        user_agent: Optional[str] = None,
     ) -> Optional[Dict[str, Any]]:
         """
         Update tool details with optimistic concurrency control.
@@ -455,9 +458,7 @@ class ToolService:
             if existing and existing["id"] != tool_id:
                 # Check if existing tool is active
                 if existing.get("status") == "active":
-                    raise ValueError(
-                        f"Tool name '{updates.name}' already exists"
-                    )
+                    raise ValueError(f"Tool name '{updates.name}' already exists")
 
         # Apply updates
         update_dict = updates.dict(exclude_unset=True)
@@ -481,7 +482,7 @@ class ToolService:
                     item=tool_id,
                     body=tool,
                     etag=etag,
-                    match_condition=exceptions.MatchConditions.IfNotModified
+                    match_condition=exceptions.MatchConditions.IfNotModified,
                 )
             else:
                 # No concurrency control
@@ -491,7 +492,7 @@ class ToolService:
                 "Tool updated",
                 tool_id=tool_id,
                 updates=update_dict,
-                updated_by=updated_by
+                updated_by=updated_by,
             )
 
             # Log admin action
@@ -504,7 +505,7 @@ class ToolService:
                 after_state=tool,
                 metadata={"fields_updated": list(update_dict.keys())},
                 ip_address=ip_address,
-                user_agent=user_agent
+                user_agent=user_agent,
             )
 
             # Trigger automatic reanalysis if status changed to active (T025)
@@ -515,43 +516,53 @@ class ToolService:
             ):
                 try:
                     from ..config import settings
-                    
+
                     # Check if automatic reanalysis is enabled (T028)
-                    if not settings.enable_auto_reanalysis or not settings.auto_reanalysis_on_tool_activate:
+                    if (
+                        not settings.enable_auto_reanalysis
+                        or not settings.auto_reanalysis_on_tool_activate
+                    ):
                         logger.debug(
                             "Automatic reanalysis disabled for tool activation",
-                            tool_id=tool_id
+                            tool_id=tool_id,
                         )
                         return tool
-                    
+
                     from .reanalysis_service import ReanalysisService
-                    
+
                     # Get containers for reanalysis service
-                    jobs_container = self.tools_container.database.get_container_client("ReanalysisJobs")
-                    sentiment_container = self.tools_container.database.get_container_client("sentiment_scores")
-                    
+                    jobs_container = self.tools_container.database.get_container_client(
+                        "ReanalysisJobs"
+                    )
+                    sentiment_container = (
+                        self.tools_container.database.get_container_client(
+                            "sentiment_scores"
+                        )
+                    )
+
                     # Create reanalysis service
                     reanalysis_service = ReanalysisService(
                         reanalysis_jobs_container=jobs_container,
                         sentiment_container=sentiment_container,
                         tools_container=self.tools_container,
-                        aliases_container=self.aliases_container
+                        aliases_container=self.aliases_container,
                     )
-                    
+
                     # Trigger automatic reanalysis
                     import asyncio
+
                     asyncio.create_task(
                         reanalysis_service.trigger_automatic_reanalysis(
                             tool_ids=[tool_id],
                             triggered_by=updated_by,
-                            reason=f"Tool activated: {tool['name']}"
+                            reason=f"Tool activated: {tool['name']}",
                         )
                     )
-                    
+
                     logger.info(
                         "Automatic reanalysis queued for activated tool",
                         tool_id=tool_id,
-                        tool_name=tool["name"]
+                        tool_name=tool["name"],
                     )
                 except Exception as e:
                     # Don't fail tool update if reanalysis trigger fails
@@ -559,7 +570,7 @@ class ToolService:
                         "Failed to trigger automatic reanalysis for activated tool",
                         tool_id=tool_id,
                         error=str(e),
-                        exc_info=True
+                        exc_info=True,
                     )
 
             return tool
@@ -569,15 +580,11 @@ class ToolService:
                 logger.warning(
                     "Concurrent modification detected",
                     tool_id=tool_id,
-                    updated_by=updated_by
+                    updated_by=updated_by,
                 )
                 raise  # Re-raise to be handled by API layer
             else:
-                logger.error(
-                    "Failed to update tool",
-                    tool_id=tool_id,
-                    error=str(e)
-                )
+                logger.error("Failed to update tool", tool_id=tool_id, error=str(e))
                 raise
 
     async def get_sentiment_count(self, tool_id: str) -> int:
@@ -594,25 +601,24 @@ class ToolService:
         # Note: This assumes sentiment records have a tool_id field
         # Adjust query based on actual sentiment data structure
         try:
-            query = (
-                "SELECT VALUE COUNT(1) FROM c "
-                "WHERE c.tool_id = @tool_id"
-            )
+            query = "SELECT VALUE COUNT(1) FROM c " "WHERE c.tool_id = @tool_id"
 
             # We need access to sentiment container
             # For now, return 0 if container not available
             # This will be updated when sentiment container is passed in
-            if not hasattr(self, 'sentiment_container') or self.sentiment_container is None:
+            if (
+                not hasattr(self, "sentiment_container")
+                or self.sentiment_container is None
+            ):
                 logger.warning(
-                    "Sentiment container not available for count",
-                    tool_id=tool_id
+                    "Sentiment container not available for count", tool_id=tool_id
                 )
                 return 0
 
             items = self.sentiment_container.query_items(
                 query=query,
                 parameters=[{"name": "@tool_id", "value": tool_id}],
-                enable_cross_partition_query=True
+                enable_cross_partition_query=True,
             )
 
             results = list(items)
@@ -621,15 +627,11 @@ class ToolService:
 
             count_value = results[0]
             if isinstance(count_value, dict):
-                return count_value.get('$1', count_value.get('count', 0))
+                return count_value.get("$1", count_value.get("count", 0))
             return count_value
 
         except Exception as e:
-            logger.error(
-                "Failed to get sentiment count",
-                tool_id=tool_id,
-                error=str(e)
-            )
+            logger.error("Failed to get sentiment count", tool_id=tool_id, error=str(e))
             return 0
 
     async def delete_tool(
@@ -638,7 +640,7 @@ class ToolService:
         deleted_by: str,
         hard_delete: bool = False,
         ip_address: Optional[str] = None,
-        user_agent: Optional[str] = None
+        user_agent: Optional[str] = None,
     ) -> Dict[str, Any]:
         """
         Delete tool permanently with validation and cascade.
@@ -668,13 +670,12 @@ class ToolService:
             "AND t.partitionKey = 'tool'"
         )
         items = self.tools_container.query_items(
-            query=query,
-            parameters=[{"name": "@tool_id", "value": tool_id}]
+            query=query, parameters=[{"name": "@tool_id", "value": tool_id}]
         )
         referencing_tools = list(items)
 
         if referencing_tools:
-            tool_names = [t.get('name', 'Unknown') for t in referencing_tools]
+            tool_names = [t.get("name", "Unknown") for t in referencing_tools]
             raise ValueError(
                 f"Cannot delete tool: referenced by {len(referencing_tools)} "
                 f"merged tool(s): {', '.join(tool_names[:3])}"
@@ -701,25 +702,22 @@ class ToolService:
             tool_name=tool["name"],
             before_state=before_state,
             after_state=None,  # No after state for deletion
-            metadata={
-                "sentiment_count": sentiment_count,
-                "hard_delete": hard_delete
-            },
+            metadata={"sentiment_count": sentiment_count, "hard_delete": hard_delete},
             ip_address=ip_address,
-            user_agent=user_agent
+            user_agent=user_agent,
         )
 
         if hard_delete:
             # T062: Cascade delete sentiment data
             # Delete sentiment records associated with this tool
-            if hasattr(self, 'sentiment_container') and self.sentiment_container:
+            if hasattr(self, "sentiment_container") and self.sentiment_container:
                 try:
                     # Query all sentiment records for this tool
                     query = "SELECT * FROM c WHERE c.tool_id = @tool_id"
                     sentiment_items = self.sentiment_container.query_items(
                         query=query,
                         parameters=[{"name": "@tool_id", "value": tool_id}],
-                        enable_cross_partition_query=True
+                        enable_cross_partition_query=True,
                     )
 
                     # Delete each sentiment record
@@ -727,27 +725,29 @@ class ToolService:
                     for sentiment in sentiment_items:
                         try:
                             self.sentiment_container.delete_item(
-                                item=sentiment['id'],
-                                partition_key=sentiment.get('partitionKey', sentiment['id'])
+                                item=sentiment["id"],
+                                partition_key=sentiment.get(
+                                    "partitionKey", sentiment["id"]
+                                ),
                             )
                             deleted_sentiment_count += 1
                         except Exception as e:
                             logger.warning(
                                 "Failed to delete sentiment record",
-                                sentiment_id=sentiment.get('id'),
-                                error=str(e)
+                                sentiment_id=sentiment.get("id"),
+                                error=str(e),
                             )
 
                     logger.info(
                         "Cascade deleted sentiment records",
                         tool_id=tool_id,
-                        count=deleted_sentiment_count
+                        count=deleted_sentiment_count,
                     )
                 except Exception as e:
                     logger.error(
                         "Failed to cascade delete sentiment data",
                         tool_id=tool_id,
-                        error=str(e)
+                        error=str(e),
                     )
 
             # Delete the tool itself
@@ -755,13 +755,13 @@ class ToolService:
             # CosmosDB requires both the document id and the partition key value
             self.tools_container.delete_item(
                 item=tool_id,
-                partition_key='tool'  # Use the partitionKey field value, not the id
+                partition_key="tool",  # Use the partitionKey field value, not the id
             )
             logger.info(
                 "Tool permanently deleted",
                 tool_id=tool_id,
                 deleted_by=deleted_by,
-                sentiment_count=sentiment_count
+                sentiment_count=sentiment_count,
             )
         else:
             # Soft delete - set status to deleted
@@ -769,17 +769,13 @@ class ToolService:
             tool["updated_at"] = datetime.now(timezone.utc).isoformat()
             tool["updated_by"] = deleted_by
             self.tools_container.replace_item(item=tool_id, body=tool)
-            logger.info(
-                "Tool soft deleted",
-                tool_id=tool_id,
-                deleted_by=deleted_by
-            )
+            logger.info("Tool soft deleted", tool_id=tool_id, deleted_by=deleted_by)
 
         return {
             "tool_id": tool_id,
             "tool_name": tool["name"],
             "sentiment_count": sentiment_count,
-            "hard_delete": hard_delete
+            "hard_delete": hard_delete,
         }
 
     async def archive_tool(
@@ -787,7 +783,7 @@ class ToolService:
         tool_id: str,
         archived_by: str,
         ip_address: Optional[str] = None,
-        user_agent: Optional[str] = None
+        user_agent: Optional[str] = None,
     ) -> Optional[Dict[str, Any]]:
         """
         Archive a tool (set status to 'archived').
@@ -823,8 +819,7 @@ class ToolService:
             "AND t.status != 'deleted'"
         )
         items = self.tools_container.query_items(
-            query=query,
-            parameters=[{"name": "@tool_id", "value": tool_id}]
+            query=query, parameters=[{"name": "@tool_id", "value": tool_id}]
         )
         referencing_tools = list(items)
 
@@ -849,7 +844,7 @@ class ToolService:
                 "Tool archived",
                 tool_id=tool_id,
                 tool_name=tool["name"],
-                archived_by=archived_by
+                archived_by=archived_by,
             )
 
             # Log admin action
@@ -862,16 +857,12 @@ class ToolService:
                 after_state=tool,
                 metadata={"reason": "archived by admin"},
                 ip_address=ip_address,
-                user_agent=user_agent
+                user_agent=user_agent,
             )
 
             return tool
         except Exception as e:
-            logger.error(
-                "Failed to archive tool",
-                tool_id=tool_id,
-                error=str(e)
-            )
+            logger.error("Failed to archive tool", tool_id=tool_id, error=str(e))
             raise
 
     async def unarchive_tool(
@@ -879,7 +870,7 @@ class ToolService:
         tool_id: str,
         unarchived_by: str,
         ip_address: Optional[str] = None,
-        user_agent: Optional[str] = None
+        user_agent: Optional[str] = None,
     ) -> Optional[Dict[str, Any]]:
         """
         Unarchive a tool (set status to 'active').
@@ -899,12 +890,10 @@ class ToolService:
         # We need to query directly to get archived tools
         try:
             query = (
-                "SELECT * FROM Tools t "
-                "WHERE t.id = @id AND t.partitionKey = 'tool'"
+                "SELECT * FROM Tools t " "WHERE t.id = @id AND t.partitionKey = 'tool'"
             )
             items = self.tools_container.query_items(
-                query=query,
-                parameters=[{"name": "@id", "value": tool_id}]
+                query=query, parameters=[{"name": "@id", "value": tool_id}]
             )
             results = list(items)
 
@@ -928,7 +917,7 @@ class ToolService:
                 "Tool unarchived",
                 tool_id=tool_id,
                 tool_name=tool["name"],
-                unarchived_by=unarchived_by
+                unarchived_by=unarchived_by,
             )
 
             # Log admin action
@@ -941,23 +930,16 @@ class ToolService:
                 after_state=tool,
                 metadata={"reason": "unarchived by admin"},
                 ip_address=ip_address,
-                user_agent=user_agent
+                user_agent=user_agent,
             )
 
             return tool
         except Exception as e:
-            logger.error(
-                "Failed to unarchive tool",
-                tool_id=tool_id,
-                error=str(e)
-            )
+            logger.error("Failed to unarchive tool", tool_id=tool_id, error=str(e))
             return None
 
     async def create_alias(
-        self,
-        alias_tool_id: str,
-        primary_tool_id: str,
-        created_by: str
+        self, alias_tool_id: str, primary_tool_id: str, created_by: str
     ) -> Dict[str, Any]:
         """
         Create alias relationship.
@@ -996,7 +978,7 @@ class ToolService:
             "alias_tool_id": alias_tool_id,
             "primary_tool_id": primary_tool_id,
             "created_at": datetime.now(timezone.utc).isoformat(),
-            "created_by": created_by
+            "created_by": created_by,
         }
 
         # Sync operation - no await
@@ -1005,15 +987,12 @@ class ToolService:
             "Alias created",
             alias_id=alias_id,
             alias_tool=alias_tool["name"],
-            primary_tool=primary_tool["name"]
+            primary_tool=primary_tool["name"],
         )
 
         return alias
 
-    async def get_aliases(
-        self,
-        primary_tool_id: str
-    ) -> List[Dict[str, Any]]:
+    async def get_aliases(self, primary_tool_id: str) -> List[Dict[str, Any]]:
         """
         Get all aliases for a primary tool.
 
@@ -1029,8 +1008,7 @@ class ToolService:
         )
         # Sync iteration - no await
         items = self.aliases_container.query_items(
-            query=query,
-            parameters=[{"name": "@id", "value": primary_tool_id}]
+            query=query, parameters=[{"name": "@id", "value": primary_tool_id}]
         )
 
         results = list(items)
@@ -1049,10 +1027,7 @@ class ToolService:
         """
         try:
             # Sync operation - no await
-            self.aliases_container.delete_item(
-                item=alias_id,
-                partition_key="alias"
-            )
+            self.aliases_container.delete_item(item=alias_id, partition_key="alias")
             logger.info("Alias removed", alias_id=alias_id)
             return True
         except exceptions.CosmosResourceNotFoundError:
@@ -1074,8 +1049,7 @@ class ToolService:
         )
         # Sync iteration - no await
         items = self.aliases_container.query_items(
-            query=query,
-            parameters=[{"name": "@id", "value": tool_id}]
+            query=query, parameters=[{"name": "@id", "value": tool_id}]
         )
 
         results = list(items)
@@ -1083,9 +1057,7 @@ class ToolService:
         return results[0]["primary_tool_id"] if results else tool_id
 
     async def has_circular_alias(
-        self,
-        alias_tool_id: str,
-        primary_tool_id: str
+        self, alias_tool_id: str, primary_tool_id: str
     ) -> bool:
         """
         Check if creating alias would create circular reference.
@@ -1114,8 +1086,7 @@ class ToolService:
             )
             # Sync iteration - no await
             items = self.aliases_container.query_items(
-                query=query,
-                parameters=[{"name": "@id", "value": current_id}]
+                query=query, parameters=[{"name": "@id", "value": current_id}]
             )
 
             results = list(items)
@@ -1128,9 +1099,7 @@ class ToolService:
         return alias_tool_id in visited
 
     async def _validate_merge(
-        self,
-        target_tool_id: str,
-        source_tool_ids: List[str]
+        self, target_tool_id: str, source_tool_ids: List[str]
     ) -> Tuple[Dict[str, Any], List[Dict[str, Any]], List[Dict[str, Any]]]:
         """
         Validate merge operation and return tools with warnings.
@@ -1151,7 +1120,10 @@ class ToolService:
             raise ValueError(f"Target tool '{target_tool_id}' not found")
 
         if target_tool.get("status") != "active":
-            raise ValueError(f"Target tool must be active, current status: {target_tool.get('status')}")
+            raise ValueError(
+                f"Target tool must be active, current status: {
+                    target_tool.get('status')}"
+            )
 
         if target_tool.get("merged_into"):
             raise ValueError("Target tool has already been merged into another tool")
@@ -1171,7 +1143,10 @@ class ToolService:
                 raise ValueError(f"Source tool '{source_tool['name']}' must be active")
 
             if source_tool.get("merged_into"):
-                raise ValueError(f"Source tool '{source_tool['name']}' has already been merged")
+                raise ValueError(
+                    f"Source tool '{
+                        source_tool['name']}' has already been merged"
+                )
 
             source_tools.append(source_tool)
 
@@ -1182,21 +1157,21 @@ class ToolService:
         source_vendors = list(set([t.get("vendor", "") for t in source_tools]))
         target_vendor = target_tool.get("vendor", "")
         if any(v != target_vendor for v in source_vendors if v):
-            warnings.append({
-                "type": "vendor_mismatch",
-                "message": "Source tools have different vendors than target",
-                "details": {
-                    "target_vendor": target_vendor,
-                    "source_vendors": source_vendors
+            warnings.append(
+                {
+                    "type": "vendor_mismatch",
+                    "message": "Source tools have different vendors than target",
+                    "details": {
+                        "target_vendor": target_vendor,
+                        "source_vendors": source_vendors,
+                    },
                 }
-            })
+            )
 
         return target_tool, source_tools, warnings
 
     async def _migrate_sentiment_data(
-        self,
-        target_tool_id: str,
-        source_tool_ids: List[str]
+        self, target_tool_id: str, source_tool_ids: List[str]
     ) -> int:
         """
         Migrate sentiment data from source tools to target tool.
@@ -1208,7 +1183,7 @@ class ToolService:
         Returns:
             Total count of migrated sentiment records
         """
-        if not hasattr(self, 'sentiment_container') or not self.sentiment_container:
+        if not hasattr(self, "sentiment_container") or not self.sentiment_container:
             logger.warning("No sentiment container available for migration")
             return 0
 
@@ -1221,16 +1196,18 @@ class ToolService:
                 sentiment_items = self.sentiment_container.query_items(
                     query=query,
                     parameters=[{"name": "@tool_id", "value": source_id}],
-                    enable_cross_partition_query=True
+                    enable_cross_partition_query=True,
                 )
 
                 # Update each sentiment record
                 for sentiment in sentiment_items:
                     try:
                         # Add source attribution
-                        sentiment['original_tool_id'] = source_id
-                        sentiment['tool_id'] = target_tool_id
-                        sentiment['migrated_at'] = datetime.now(timezone.utc).isoformat()
+                        sentiment["original_tool_id"] = source_id
+                        sentiment["tool_id"] = target_tool_id
+                        sentiment["migrated_at"] = datetime.now(
+                            timezone.utc
+                        ).isoformat()
 
                         # Update the sentiment record
                         self.sentiment_container.upsert_item(body=sentiment)
@@ -1238,22 +1215,22 @@ class ToolService:
                     except Exception as e:
                         logger.error(
                             "Failed to migrate sentiment record",
-                            sentiment_id=sentiment.get('id'),
+                            sentiment_id=sentiment.get("id"),
                             source_tool_id=source_id,
-                            error=str(e)
+                            error=str(e),
                         )
 
                 logger.info(
                     "Migrated sentiment data",
                     source_tool_id=source_id,
                     target_tool_id=target_tool_id,
-                    count=total_migrated
+                    count=total_migrated,
                 )
             except Exception as e:
                 logger.error(
                     "Failed to query sentiment data for migration",
                     source_tool_id=source_id,
-                    error=str(e)
+                    error=str(e),
                 )
 
         return total_migrated
@@ -1265,7 +1242,7 @@ class ToolService:
         target_categories: List[str],
         target_vendor: str,
         merged_by: str,
-        notes: Optional[str] = None
+        notes: Optional[str] = None,
     ) -> Dict[str, Any]:
         """
         Merge multiple tools into a single tool.
@@ -1293,8 +1270,7 @@ class ToolService:
         """
         # Step 1: Validation
         target_tool, source_tools, warnings = await self._validate_merge(
-            target_tool_id,
-            source_tool_ids
+            target_tool_id, source_tool_ids
         )
 
         # Store before state for audit
@@ -1303,8 +1279,7 @@ class ToolService:
 
         # Step 2: Migrate sentiment data
         sentiment_count = await self._migrate_sentiment_data(
-            target_tool_id,
-            source_tool_ids
+            target_tool_id, source_tool_ids
         )
 
         # Step 3: Update target tool
@@ -1323,10 +1298,7 @@ class ToolService:
             source_tool["updated_at"] = datetime.now(timezone.utc).isoformat()
             source_tool["updated_by"] = merged_by
 
-            self.tools_container.replace_item(
-                item=source_tool["id"],
-                body=source_tool
-            )
+            self.tools_container.replace_item(item=source_tool["id"], body=source_tool)
             archived_tools.append(source_tool)
 
         # Step 5: Create merge record
@@ -1349,14 +1321,14 @@ class ToolService:
                     "name": t["name"],
                     "vendor": t.get("vendor", ""),
                     "categories": t.get("categories", []),
-                    "sentiment_count": 0  # Could be calculated if needed
+                    "sentiment_count": 0,  # Could be calculated if needed
                 }
                 for t in source_tools
             ],
-            "notes": notes or ""
+            "notes": notes or "",
         }
 
-        if hasattr(self, 'merge_records_container') and self.merge_records_container:
+        if hasattr(self, "merge_records_container") and self.merge_records_container:
             self.merge_records_container.create_item(body=merge_record)
 
         # Step 6: Create audit log
@@ -1368,15 +1340,15 @@ class ToolService:
             before_state={
                 "target_categories": target_categories_before,
                 "target_vendor": target_vendor_before,
-                "source_tool_ids": source_tool_ids
+                "source_tool_ids": source_tool_ids,
             },
             after_state={
                 "target_categories": target_categories,
                 "target_vendor": target_vendor,
                 "sentiment_migrated": sentiment_count,
-                "source_tools_archived": len(source_tools)
+                "source_tools_archived": len(source_tools),
             },
-            metadata={"notes": notes, "merge_record_id": merge_record_id}
+            metadata={"notes": notes, "merge_record_id": merge_record_id},
         )
 
         logger.info(
@@ -1384,42 +1356,46 @@ class ToolService:
             target_tool_id=target_tool_id,
             source_count=len(source_tools),
             sentiment_count=sentiment_count,
-            merged_by=merged_by
+            merged_by=merged_by,
         )
 
         # Update detected_tool_ids in sentiment_scores (T026-T027)
         try:
             from .reanalysis_service import ReanalysisService
-            
+
             # Get containers for reanalysis service
-            jobs_container = self.tools_container.database.get_container_client("ReanalysisJobs")
-            sentiment_container = self.tools_container.database.get_container_client("sentiment_scores")
-            
+            jobs_container = self.tools_container.database.get_container_client(
+                "ReanalysisJobs"
+            )
+            sentiment_container = self.tools_container.database.get_container_client(
+                "sentiment_scores"
+            )
+
             # Create reanalysis service
             reanalysis_service = ReanalysisService(
                 reanalysis_jobs_container=jobs_container,
                 sentiment_container=sentiment_container,
                 tools_container=self.tools_container,
-                aliases_container=self.aliases_container
+                aliases_container=self.aliases_container,
             )
-            
+
             # Update tool IDs synchronously (important for data consistency)
             replacement_stats = await reanalysis_service.update_tool_ids_after_merge(
                 source_tool_ids=source_tool_ids,
                 target_tool_id=target_tool_id,
-                merged_by=merged_by
+                merged_by=merged_by,
             )
-            
+
             logger.info(
                 "Sentiment data updated after merge",
                 target_tool_id=target_tool_id,
                 documents_updated=replacement_stats["documents_updated"],
-                replacements_made=replacement_stats["replacements_made"]
+                replacements_made=replacement_stats["replacements_made"],
             )
-            
+
             # Add replacement stats to merge record
             merge_record["sentiment_updates"] = replacement_stats
-            
+
         except Exception as e:
             # Log error but don't fail the merge
             logger.error(
@@ -1427,7 +1403,7 @@ class ToolService:
                 target_tool_id=target_tool_id,
                 source_tool_ids=source_tool_ids,
                 error=str(e),
-                exc_info=True
+                exc_info=True,
             )
             warnings.append(
                 f"Merge completed but sentiment data update failed: {str(e)}"
@@ -1437,14 +1413,11 @@ class ToolService:
             "merge_record": merge_record,
             "target_tool": target_tool,
             "archived_tools": archived_tools,
-            "warnings": warnings
+            "warnings": warnings,
         }
 
     async def get_merge_history(
-        self,
-        tool_id: str,
-        page: int = 1,
-        limit: int = 10
+        self, tool_id: str, page: int = 1, limit: int = 10
     ) -> Dict[str, Any]:
         """
         Get merge history for a tool (where tool was the target).
@@ -1462,10 +1435,7 @@ class ToolService:
         """
         # Validate tool exists
         try:
-            self.tools_container.read_item(
-                item=tool_id,
-                partition_key=tool_id
-            )
+            self.tools_container.read_item(item=tool_id, partition_key=tool_id)
         except exceptions.CosmosResourceNotFoundError:
             raise ValueError(f"Tool '{tool_id}' not found")
 
@@ -1476,13 +1446,13 @@ class ToolService:
             raise ValueError("Limit must be between 1 and 100")
 
         # Check if merge records container exists
-        if not hasattr(self, 'merge_records_container'):
+        if not hasattr(self, "merge_records_container"):
             return {
                 "merge_records": [],
                 "total": 0,
                 "page": page,
                 "limit": limit,
-                "has_more": False
+                "has_more": False,
             }
 
         # Query merge records for this tool (as target)
@@ -1503,15 +1473,13 @@ class ToolService:
                 self.merge_records_container.query_items(
                     query=count_query,
                     parameters=[{"name": "@tool_id", "value": tool_id}],
-                    enable_cross_partition_query=True
+                    enable_cross_partition_query=True,
                 )
             )
             total = count_result[0] if count_result else 0
         except Exception as e:
             logger.warning(
-                "Failed to count merge records",
-                tool_id=tool_id,
-                error=str(e)
+                "Failed to count merge records", tool_id=tool_id, error=str(e)
             )
             total = 0
 
@@ -1523,7 +1491,7 @@ class ToolService:
                 self.merge_records_container.query_items(
                     query=f"{query} OFFSET {offset} LIMIT {limit}",
                     parameters=[{"name": "@tool_id", "value": tool_id}],
-                    enable_cross_partition_query=True
+                    enable_cross_partition_query=True,
                 )
             )
         except Exception as e:
@@ -1531,7 +1499,7 @@ class ToolService:
                 "Failed to query merge records",
                 tool_id=tool_id,
                 error=str(e),
-                exc_info=True
+                exc_info=True,
             )
             merge_records = []
 
@@ -1542,7 +1510,7 @@ class ToolService:
             "total": total,
             "page": page,
             "limit": limit,
-            "has_more": has_more
+            "has_more": has_more,
         }
 
     async def get_audit_log(
@@ -1550,7 +1518,7 @@ class ToolService:
         tool_id: str,
         page: int = 1,
         limit: int = 20,
-        action_type: Optional[str] = None
+        action_type: Optional[str] = None,
     ) -> Dict[str, Any]:
         """
         Get audit log for a specific tool.
@@ -1572,10 +1540,7 @@ class ToolService:
         """
         # Validate tool exists
         try:
-            self.tools_container.read_item(
-                item=tool_id,
-                partition_key=tool_id
-            )
+            self.tools_container.read_item(item=tool_id, partition_key=tool_id)
         except exceptions.CosmosResourceNotFoundError:
             raise ValueError(f"Tool '{tool_id}' not found")
 
@@ -1612,15 +1577,13 @@ class ToolService:
                 self.admin_logs_container.query_items(
                     query=count_query,
                     parameters=parameters,
-                    enable_cross_partition_query=True
+                    enable_cross_partition_query=True,
                 )
             )
             total = count_result[0] if count_result else 0
         except Exception as e:
             logger.warning(
-                "Failed to count audit records",
-                tool_id=tool_id,
-                error=str(e)
+                "Failed to count audit records", tool_id=tool_id, error=str(e)
             )
             total = 0
 
@@ -1632,7 +1595,7 @@ class ToolService:
                 self.admin_logs_container.query_items(
                     query=f"{query} OFFSET {offset} LIMIT {limit}",
                     parameters=parameters,
-                    enable_cross_partition_query=True
+                    enable_cross_partition_query=True,
                 )
             )
         except Exception as e:
@@ -1640,7 +1603,7 @@ class ToolService:
                 "Failed to query audit records",
                 tool_id=tool_id,
                 error=str(e),
-                exc_info=True
+                exc_info=True,
             )
             audit_records = []
 
@@ -1651,5 +1614,5 @@ class ToolService:
             "total": total,
             "page": page,
             "limit": limit,
-            "has_more": has_more
+            "has_more": has_more,
         }

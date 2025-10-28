@@ -82,11 +82,12 @@ def monitor_query_performance(
         async def my_query_method(self, ...):
             ...
     """
+
     def decorator(func: Callable) -> Callable:
         @wraps(func)
         async def async_wrapper(*args, **kwargs):
             start_time = time.time()
-            container_name = kwargs.get('container_name', 'unknown')
+            container_name = kwargs.get("container_name", "unknown")
 
             try:
                 result = await func(*args, **kwargs)
@@ -98,14 +99,14 @@ def monitor_query_performance(
                         function=func.__name__,
                         duration=f"{duration:.3f}s",
                         container=container_name,
-                        threshold=f"{slow_query_threshold}s"
+                        threshold=f"{slow_query_threshold}s",
                     )
                 else:
                     logger.debug(
                         "Query completed",
                         function=func.__name__,
                         duration=f"{duration:.3f}s",
-                        container=container_name
+                        container=container_name,
                     )
 
                 return result
@@ -117,14 +118,14 @@ def monitor_query_performance(
                     duration=f"{duration:.3f}s",
                     container=container_name,
                     error=str(e),
-                    exc_info=True
+                    exc_info=True,
                 )
                 raise
 
         @wraps(func)
         def sync_wrapper(*args, **kwargs):
             start_time = time.time()
-            container_name = kwargs.get('container_name', 'unknown')
+            container_name = kwargs.get("container_name", "unknown")
 
             try:
                 result = func(*args, **kwargs)
@@ -136,14 +137,14 @@ def monitor_query_performance(
                         function=func.__name__,
                         duration=f"{duration:.3f}s",
                         container=container_name,
-                        threshold=f"{slow_query_threshold}s"
+                        threshold=f"{slow_query_threshold}s",
                     )
                 else:
                     logger.debug(
                         "Query completed",
                         function=func.__name__,
                         duration=f"{duration:.3f}s",
-                        container=container_name
+                        container=container_name,
                     )
 
                 return result
@@ -155,7 +156,7 @@ def monitor_query_performance(
                     duration=f"{duration:.3f}s",
                     container=container_name,
                     error=str(e),
-                    exc_info=True
+                    exc_info=True,
                 )
                 raise
 
@@ -298,11 +299,9 @@ class DatabaseService:
 
             # Tool management containers
             self.tools_container = self.database.get_container_client("Tools")
-            self.aliases_container = self.database.get_container_client(
-                "ToolAliases"
-            )
-            self.reanalysis_jobs_container = (
-                self.database.get_container_client("ReanalysisJobs")
+            self.aliases_container = self.database.get_container_client("ToolAliases")
+            self.reanalysis_jobs_container = self.database.get_container_client(
+                "ReanalysisJobs"
             )
 
             logger.info("Database containers initialized")
@@ -557,8 +556,7 @@ class DatabaseService:
                 "WHERE ta.alias_tool_id = @id AND ta.partitionKey = 'alias'"
             )
             items = self.aliases_container.query_items(
-                query=query,
-                parameters=[{"name": "@id", "value": tool_id}]
+                query=query, parameters=[{"name": "@id", "value": tool_id}]
             )
 
             results = []
@@ -592,17 +590,20 @@ class DatabaseService:
                 "WHERE ta.primary_tool_id = @id AND ta.partitionKey = 'alias'"
             )
             items = self.aliases_container.query_items(
-                query=query,
-                parameters=[{"name": "@id", "value": primary_tool_id}]
+                query=query, parameters=[{"name": "@id", "value": primary_tool_id}]
             )
 
             async for item in items:
                 tool_ids.append(item["alias_tool_id"])
 
-            logger.debug(f"Tool IDs for aggregation (primary {primary_tool_id}): {tool_ids}")
+            logger.debug(
+                f"Tool IDs for aggregation (primary {primary_tool_id}): {tool_ids}"
+            )
             return tool_ids
         except Exception as e:
-            logger.error(f"Error getting tool IDs for aggregation {primary_tool_id}: {e}")
+            logger.error(
+                f"Error getting tool IDs for aggregation {primary_tool_id}: {e}"
+            )
             return tool_ids
 
     @monitor_query_performance(slow_query_threshold=3.0)
@@ -826,8 +827,7 @@ class DatabaseService:
 
             items = list(
                 self.tools_container.query_items(
-                    query=query,
-                    enable_cross_partition_query=True
+                    query=query, enable_cross_partition_query=True
                 )
             )
 
@@ -844,10 +844,7 @@ class DatabaseService:
                 logger.warning("Tools container not initialized")
                 return None
 
-            item = self.tools_container.read_item(
-                item=tool_id,
-                partition_key='tool'
-            )
+            item = self.tools_container.read_item(item=tool_id, partition_key="tool")
             return item
         except exceptions.CosmosResourceNotFoundError:
             return None
@@ -896,7 +893,7 @@ class DatabaseService:
             # Use c.detected_tool_ids field existence as filter
             # Note: We can't use ARRAY_CONTAINS in Cosmos DB emulator,
             # but we can select fields and filter in Python efficiently
-            
+
             # Build time filter
             if hours:
                 # Cap at 7 days to keep queries fast
@@ -908,25 +905,19 @@ class DatabaseService:
             elif start_date or end_date:
                 conditions = []
                 if start_date:
-                    start_dt = datetime.fromisoformat(
-                        start_date.replace('Z', '+00:00')
-                    )
+                    start_dt = datetime.fromisoformat(start_date.replace("Z", "+00:00"))
                     start_ts = self._datetime_to_timestamp(start_dt)
                     conditions.append(f"c._ts >= {start_ts}")
                 if end_date:
-                    end_dt = datetime.fromisoformat(
-                        end_date.replace('Z', '+00:00')
-                    )
+                    end_dt = datetime.fromisoformat(end_date.replace("Z", "+00:00"))
                     end_ts = self._datetime_to_timestamp(end_dt)
                     conditions.append(f"c._ts <= {end_ts}")
-                
+
                 # Cap date range at 7 days for performance
                 if start_date and end_date:
-                    end_dt_obj = datetime.fromisoformat(
-                        end_date.replace('Z', '+00:00')
-                    )
+                    end_dt_obj = datetime.fromisoformat(end_date.replace("Z", "+00:00"))
                     start_dt_obj = datetime.fromisoformat(
-                        start_date.replace('Z', '+00:00')
+                        start_date.replace("Z", "+00:00")
                     )
                     range_days = (end_dt_obj - start_dt_obj).days
                     if range_days > 7:
@@ -934,8 +925,8 @@ class DatabaseService:
                         start_dt = end_dt_obj - timedelta(days=7)
                         start_ts = self._datetime_to_timestamp(start_dt)
                         conditions[0] = f"c._ts >= {start_ts}"
-                
-                time_filter = ' AND '.join(conditions)
+
+                time_filter = " AND ".join(conditions)
             else:
                 # Default: last 1 hour for fast queries
                 # (24 hours would query 9K+ docs, taking 10+ seconds)
@@ -950,33 +941,28 @@ class DatabaseService:
             )
 
             logger.info(
-                f"Executing tool sentiment query for tool {tool_id}, "
-                f"hours={hours}"
+                f"Executing tool sentiment query for tool {tool_id}, " f"hours={hours}"
             )
-            
+
             start_time = datetime.utcnow()
             results = list(
                 self.sentiment_container.query_items(
-                    query=query,
-                    enable_cross_partition_query=True
+                    query=query, enable_cross_partition_query=True
                 )
             )
             query_duration = (datetime.utcnow() - start_time).total_seconds()
 
-            logger.info(
-                f"Query returned {len(results)} docs in {query_duration:.2f}s"
-            )
+            logger.info(f"Query returned {len(results)} docs in {query_duration:.2f}s")
 
             # Filter in Python for tool_id in detected_tool_ids
             matching_docs = [
-                doc for doc in results
-                if doc.get('detected_tool_ids') and
-                tool_id in doc['detected_tool_ids']
+                doc
+                for doc in results
+                if doc.get("detected_tool_ids") and tool_id in doc["detected_tool_ids"]
             ]
 
             logger.info(
-                f"Filtered to {len(matching_docs)} docs containing tool "
-                f"{tool_id}"
+                f"Filtered to {len(matching_docs)} docs containing tool " f"{tool_id}"
             )
 
             # Calculate stats
@@ -991,20 +977,17 @@ class DatabaseService:
                 }
 
             positive = sum(
-                1 for doc in matching_docs
-                if doc.get('sentiment') == 'positive'
+                1 for doc in matching_docs if doc.get("sentiment") == "positive"
             )
             negative = sum(
-                1 for doc in matching_docs
-                if doc.get('sentiment') == 'negative'
+                1 for doc in matching_docs if doc.get("sentiment") == "negative"
             )
             neutral = sum(
-                1 for doc in matching_docs
-                if doc.get('sentiment') == 'neutral'
+                1 for doc in matching_docs if doc.get("sentiment") == "neutral"
             )
-            avg_score = sum(
-                doc.get('compound_score', 0.0) for doc in matching_docs
-            ) / total
+            avg_score = (
+                sum(doc.get("compound_score", 0.0) for doc in matching_docs) / total
+            )
 
             return {
                 "total_mentions": total,
@@ -1015,10 +998,7 @@ class DatabaseService:
             }
 
         except Exception as e:
-            logger.error(
-                f"Error getting tool sentiment {tool_id}: {e}",
-                exc_info=True
-            )
+            logger.error(f"Error getting tool sentiment {tool_id}: {e}", exc_info=True)
             return {
                 "total_mentions": 0,
                 "positive_count": 0,
@@ -1100,10 +1080,7 @@ class DatabaseService:
             )
             return []
         except Exception as e:
-            logger.error(
-                f"Error getting tool timeseries {tool_id}: {e}",
-                exc_info=True
-            )
+            logger.error(f"Error getting tool timeseries {tool_id}: {e}", exc_info=True)
             return []
 
     async def get_pending_tools(self) -> List[Dict[str, Any]]:
@@ -1194,9 +1171,9 @@ db = DatabaseService()
 
 def get_db() -> DatabaseService:
     """Dependency injection function for FastAPI endpoints.
-    
+
     Returns the global database instance for use in route handlers.
-    
+
     Returns:
         DatabaseService instance
     """

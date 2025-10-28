@@ -1,8 +1,9 @@
 """Data models for tool management."""
 
-from pydantic import BaseModel, Field, field_validator
-from typing import Optional, Dict, List
 from enum import Enum
+from typing import Dict, List, Optional
+
+from pydantic import BaseModel, Field, field_validator
 
 
 class ToolCategory(str, Enum):
@@ -38,16 +39,12 @@ class Tool(BaseModel):
     slug: str
     vendor: str = Field(..., min_length=1, max_length=100)
     categories: List[ToolCategory] = Field(
-        ...,
-        min_length=1,
-        max_length=5,
-        description="1-5 categories per tool"
+        ..., min_length=1, max_length=5, description="1-5 categories per tool"
     )
     status: ToolStatus = ToolStatus.ACTIVE
     description: Optional[str] = Field(default=None, max_length=1000)
     merged_into: Optional[str] = Field(
-        default=None,
-        description="UUID of primary tool if this tool was merged"
+        default=None, description="UUID of primary tool if this tool was merged"
     )
     metadata: Dict[str, str] = Field(default_factory=dict)
     created_at: str
@@ -55,7 +52,7 @@ class Tool(BaseModel):
     created_by: str = Field(..., description="Admin ID who created")
     updated_by: str = Field(..., description="Admin ID who last updated")
 
-    @field_validator('categories')
+    @field_validator("categories")
     @classmethod
     def validate_categories(cls, v):
         """Validate categories array."""
@@ -68,7 +65,7 @@ class Tool(BaseModel):
             raise ValueError("Duplicate categories not allowed")
         return v
 
-    @field_validator('vendor')
+    @field_validator("vendor")
     @classmethod
     def validate_vendor(cls, v):
         """Validate vendor is not empty or whitespace."""
@@ -100,35 +97,25 @@ class ToolMergeRecord(BaseModel):
     partitionKey: str  # Set to target_tool_id
     target_tool_id: str = Field(..., description="Primary tool (merged into)")
     source_tool_ids: List[str] = Field(
-        ...,
-        min_length=1,
-        description="Tools being merged (1+ items)"
+        ..., min_length=1, description="Tools being merged (1+ items)"
     )
     merged_at: str = Field(..., description="ISO 8601 timestamp")
     merged_by: str = Field(..., description="Admin ID")
     sentiment_count: int = Field(
-        ...,
-        ge=0,
-        description="Number of sentiment records migrated"
+        ..., ge=0, description="Number of sentiment records migrated"
     )
     target_categories_before: List[str] = Field(
-        ...,
-        description="Target tool categories before merge"
+        ..., description="Target tool categories before merge"
     )
     target_categories_after: List[str] = Field(
-        ...,
-        description="Target tool categories after merge"
+        ..., description="Target tool categories after merge"
     )
     target_vendor_before: str
     target_vendor_after: str
     source_tools_metadata: List[Dict] = Field(
-        ...,
-        description="Snapshot of source tools at merge time"
+        ..., description="Snapshot of source tools at merge time"
     )
-    notes: Optional[str] = Field(
-        default=None,
-        description="Admin notes about merge"
-    )
+    notes: Optional[str] = Field(default=None, description="Admin notes about merge")
 
 
 class AdminActionLog(BaseModel):
@@ -136,40 +123,24 @@ class AdminActionLog(BaseModel):
 
     id: str
     partitionKey: str = Field(
-        ...,
-        description="YYYYMM format for time-series partitioning"
+        ..., description="YYYYMM format for time-series partitioning"
     )
     timestamp: str = Field(..., description="ISO 8601 timestamp")
     admin_id: str = Field(..., description="Administrator ID")
     action_type: str = Field(
-        ...,
-        description="create|edit|archive|unarchive|delete|merge"
+        ..., description="create|edit|archive|unarchive|delete|merge"
     )
     tool_id: str = Field(..., description="Primary tool affected")
-    tool_name: str = Field(
-        ...,
-        description="Tool name (denormalized for readability)"
-    )
+    tool_name: str = Field(..., description="Tool name (denormalized for readability)")
     before_state: Optional[Dict] = Field(
-        default=None,
-        description="Tool state before action"
+        default=None, description="Tool state before action"
     )
     after_state: Optional[Dict] = Field(
-        default=None,
-        description="Tool state after action"
+        default=None, description="Tool state after action"
     )
-    metadata: Dict = Field(
-        default_factory=dict,
-        description="Additional context"
-    )
-    ip_address: Optional[str] = Field(
-        default=None,
-        description="Admin IP address"
-    )
-    user_agent: Optional[str] = Field(
-        default=None,
-        description="Browser/client info"
-    )
+    metadata: Dict = Field(default_factory=dict, description="Additional context")
+    ip_address: Optional[str] = Field(default=None, description="Admin IP address")
+    user_agent: Optional[str] = Field(default=None, description="Browser/client info")
 
 
 class ToolCreateRequest(BaseModel):
@@ -178,15 +149,12 @@ class ToolCreateRequest(BaseModel):
     name: str = Field(..., min_length=1, max_length=200)
     vendor: str = Field(..., min_length=1, max_length=100)
     categories: List[ToolCategory] = Field(
-        ...,
-        min_length=1,
-        max_length=5,
-        description="1-5 categories per tool"
+        ..., min_length=1, max_length=5, description="1-5 categories per tool"
     )
     description: Optional[str] = Field(default="", max_length=1000)
     metadata: Optional[Dict[str, str]] = Field(default_factory=dict)
 
-    @field_validator('categories')
+    @field_validator("categories")
     @classmethod
     def validate_categories(cls, v):
         """Validate categories array."""
@@ -211,15 +179,12 @@ class ToolUpdateRequest(BaseModel):
     name: Optional[str] = Field(None, min_length=1, max_length=200)
     vendor: Optional[str] = Field(None, min_length=1, max_length=100)
     categories: Optional[List[ToolCategory]] = Field(
-        None,
-        min_length=1,
-        max_length=5,
-        description="1-5 categories per tool"
+        None, min_length=1, max_length=5, description="1-5 categories per tool"
     )
     description: Optional[str] = Field(None, max_length=1000)
     metadata: Optional[Dict[str, str]] = None
 
-    @field_validator('categories')
+    @field_validator("categories")
     @classmethod
     def validate_categories(cls, v):
         """Validate categories array if provided."""
@@ -242,49 +207,34 @@ class ToolUpdateRequest(BaseModel):
 class ToolMergeRequest(BaseModel):
     """Request model for merging tools (for US5)."""
 
-    target_tool_id: str = Field(
-        ...,
-        description="Primary tool to merge into"
-    )
+    target_tool_id: str = Field(..., description="Primary tool to merge into")
     source_tool_ids: List[str] = Field(
-        ...,
-        min_length=1,
-        description="Tools to merge (1+ items)"
+        ..., min_length=1, description="Tools to merge (1+ items)"
     )
     final_categories: List[ToolCategory] = Field(
-        ...,
-        min_length=1,
-        max_length=5,
-        description="Categories for merged tool"
+        ..., min_length=1, max_length=5, description="Categories for merged tool"
     )
     final_vendor: str = Field(
-        ...,
-        min_length=1,
-        max_length=100,
-        description="Vendor for merged tool"
+        ..., min_length=1, max_length=100, description="Vendor for merged tool"
     )
     notes: Optional[str] = Field(
-        default=None,
-        max_length=2000,
-        description="Admin notes about merge"
+        default=None, max_length=2000, description="Admin notes about merge"
     )
 
-    @field_validator('source_tool_ids')
+    @field_validator("source_tool_ids")
     @classmethod
     def validate_source_tools(cls, v, values):
         """Validate source tools don't include target."""
-        if 'target_tool_id' in values.data:
-            target = values.data['target_tool_id']
+        if "target_tool_id" in values.data:
+            target = values.data["target_tool_id"]
             if target in v:
-                raise ValueError(
-                    "Source tools cannot include target tool"
-                )
+                raise ValueError("Source tools cannot include target tool")
         # Check for duplicates
         if len(v) != len(set(v)):
             raise ValueError("Duplicate source tools not allowed")
         return v
 
-    @field_validator('final_categories')
+    @field_validator("final_categories")
     @classmethod
     def validate_categories(cls, v):
         """Validate categories array."""

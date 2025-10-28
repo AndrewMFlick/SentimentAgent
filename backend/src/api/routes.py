@@ -11,8 +11,8 @@ from pydantic import BaseModel
 from ..models import RedditPost, TrendingTopic
 from ..services import ai_agent, db
 from ..services.health import app_state
-from .tools import router as tools_router
 from .admin import router as admin_router
+from .tools import router as tools_router
 
 router = APIRouter()
 
