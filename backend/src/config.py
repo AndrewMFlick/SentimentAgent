@@ -88,6 +88,12 @@ class Settings(BaseSettings):
     reanalysis_retry_base_delay: float = 1.0  # Base delay (seconds)
     reanalysis_retry_max_delay: float = 60.0  # Max delay (seconds)
 
+    # Sentiment Cache (Feature 017 - Pre-Cached Sentiment Analysis)
+    enable_sentiment_cache: bool = True  # Enable pre-cached sentiment aggregates
+    cache_refresh_interval_minutes: int = 15  # Background refresh frequency
+    cache_ttl_minutes: int = 30  # Max age before cache considered stale
+    cosmos_container_sentiment_cache: str = "sentiment_cache"  # Cache container name
+
     @property
     def subreddit_list(self) -> List[str]:
         """Get list of subreddits to monitor."""
