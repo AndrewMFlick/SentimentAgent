@@ -885,15 +885,48 @@ class DatabaseService:
         """
         Get sentiment breakdown for a tool.
 
+        Feature 017: Pre-Cached Sentiment Analysis Integration
+        If cache is enabled and request is for standard period (1, 24, 168, 720 hours),
+        uses CacheService for fast (<1s) response. Otherwise falls back to direct query.
+
         Queries sentiment_scores and filters in Python since Cosmos DB
         emulator doesn't support advanced array queries.
         """
         try:
-            # Performance optimization: Query only docs with tool IDs
-            # Use c.detected_tool_ids field existence as filter
-            # Note: We can't use ARRAY_CONTAINS in Cosmos DB emulator,
-            # but we can select fields and filter in Python efficiently
-
+            # T022: Try cache first if enabled and using hours parameter
+            if hours and not start_date and not end_date:
+                try:
+                    from .cache_service import cache_service
+                    if cache_service and cache_service.cache_enabled:
+                        logger.info(
+                            "Attempting cache lookup for tool sentiment",
+                            tool_id=tool_id,
+                            hours=hours
+                        )
+                        cached_result = await cache_service.get_cached_sentiment(
+                            tool_id=tool_id,
+                            hours=hours
+                        )
+                        
+                        # Convert cache format to database format
+                        return {
+                            "total_mentions": cached_result.get("total_mentions", 0),
+                            "positive_count": cached_result.get("positive_count", 0),
+                            "negative_count": cached_result.get("negative_count", 0),
+                            "neutral_count": cached_result.get("neutral_count", 0),
+                            "avg_sentiment": cached_result.get("average_sentiment", 0.0),
+                            "is_cached": cached_result.get("is_cached", False),
+                            "cached_at": cached_result.get("cached_at"),
+                        }
+                except Exception as e:
+                    # Cache error - log and fallback to direct query
+                    logger.warning(
+                        "Cache lookup failed, falling back to direct query",
+                        tool_id=tool_id,
+                        error=str(e)
+                    )
+            
+            # Fallback to direct query (original implementation)
             # Build time filter
             if hours:
                 # Cap at 7 days to keep queries fast
