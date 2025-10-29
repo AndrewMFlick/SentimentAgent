@@ -524,7 +524,9 @@ class TestCacheServicePhase4:
         cache_container.upsert_item.assert_called_once()
         
         # Verify metadata structure
-        call_args = cache_container.upsert_item.call_args[1]["body"]
+        # upsert_item is called with keyword argument: upsert_item(body=metadata_dict)
+        call_kwargs = cache_container.upsert_item.call_args.kwargs
+        call_args = call_kwargs["body"]
         assert call_args["id"] == "metadata"
         assert call_args["last_refresh_duration_ms"] == 5432
         assert call_args["total_entries"] == 60
@@ -563,8 +565,9 @@ class TestCacheServicePhase4:
         
         # Mock empty query result
         async def mock_tools_query(*args, **kwargs):
-            return
-            yield  # Make it an async generator
+            # Empty async generator - no items to yield
+            if False:
+                yield  # Make it an async generator but never yield
         
         tools_container.query_items = MagicMock(return_value=mock_tools_query())
         
