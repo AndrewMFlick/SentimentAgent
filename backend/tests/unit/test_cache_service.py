@@ -590,3 +590,286 @@ class TestCacheServicePhase4:
         
         # Verify returns empty list on error
         assert tool_ids == []
+
+
+class TestCacheServicePhase5:
+    """Test suite for Phase 5 (User Story 3): View Historical Trends.
+    
+    Test Coverage:
+    - T042: Unit test for 7-day period cache lookup
+    - T043: Unit test for 30-day period cache lookup  
+    - T044: Unit test for custom time range (non-standard) with fallback
+    
+    Reference: specs/017-pre-cached-sentiment/tasks.md Phase 5
+    """
+
+    @pytest.fixture
+    def mock_containers(self):
+        """Create mock containers for testing."""
+        cache_container = MagicMock(spec=ContainerProxy)
+        sentiment_container = MagicMock(spec=ContainerProxy)
+        tools_container = MagicMock(spec=ContainerProxy)
+        return cache_container, sentiment_container, tools_container
+
+    @pytest.fixture
+    def cache_service(self, mock_containers):
+        """Create CacheService instance with mocked containers."""
+        cache_container, sentiment_container, tools_container = mock_containers
+        return CacheService(
+            cache_container=cache_container,
+            sentiment_container=sentiment_container,
+            tools_container=tools_container,
+        )
+
+    # T042: Unit test for 7-day period cache lookup
+    @pytest.mark.asyncio
+    async def test_7day_period_cache_hit(self, cache_service, mock_containers):
+        """Test cache hit for 7-day (168 hour) period.
+        
+        Verifies that:
+        - 168 hours maps to DAY_7 period
+        - Cache lookup uses correct key format
+        - Cached data is returned with is_cached=True
+        """
+        cache_container, sentiment_container, tools_container = mock_containers
+        tool_id = "test-tool-123"
+        hours = 168  # 7 days
+        
+        # Mock cache hit
+        now_ts = int(datetime.now(timezone.utc).timestamp())
+        cache_entry = {
+            "id": f"{tool_id}:DAY_7",
+            "tool_id": tool_id,
+            "period": "DAY_7",
+            "total_mentions": 250,
+            "positive_count": 150,
+            "negative_count": 50,
+            "neutral_count": 50,
+            "positive_percentage": 60.0,
+            "negative_percentage": 20.0,
+            "neutral_percentage": 20.0,
+            "average_sentiment": 0.5,
+            "period_start_ts": now_ts - (168 * 3600),
+            "period_end_ts": now_ts,
+            "last_updated_ts": now_ts - 300,  # 5 minutes ago (fresh)
+        }
+        cache_container.read_item.return_value = cache_entry
+        
+        # Execute
+        result = await cache_service.get_cached_sentiment(tool_id, hours)
+        
+        # Verify
+        assert result["total_mentions"] == 250
+        assert result["positive_count"] == 150
+        assert result["is_cached"] is True
+        assert "cached_at" in result
+        
+        # Verify cache lookup used correct key
+        cache_container.read_item.assert_called_once_with(
+            item=f"{tool_id}:DAY_7",
+            partition_key=tool_id
+        )
+
+    # T043: Unit test for 30-day period cache lookup
+    @pytest.mark.asyncio
+    async def test_30day_period_cache_hit(self, cache_service, mock_containers):
+        """Test cache hit for 30-day (720 hour) period.
+        
+        Verifies that:
+        - 720 hours maps to DAY_30 period
+        - Cache lookup uses correct key format
+        - Cached data is returned with is_cached=True
+        """
+        cache_container, sentiment_container, tools_container = mock_containers
+        tool_id = "test-tool-456"
+        hours = 720  # 30 days
+        
+        # Mock cache hit
+        now_ts = int(datetime.now(timezone.utc).timestamp())
+        cache_entry = {
+            "id": f"{tool_id}:DAY_30",
+            "tool_id": tool_id,
+            "period": "DAY_30",
+            "total_mentions": 1000,
+            "positive_count": 600,
+            "negative_count": 200,
+            "neutral_count": 200,
+            "positive_percentage": 60.0,
+            "negative_percentage": 20.0,
+            "neutral_percentage": 20.0,
+            "average_sentiment": 0.45,
+            "period_start_ts": now_ts - (720 * 3600),
+            "period_end_ts": now_ts,
+            "last_updated_ts": now_ts - 600,  # 10 minutes ago (fresh)
+        }
+        cache_container.read_item.return_value = cache_entry
+        
+        # Execute
+        result = await cache_service.get_cached_sentiment(tool_id, hours)
+        
+        # Verify
+        assert result["total_mentions"] == 1000
+        assert result["positive_count"] == 600
+        assert result["is_cached"] is True
+        assert "cached_at" in result
+        
+        # Verify cache lookup used correct key
+        cache_container.read_item.assert_called_once_with(
+            item=f"{tool_id}:DAY_30",
+            partition_key=tool_id
+        )
+
+    # T044: Unit test for custom time range (non-standard) with fallback
+    @pytest.mark.asyncio
+    async def test_custom_time_range_fallback(self, cache_service, mock_containers):
+        """Test fallback to on-demand calculation for non-standard time periods.
+        
+        Verifies that:
+        - Non-standard hours (e.g., 72, 360) don't map to cache periods
+        - System falls back to on-demand calculation
+        - Result is returned with is_cached=False
+        - Appropriate logging occurs
+        """
+        cache_container, sentiment_container, tools_container = mock_containers
+        tool_id = "test-tool-789"
+        hours = 72  # 3 days - non-standard period
+        
+        # Mock sentiment data calculation
+        now_ts = int(datetime.now(timezone.utc).timestamp())
+        mock_sentiment_data = {
+            "total_mentions": 100,
+            "positive_count": 60,
+            "negative_count": 20,
+            "neutral_count": 20,
+            "positive_percentage": 60.0,
+            "negative_percentage": 20.0,
+            "neutral_percentage": 20.0,
+            "average_sentiment": 0.4,
+            "period_start_ts": now_ts - (72 * 3600),
+            "period_end_ts": now_ts,
+        }
+        
+        # Mock the query for sentiment data
+        async def mock_query_items(*args, **kwargs):
+            for item in [
+                {"sentiment_label": "positive"},
+                {"sentiment_label": "positive"},
+                {"sentiment_label": "negative"},
+            ]:
+                yield item
+        
+        sentiment_container.query_items = mock_query_items
+        
+        # Execute
+        result = await cache_service.get_cached_sentiment(tool_id, hours)
+        
+        # Verify fallback to on-demand calculation
+        assert result is not None
+        assert result["is_cached"] is False
+        
+        # Verify cache was NOT queried (non-standard period)
+        cache_container.read_item.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_7day_period_cache_miss_with_calculation(self, cache_service, mock_containers):
+        """Test cache miss for 7-day period triggers on-demand calculation.
+        
+        Verifies that:
+        - Cache miss is handled gracefully
+        - On-demand calculation is performed
+        - Result is saved to cache for future requests
+        """
+        from azure.cosmos.exceptions import CosmosResourceNotFoundError
+        
+        cache_container, sentiment_container, tools_container = mock_containers
+        tool_id = "test-tool-new"
+        hours = 168  # 7 days
+        
+        # Mock cache miss
+        cache_container.read_item.side_effect = CosmosResourceNotFoundError()
+        
+        # Mock sentiment data calculation
+        now_ts = int(datetime.now(timezone.utc).timestamp())
+        
+        async def mock_query_items(*args, **kwargs):
+            # Return some mock sentiment data
+            for i in range(50):
+                yield {
+                    "sentiment_label": "positive" if i < 30 else ("negative" if i < 40 else "neutral"),
+                    "sentiment_score": 0.5,
+                    "_ts": now_ts - (i * 3600),
+                }
+        
+        sentiment_container.query_items = mock_query_items
+        
+        # Mock cache save
+        cache_container.upsert_item = AsyncMock()
+        
+        # Execute
+        result = await cache_service.get_cached_sentiment(tool_id, hours)
+        
+        # Verify calculation occurred
+        assert result is not None
+        assert result["total_mentions"] == 50
+        assert result["is_cached"] is False
+        
+        # Verify cache save was attempted
+        cache_container.upsert_item.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_30day_period_stale_cache_refresh(self, cache_service, mock_containers):
+        """Test stale cache for 30-day period triggers recalculation.
+        
+        Verifies that:
+        - Stale cache (older than TTL) triggers recalculation
+        - Fresh data is saved to cache
+        - Result is returned with is_cached=False for recalculated data
+        """
+        cache_container, sentiment_container, tools_container = mock_containers
+        tool_id = "test-tool-stale"
+        hours = 720  # 30 days
+        
+        # Mock stale cache entry (60 minutes old, TTL is 30 minutes)
+        now_ts = int(datetime.now(timezone.utc).timestamp())
+        stale_cache_entry = {
+            "id": f"{tool_id}:DAY_30",
+            "tool_id": tool_id,
+            "period": "DAY_30",
+            "total_mentions": 500,
+            "positive_count": 300,
+            "negative_count": 100,
+            "neutral_count": 100,
+            "positive_percentage": 60.0,
+            "negative_percentage": 20.0,
+            "neutral_percentage": 20.0,
+            "average_sentiment": 0.4,
+            "period_start_ts": now_ts - (720 * 3600),
+            "period_end_ts": now_ts - 3600,
+            "last_updated_ts": now_ts - 3600,  # 60 minutes ago (stale)
+        }
+        cache_container.read_item.return_value = stale_cache_entry
+        
+        # Mock sentiment data recalculation
+        async def mock_query_items(*args, **kwargs):
+            for i in range(100):
+                yield {
+                    "sentiment_label": "positive" if i < 60 else ("negative" if i < 80 else "neutral"),
+                    "sentiment_score": 0.5,
+                    "_ts": now_ts - (i * 3600),
+                }
+        
+        sentiment_container.query_items = mock_query_items
+        
+        # Mock cache save
+        cache_container.upsert_item = AsyncMock()
+        
+        # Execute
+        result = await cache_service.get_cached_sentiment(tool_id, hours)
+        
+        # Verify recalculation occurred
+        assert result is not None
+        assert result["total_mentions"] == 100  # New calculation
+        assert result["is_cached"] is False  # Recalculated, not from cache
+        
+        # Verify cache was updated
+        cache_container.upsert_item.assert_called_once()

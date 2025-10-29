@@ -392,3 +392,324 @@ class TestCacheIntegrationPhase4:
         for entry in cache_entries:
             assert entry["positive_count"] >= 0
             assert entry["total_mentions"] >= 0
+
+
+class TestCacheIntegrationPhase5:
+    """Integration tests for Phase 5 (User Story 3): View Historical Trends.
+    
+    Test Coverage:
+    - T047: Integration test for time period switching - verify all periods accessible
+    
+    Reference: specs/017-pre-cached-sentiment/tasks.md Phase 5
+    """
+
+    @pytest.fixture
+    def cache_service_integrated(self):
+        """Create cache service with integrated mock containers."""
+        cache_container = MagicMock()
+        sentiment_container = MagicMock()
+        tools_container = MagicMock()
+        
+        service = CacheService(
+            cache_container=cache_container,
+            sentiment_container=sentiment_container,
+            tools_container=tools_container,
+        )
+        
+        return service, cache_container, sentiment_container, tools_container
+
+    # T047: Integration test for time period switching
+    @pytest.mark.asyncio
+    async def test_time_period_switching_all_periods_accessible(
+        self, cache_service_integrated
+    ):
+        """Test switching between all time periods (1h, 24h, 7d, 30d).
+        
+        Verifies that:
+        - All 4 standard periods are accessible
+        - Switching between periods works correctly
+        - Each period returns correct cached data
+        - Cache keys are correctly formatted for each period
+        """
+        service, cache_container, _, _ = cache_service_integrated
+        
+        tool_id = "integration-tool-periods"
+        now_ts = int(datetime.now(timezone.utc).timestamp())
+        
+        # Setup: Cache entries for all 4 periods
+        cache_data_by_period = {
+            f"{tool_id}:HOUR_1": {
+                "id": f"{tool_id}:HOUR_1",
+                "tool_id": tool_id,
+                "period": "HOUR_1",
+                "total_mentions": 50,
+                "positive_count": 30,
+                "negative_count": 10,
+                "neutral_count": 10,
+                "positive_percentage": 60.0,
+                "negative_percentage": 20.0,
+                "neutral_percentage": 20.0,
+                "average_sentiment": 0.4,
+                "period_start_ts": now_ts - 3600,
+                "period_end_ts": now_ts,
+                "last_updated_ts": now_ts - 300,
+            },
+            f"{tool_id}:HOUR_24": {
+                "id": f"{tool_id}:HOUR_24",
+                "tool_id": tool_id,
+                "period": "HOUR_24",
+                "total_mentions": 200,
+                "positive_count": 120,
+                "negative_count": 40,
+                "neutral_count": 40,
+                "positive_percentage": 60.0,
+                "negative_percentage": 20.0,
+                "neutral_percentage": 20.0,
+                "average_sentiment": 0.4,
+                "period_start_ts": now_ts - 86400,
+                "period_end_ts": now_ts,
+                "last_updated_ts": now_ts - 300,
+            },
+            f"{tool_id}:DAY_7": {
+                "id": f"{tool_id}:DAY_7",
+                "tool_id": tool_id,
+                "period": "DAY_7",
+                "total_mentions": 800,
+                "positive_count": 500,
+                "negative_count": 150,
+                "neutral_count": 150,
+                "positive_percentage": 62.5,
+                "negative_percentage": 18.75,
+                "neutral_percentage": 18.75,
+                "average_sentiment": 0.43,
+                "period_start_ts": now_ts - (168 * 3600),
+                "period_end_ts": now_ts,
+                "last_updated_ts": now_ts - 300,
+            },
+            f"{tool_id}:DAY_30": {
+                "id": f"{tool_id}:DAY_30",
+                "tool_id": tool_id,
+                "period": "DAY_30",
+                "total_mentions": 3000,
+                "positive_count": 1800,
+                "negative_count": 600,
+                "neutral_count": 600,
+                "positive_percentage": 60.0,
+                "negative_percentage": 20.0,
+                "neutral_percentage": 20.0,
+                "average_sentiment": 0.4,
+                "period_start_ts": now_ts - (720 * 3600),
+                "period_end_ts": now_ts,
+                "last_updated_ts": now_ts - 600,
+            },
+        }
+        
+        def mock_read_item(item, partition_key):
+            return cache_data_by_period[item]
+        
+        cache_container.read_item = mock_read_item
+        
+        # Test all 4 periods
+        test_cases = [
+            (1, "HOUR_1", 50),
+            (24, "HOUR_24", 200),
+            (168, "DAY_7", 800),
+            (720, "DAY_30", 3000),
+        ]
+        
+        for hours, expected_period, expected_mentions in test_cases:
+            result = await service.get_cached_sentiment(tool_id, hours)
+            
+            # Verify correct data returned
+            assert result["is_cached"] is True, f"Period {expected_period} should be cached"
+            assert result["total_mentions"] == expected_mentions, \
+                f"Period {expected_period} should have {expected_mentions} mentions"
+            
+            # Verify correct period start timestamp
+            if expected_period == "HOUR_1":
+                assert result["period_start_ts"] == now_ts - 3600
+            elif expected_period == "HOUR_24":
+                assert result["period_start_ts"] == now_ts - 86400
+            elif expected_period == "DAY_7":
+                assert result["period_start_ts"] == now_ts - (168 * 3600)
+            elif expected_period == "DAY_30":
+                assert result["period_start_ts"] == now_ts - (720 * 3600)
+
+    @pytest.mark.asyncio
+    async def test_7day_and_30day_periods_full_flow(self, cache_service_integrated):
+        """Test complete flow for 7-day and 30-day periods.
+        
+        Verifies:
+        - Cache miss triggers calculation for 7-day period
+        - Cache miss triggers calculation for 30-day period
+        - Both periods are saved to cache
+        - Subsequent requests hit cache
+        """
+        service, cache_container, sentiment_container, _ = cache_service_integrated
+        
+        tool_id = "integration-tool-7d-30d"
+        now_ts = int(datetime.now(timezone.utc).timestamp())
+        
+        # Setup: Cache misses initially
+        from azure.cosmos.exceptions import CosmosResourceNotFoundError
+        
+        cache_reads = []
+        
+        def mock_read_item(item, partition_key):
+            cache_reads.append(item)
+            # First call: cache miss
+            # Second call: cache hit
+            if len([r for r in cache_reads if r == item]) == 1:
+                raise CosmosResourceNotFoundError(status_code=404, message="Not found")
+            else:
+                # Return cached data
+                if "DAY_7" in item:
+                    return {
+                        "id": item,
+                        "tool_id": tool_id,
+                        "period": "DAY_7",
+                        "total_mentions": 500,
+                        "positive_count": 300,
+                        "negative_count": 100,
+                        "neutral_count": 100,
+                        "positive_percentage": 60.0,
+                        "negative_percentage": 20.0,
+                        "neutral_percentage": 20.0,
+                        "average_sentiment": 0.4,
+                        "period_start_ts": now_ts - (168 * 3600),
+                        "period_end_ts": now_ts,
+                        "last_updated_ts": now_ts - 100,
+                    }
+                else:  # DAY_30
+                    return {
+                        "id": item,
+                        "tool_id": tool_id,
+                        "period": "DAY_30",
+                        "total_mentions": 2000,
+                        "positive_count": 1200,
+                        "negative_count": 400,
+                        "neutral_count": 400,
+                        "positive_percentage": 60.0,
+                        "negative_percentage": 20.0,
+                        "neutral_percentage": 20.0,
+                        "average_sentiment": 0.4,
+                        "period_start_ts": now_ts - (720 * 3600),
+                        "period_end_ts": now_ts,
+                        "last_updated_ts": now_ts - 100,
+                    }
+        
+        cache_container.read_item = mock_read_item
+        
+        # Setup: Sentiment data for calculation
+        sentiment_data_7d = [
+            {"sentiment_score": 0.5 + (i % 3 - 1) * 0.3, "detected_tool_ids": [tool_id], "_ts": now_ts - (i * 1000)}
+            for i in range(500)
+        ]
+        
+        sentiment_data_30d = [
+            {"sentiment_score": 0.5 + (i % 3 - 1) * 0.3, "detected_tool_ids": [tool_id], "_ts": now_ts - (i * 2000)}
+            for i in range(2000)
+        ]
+        
+        query_call_count = [0]
+        
+        async def mock_query_items(query, **kwargs):
+            query_call_count[0] += 1
+            # First call: 7-day data
+            # Second call: 30-day data
+            if query_call_count[0] == 1:
+                for item in sentiment_data_7d:
+                    yield item
+            else:
+                for item in sentiment_data_30d:
+                    yield item
+        
+        sentiment_container.query_items = mock_query_items
+        
+        # Track cache saves
+        cache_saves = []
+        
+        def track_upsert(body):
+            cache_saves.append(body)
+        
+        cache_container.upsert_item = AsyncMock(side_effect=track_upsert)
+        
+        # First request: 7-day (cache miss, should calculate)
+        result_7d_miss = await service.get_cached_sentiment(tool_id, 168)
+        assert result_7d_miss["is_cached"] is False
+        assert result_7d_miss["total_mentions"] == 500
+        assert len([s for s in cache_saves if "DAY_7" in s.get("id", "")]) == 1
+        
+        # Second request: 30-day (cache miss, should calculate)
+        result_30d_miss = await service.get_cached_sentiment(tool_id, 720)
+        assert result_30d_miss["is_cached"] is False
+        assert result_30d_miss["total_mentions"] == 2000
+        assert len([s for s in cache_saves if "DAY_30" in s.get("id", "")]) == 1
+        
+        # Third request: 7-day again (cache hit)
+        result_7d_hit = await service.get_cached_sentiment(tool_id, 168)
+        assert result_7d_hit["is_cached"] is True
+        assert result_7d_hit["total_mentions"] == 500
+        
+        # Fourth request: 30-day again (cache hit)
+        result_30d_hit = await service.get_cached_sentiment(tool_id, 720)
+        assert result_30d_hit["is_cached"] is True
+        assert result_30d_hit["total_mentions"] == 2000
+
+    @pytest.mark.asyncio
+    async def test_refresh_job_includes_all_4_periods(self, cache_service_integrated):
+        """Test that background refresh job refreshes all 4 periods.
+        
+        Verifies Phase 5 requirement that refresh includes 1h, 24h, 7d, and 30d.
+        """
+        service, cache_container, sentiment_container, tools_container = cache_service_integrated
+        
+        # Setup: One active tool
+        async def mock_tools_query():
+            yield {"id": "tool-refresh-test"}
+        
+        tools_container.query_items = MagicMock(return_value=mock_tools_query())
+        
+        # Setup: Mock sentiment data
+        now_ts = int(datetime.now(timezone.utc).timestamp())
+        sentiment_data = [
+            {"sentiment_score": 0.5, "detected_tool_ids": ["tool-refresh-test"], "_ts": now_ts - (i * 1000)}
+            for i in range(100)
+        ]
+        
+        async def mock_sentiment_query(*args, **kwargs):
+            for item in sentiment_data:
+                yield item
+        
+        sentiment_container.query_items = MagicMock(return_value=mock_sentiment_query())
+        
+        # Track cache saves
+        upserted_entries = []
+        
+        def track_upsert(body):
+            upserted_entries.append(body)
+        
+        cache_container.upsert_item = MagicMock(side_effect=track_upsert)
+        
+        # Setup: Mock count query for metadata
+        async def mock_count_query(*args, **kwargs):
+            yield 4
+        
+        cache_container.query_items = MagicMock(return_value=mock_count_query())
+        
+        # Execute refresh
+        result = await service.refresh_all_tools()
+        
+        # Verify all 4 periods were refreshed
+        assert result["tools_refreshed"] == 1
+        assert result["entries_created"] == 4
+        
+        # Verify entries for all periods exist
+        cache_entries = [e for e in upserted_entries if e["id"] != "metadata"]
+        assert len(cache_entries) == 4
+        
+        periods_refreshed = [e["period"] for e in cache_entries]
+        assert "HOUR_1" in periods_refreshed
+        assert "HOUR_24" in periods_refreshed
+        assert "DAY_7" in periods_refreshed
+        assert "DAY_30" in periods_refreshed
