@@ -476,6 +476,179 @@ class CacheService:
         sentiment_data["is_cached"] = False
         return sentiment_data
 
+    async def _get_active_tool_ids(self) -> list[str]:
+        """Query Tools container for all active tools.
+        
+        Returns:
+            List of tool IDs with status='active'
+            
+        Example:
+            >>> tool_ids = await cache_service._get_active_tool_ids()
+            >>> print(tool_ids)
+            ['877eb2d8-...', '550e8400-...']
+        """
+        try:
+            query = """
+                SELECT c.id
+                FROM c
+                WHERE c.status = 'active'
+            """
+            
+            items = self.tools_container.query_items(
+                query=query,
+                enable_cross_partition_query=True
+            )
+            
+            tool_ids = []
+            async for item in items:
+                tool_ids.append(item["id"])
+            
+            logger.debug(
+                "Active tools retrieved",
+                count=len(tool_ids)
+            )
+            
+            return tool_ids
+            
+        except Exception as e:
+            logger.error(
+                "Failed to retrieve active tools",
+                error=str(e),
+                exc_info=True
+            )
+            return []
+    
+    async def _refresh_tool_cache(self, tool_id: str) -> int:
+        """Refresh cache for all 4 periods for a single tool.
+        
+        Args:
+            tool_id: UUID of the tool
+            
+        Returns:
+            Number of cache entries created/updated
+            
+        Example:
+            >>> entries = await cache_service._refresh_tool_cache("tool-123")
+            >>> print(entries)
+            4
+        """
+        periods_to_refresh = [
+            (1, CachePeriod.HOUR_1),
+            (24, CachePeriod.HOUR_24),
+            (168, CachePeriod.DAY_7),
+            (720, CachePeriod.DAY_30),
+        ]
+        
+        entries_created = 0
+        
+        for hours, period in periods_to_refresh:
+            try:
+                # Calculate fresh sentiment data
+                sentiment_data = await self._calculate_sentiment_aggregate(
+                    tool_id, hours
+                )
+                
+                # Create cache entry
+                now_ts = int(datetime.now(timezone.utc).timestamp())
+                cache_key = self._calculate_cache_key(tool_id, period)
+                
+                cache_entry = SentimentCacheEntry(
+                    id=cache_key,
+                    tool_id=tool_id,
+                    period=period,
+                    total_mentions=sentiment_data["total_mentions"],
+                    positive_count=sentiment_data["positive_count"],
+                    negative_count=sentiment_data["negative_count"],
+                    neutral_count=sentiment_data["neutral_count"],
+                    positive_percentage=sentiment_data["positive_percentage"],
+                    negative_percentage=sentiment_data["negative_percentage"],
+                    neutral_percentage=sentiment_data["neutral_percentage"],
+                    average_sentiment=sentiment_data["average_sentiment"],
+                    period_start_ts=sentiment_data["period_start_ts"],
+                    period_end_ts=sentiment_data["period_end_ts"],
+                    last_updated_ts=now_ts
+                )
+                
+                # Save to cache
+                await self._save_to_cache(cache_entry)
+                entries_created += 1
+                
+                logger.debug(
+                    "Cache entry refreshed",
+                    tool_id=tool_id,
+                    period=period.value,
+                    total_mentions=sentiment_data["total_mentions"]
+                )
+                
+            except Exception as e:
+                # Log error but continue with next period
+                logger.error(
+                    "Failed to refresh cache entry",
+                    tool_id=tool_id,
+                    period=period.value,
+                    error=str(e),
+                    exc_info=True
+                )
+        
+        return entries_created
+    
+    async def update_cache_metadata(
+        self,
+        duration_ms: int,
+        tools_refreshed: list[str]
+    ) -> None:
+        """Update CacheMetadata singleton with refresh results.
+        
+        Args:
+            duration_ms: Refresh job duration in milliseconds
+            tools_refreshed: List of tool IDs that were refreshed
+            
+        Example:
+            >>> await cache_service.update_cache_metadata(5432, ['tool-1', 'tool-2'])
+        """
+        try:
+            now_ts = int(datetime.now(timezone.utc).timestamp())
+            
+            # Count total cache entries
+            query = "SELECT VALUE COUNT(1) FROM c"
+            count_result = self.cache_container.query_items(
+                query=query,
+                enable_cross_partition_query=True
+            )
+            
+            total_entries = 0
+            async for count in count_result:
+                total_entries = count
+                break
+            
+            # Create or update metadata
+            metadata = CacheMetadata(
+                id="metadata",
+                last_refresh_ts=now_ts,
+                last_refresh_duration_ms=duration_ms,
+                total_entries=total_entries,
+                tools_refreshed=tools_refreshed
+            )
+            
+            # Upsert to cache container
+            metadata_dict = metadata.model_dump()
+            self.cache_container.upsert_item(body=metadata_dict)
+            
+            logger.debug(
+                "Cache metadata updated",
+                total_entries=total_entries,
+                tools_refreshed=len(tools_refreshed),
+                duration_ms=duration_ms
+            )
+            
+        except Exception as e:
+            # Log warning but don't fail - metadata update is not critical
+            logger.warning(
+                "Failed to update cache metadata",
+                error=str(e),
+                exc_info=True
+            )
+    
     async def refresh_all_tools(self) -> dict:
         """Refresh cache for all active tools (background job).
         
@@ -497,18 +670,77 @@ class CacheService:
                 'errors': 0
             }
         """
+        start_time = time.time()
+        
         logger.info("Cache refresh job started")
         
-        # TODO: Implement in Phase 4 (User Story 2)
-        # 1. Get all active tool IDs
-        # 2. For each tool, refresh all 4 periods
-        # 3. Track errors but continue processing
-        # 4. Update CacheMetadata
-        # 5. Log summary statistics
+        # Get all active tool IDs
+        tool_ids = await self._get_active_tool_ids()
         
-        raise NotImplementedError(
-            "Cache refresh not yet implemented (Phase 4 - User Story 2)"
+        if not tool_ids:
+            logger.warning("No active tools found for cache refresh")
+            return {
+                "tools_refreshed": 0,
+                "entries_created": 0,
+                "duration_ms": 0,
+                "errors": 0
+            }
+        
+        logger.info(
+            "Refreshing cache for active tools",
+            tool_count=len(tool_ids)
         )
+        
+        # Process each tool
+        tools_refreshed = []
+        entries_created = 0
+        errors = 0
+        
+        for tool_id in tool_ids:
+            try:
+                # Refresh all 4 periods for this tool
+                entries = await self._refresh_tool_cache(tool_id)
+                entries_created += entries
+                tools_refreshed.append(tool_id)
+                
+                logger.debug(
+                    "Tool cache refreshed",
+                    tool_id=tool_id,
+                    entries_created=entries
+                )
+                
+            except Exception as e:
+                # Catch-log-continue: Log error but continue with next tool
+                errors += 1
+                logger.error(
+                    "Failed to refresh tool cache",
+                    tool_id=tool_id,
+                    error=str(e),
+                    exc_info=True
+                )
+        
+        # Calculate duration
+        duration = time.time() - start_time
+        duration_ms = int(duration * 1000)
+        
+        # Update metadata
+        await self.update_cache_metadata(duration_ms, tools_refreshed)
+        
+        # Log summary
+        logger.info(
+            "Cache refresh job completed",
+            tools_refreshed=len(tools_refreshed),
+            entries_created=entries_created,
+            errors=errors,
+            duration_ms=duration_ms
+        )
+        
+        return {
+            "tools_refreshed": len(tools_refreshed),
+            "entries_created": entries_created,
+            "duration_ms": duration_ms,
+            "errors": errors
+        }
 
     async def invalidate_tool_cache(self, tool_id: str) -> None:
         """Invalidate (delete) all cache entries for a tool.
