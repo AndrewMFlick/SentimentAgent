@@ -57,24 +57,21 @@ class TestDeleteTool:
         """Test successful permanent tool deletion."""
         tools_container, aliases_container, admin_logs_container, sentiment_container = mock_containers
         
-        # Mock get_tool to return the tool
-        async def mock_get_tool_iter():
-            yield sample_tool
-        
-        tools_container.query_items.return_value = list([sample_tool])
-        
-        # Mock no referencing tools
+        # Mock different queries based on query content
         def mock_query_items(query=None, parameters=None, **kwargs):
             if "merged_into" in query:
+                # Query for referencing tools - return empty list
                 return []
-            elif "tool_id" in query:
-                # Sentiment count query
-                return [0]
-            return []
+            elif "t.id = @id" in query:
+                # get_tool query - return the tool
+                return [sample_tool]
+            else:
+                # Default case
+                return []
         
         tools_container.query_items.side_effect = mock_query_items
         
-        # Mock sentiment container
+        # Mock sentiment container to return 0 records
         sentiment_container.query_items.return_value = []
         
         # Mock delete operations
@@ -105,9 +102,6 @@ class TestDeleteTool:
         """Test deletion fails when tool is referenced by merged_into."""
         tools_container, aliases_container, admin_logs_container, sentiment_container = mock_containers
         
-        # Mock get_tool to return the tool
-        tools_container.query_items.return_value = list([sample_tool])
-        
         # Mock a referencing tool
         referencing_tool = {
             "id": "merged-tool-456",
@@ -117,8 +111,13 @@ class TestDeleteTool:
         
         def mock_query_items(query=None, parameters=None, **kwargs):
             if "merged_into" in query:
+                # Query for referencing tools - return referencing tool
                 return [referencing_tool]
-            return [sample_tool]
+            elif "t.id = @id" in query:
+                # get_tool query - return the tool
+                return [sample_tool]
+            else:
+                return []
         
         tools_container.query_items.side_effect = mock_query_items
         
@@ -151,9 +150,6 @@ class TestDeleteTool:
         """Test deletion cascades to sentiment data."""
         tools_container, aliases_container, admin_logs_container, sentiment_container = mock_containers
         
-        # Mock get_tool to return the tool
-        tools_container.query_items.return_value = list([sample_tool])
-        
         # Mock sentiment records
         sentiment_records = [
             {"id": "sent-1", "partitionKey": "sent-1", "tool_id": "test-tool-123"},
@@ -162,8 +158,13 @@ class TestDeleteTool:
         
         def mock_query_items(query=None, parameters=None, **kwargs):
             if "merged_into" in query:
+                # Query for referencing tools - return empty list
                 return []
-            return [sample_tool]
+            elif "t.id = @id" in query:
+                # get_tool query - return the tool
+                return [sample_tool]
+            else:
+                return []
         
         tools_container.query_items.side_effect = mock_query_items
         sentiment_container.query_items.return_value = sentiment_records
