@@ -214,6 +214,134 @@ pytest tests/performance/test_cache_performance.py -v
 
 ---
 
+## Production Deployment Checklist
+
+### Pre-Deployment Verification
+
+Before deploying to production, verify all cache functionality:
+
+#### 1. Container Setup ✓
+```bash
+# Verify sentiment_cache container exists
+az cosmosdb sql container show \
+  --account-name your-account \
+  --database-name SentimentDB \
+  --resource-group your-rg \
+  --name sentiment_cache
+
+# Expected: Container with partition key /tool_id
+```
+
+#### 2. Configuration ✓
+```bash
+# Verify environment variables set
+printenv | grep CACHE
+
+# Expected:
+# ENABLE_SENTIMENT_CACHE=true
+# CACHE_REFRESH_INTERVAL_MINUTES=15
+# CACHE_TTL_MINUTES=30
+```
+
+#### 3. Health Check ✓
+```bash
+# After backend starts, wait 2 minutes for first refresh
+sleep 120
+
+# Check cache health
+curl http://localhost:8000/api/v1/cache/health
+
+# Expected status: "healthy"
+# Expected total_entries: 60+ (15 tools × 4 periods)
+```
+
+#### 4. Performance Test ✓
+```bash
+# Test 24-hour sentiment query (most common)
+time curl "http://localhost:8000/api/v1/tools/877eb2d8-661b-4643-ae62-cfc49e74c31e/sentiment?hours=24"
+
+# Expected response time: <1 second
+# Expected in response: "is_cached": true
+```
+
+#### 5. Cache Invalidation Test ✓
+```bash
+# Test admin cache invalidation (requires admin token)
+curl -X POST http://localhost:8000/api/v1/admin/cache/invalidate/all \
+  -H "X-Admin-Token: your-admin-token"
+
+# Expected: {"status": "success", "invalidated_count": 60}
+
+# Wait for refresh (15 minutes or trigger manually)
+sleep 900
+
+# Verify cache repopulated
+curl http://localhost:8000/api/v1/cache/health | jq '.total_entries'
+# Expected: 60+
+```
+
+#### 6. Monitoring Setup ✓
+```bash
+# Set up alerts for cache health
+# Azure Monitor: Alert if cache_hit_rate < 0.90
+# Azure Monitor: Alert if last_refresh_at > 30 minutes ago
+# Azure Monitor: Alert if status == "unhealthy"
+
+# Example Azure CLI alert creation
+az monitor metrics alert create \
+  --name cache-hit-rate-low \
+  --resource-group your-rg \
+  --scopes /subscriptions/{sub}/resourceGroups/{rg}/providers/Microsoft.Web/sites/{app} \
+  --condition "avg cache_hit_rate < 0.90" \
+  --window-size 5m \
+  --evaluation-frequency 1m
+```
+
+#### 7. Backup Plan ✓
+```bash
+# Disable cache if issues arise (zero-downtime fallback)
+# Update environment variable and restart:
+ENABLE_SENTIMENT_CACHE=false
+
+# System falls back to direct queries (slower but functional)
+# No data loss, only performance degradation
+```
+
+### Post-Deployment Validation
+
+After deploying to production:
+
+1. **Monitor for 24 hours**:
+   ```bash
+   # Check health every hour
+   watch -n 3600 'curl -s http://your-domain/api/v1/cache/health | jq .'
+   ```
+
+2. **Verify metrics**:
+   - Cache hit rate: >95%
+   - Average query time: <1s
+   - Refresh job duration: <30s
+   - Error rate: <1%
+
+3. **User feedback**:
+   - Dashboard load time improved?
+   - No stale data reports?
+   - No performance degradation?
+
+4. **Rollback plan**:
+   ```bash
+   # If issues detected, disable cache immediately
+   az webapp config appsettings set \
+     --resource-group your-rg \
+     --name your-app \
+     --settings ENABLE_SENTIMENT_CACHE=false
+   
+   # Restart app
+   az webapp restart --resource-group your-rg --name your-app
+   ```
+
+---
+
 ## Monitoring
 
 ### Health Check
