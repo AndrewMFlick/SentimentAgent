@@ -128,6 +128,20 @@ class CollectionScheduler:
             replace_existing=True,
         )
 
+        # Schedule sentiment cache refresh (Feature 017 - Phase 4)
+        if settings.enable_sentiment_cache:
+            self.scheduler.add_job(
+                self.refresh_sentiment_cache,
+                trigger=IntervalTrigger(minutes=settings.cache_refresh_interval_minutes),
+                id="cache_refresh",
+                name="Refresh sentiment cache",
+                replace_existing=True,
+            )
+            logger.info(
+                "Cache refresh job scheduled",
+                interval_minutes=settings.cache_refresh_interval_minutes
+            )
+
         self.scheduler.start()
         self.is_running = True
 
@@ -593,6 +607,45 @@ class CollectionScheduler:
             # Catch-log-continue: Log error but don't crash scheduler
             logger.error(
                 "Reanalysis job poller failed",
+                error=str(e),
+                error_type=type(e).__name__,
+                exc_info=True,
+            )
+
+    async def refresh_sentiment_cache(self):
+        """
+        Refresh sentiment cache for all active tools (Feature 017 - Phase 4).
+
+        This method:
+        1. Calls cache_service.refresh_all_tools()
+        2. Logs refresh results
+        3. Uses catch-log-continue pattern for background processing
+        """
+        logger.info("Starting sentiment cache refresh job")
+
+        try:
+            from .cache_service import cache_service
+
+            if cache_service is None:
+                logger.warning("Cache service not initialized, skipping refresh")
+                return
+
+            # Refresh cache for all active tools
+            result = await cache_service.refresh_all_tools()
+
+            logger.info(
+                "Sentiment cache refresh completed",
+                tools_refreshed=result["tools_refreshed"],
+                entries_created=result["entries_created"],
+                duration_ms=result["duration_ms"],
+                errors=result["errors"],
+                status="success"
+            )
+
+        except Exception as e:
+            # Catch-log-continue: Log error but don't crash scheduler
+            logger.error(
+                "Sentiment cache refresh failed",
                 error=str(e),
                 error_type=type(e).__name__,
                 exc_info=True,

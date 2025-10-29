@@ -164,6 +164,14 @@ async def lifespan(app: FastAPI):
         logger.info("Starting background data loading task")
         asyncio.create_task(db.load_recent_data())
 
+        # Trigger initial cache population (non-blocking) - Feature 017 Phase 4
+        if settings.enable_sentiment_cache:
+            logger.info("Triggering initial cache population")
+            from .services.cache_service import cache_service
+            if cache_service:
+                asyncio.create_task(cache_service.refresh_all_tools())
+                logger.info("Initial cache population task started")
+
         logger.info(
             "Application startup completed",
             uptime_seconds=app_state.get_uptime_seconds(),

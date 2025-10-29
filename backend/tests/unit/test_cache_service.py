@@ -369,3 +369,221 @@ class TestCacheService:
         call_args = cache_container.upsert_item.call_args[0][0]
         assert call_args["id"] == cache_entry.id
         assert call_args["tool_id"] == cache_entry.tool_id
+
+
+class TestCacheServicePhase4:
+    """Test suite for Phase 4 - Automatic Cache Refresh (User Story 2)."""
+
+    @pytest.fixture
+    def mock_containers(self):
+        """Create mock containers for testing."""
+        cache_container = MagicMock(spec=ContainerProxy)
+        sentiment_container = MagicMock(spec=ContainerProxy)
+        tools_container = MagicMock(spec=ContainerProxy)
+        return cache_container, sentiment_container, tools_container
+
+    @pytest.fixture
+    def cache_service(self, mock_containers):
+        """Create CacheService instance with mocked containers."""
+        cache_container, sentiment_container, tools_container = mock_containers
+        return CacheService(
+            cache_container=cache_container,
+            sentiment_container=sentiment_container,
+            tools_container=tools_container,
+        )
+
+    # T027: Unit test for refresh_all_tools() - verify all active tools processed
+    @pytest.mark.asyncio
+    async def test_refresh_all_tools_success(self, cache_service, mock_containers):
+        """Test successful refresh of all active tools."""
+        cache_container, sentiment_container, tools_container = mock_containers
+        
+        # Mock active tools query
+        mock_tool_ids = ["tool-1", "tool-2", "tool-3"]
+        
+        async def mock_tools_query(*args, **kwargs):
+            for tool_id in mock_tool_ids:
+                yield {"id": tool_id}
+        
+        tools_container.query_items = MagicMock(return_value=mock_tools_query())
+        
+        # Mock _refresh_tool_cache to return 4 entries per tool
+        cache_service._refresh_tool_cache = AsyncMock(return_value=4)
+        
+        # Mock update_cache_metadata
+        cache_service.update_cache_metadata = AsyncMock()
+        
+        # Execute
+        result = await cache_service.refresh_all_tools()
+        
+        # Verify
+        assert result["tools_refreshed"] == 3
+        assert result["entries_created"] == 12  # 3 tools * 4 periods
+        assert result["errors"] == 0
+        assert result["duration_ms"] > 0
+        
+        # Verify _refresh_tool_cache was called for each tool
+        assert cache_service._refresh_tool_cache.call_count == 3
+        
+        # Verify metadata was updated
+        cache_service.update_cache_metadata.assert_called_once()
+
+    # T028: Unit test for _refresh_tool_cache(tool_id) - verify all 4 periods calculated and saved
+    @pytest.mark.asyncio
+    async def test_refresh_tool_cache_all_periods(self, cache_service, mock_containers):
+        """Test refresh of all 4 periods for a single tool."""
+        cache_container, sentiment_container, tools_container = mock_containers
+        
+        tool_id = "test-tool-123"
+        
+        # Mock _calculate_sentiment_aggregate
+        mock_aggregate = {
+            "total_mentions": 100,
+            "positive_count": 60,
+            "negative_count": 20,
+            "neutral_count": 20,
+            "positive_percentage": 60.0,
+            "negative_percentage": 20.0,
+            "neutral_percentage": 20.0,
+            "average_sentiment": 0.4,
+            "period_start_ts": int(datetime.now(timezone.utc).timestamp()) - 86400,
+            "period_end_ts": int(datetime.now(timezone.utc).timestamp()),
+        }
+        cache_service._calculate_sentiment_aggregate = AsyncMock(return_value=mock_aggregate)
+        
+        # Mock _save_to_cache
+        cache_service._save_to_cache = AsyncMock()
+        
+        # Execute
+        entries_created = await cache_service._refresh_tool_cache(tool_id)
+        
+        # Verify
+        assert entries_created == 4  # 4 periods (1h, 24h, 7d, 30d)
+        
+        # Verify _calculate_sentiment_aggregate was called 4 times with correct hours
+        assert cache_service._calculate_sentiment_aggregate.call_count == 4
+        call_args = [call[0] for call in cache_service._calculate_sentiment_aggregate.call_args_list]
+        hours_called = [args[1] for args in call_args]
+        assert set(hours_called) == {1, 24, 168, 720}
+        
+        # Verify _save_to_cache was called 4 times
+        assert cache_service._save_to_cache.call_count == 4
+
+    # T029: Unit test for cache refresh error handling - verify job continues on individual tool failure
+    @pytest.mark.asyncio
+    async def test_refresh_all_tools_with_errors(self, cache_service, mock_containers):
+        """Test refresh continues on individual tool failures."""
+        cache_container, sentiment_container, tools_container = mock_containers
+        
+        # Mock active tools query
+        mock_tool_ids = ["tool-1", "tool-2", "tool-3"]
+        
+        async def mock_tools_query(*args, **kwargs):
+            for tool_id in mock_tool_ids:
+                yield {"id": tool_id}
+        
+        tools_container.query_items = MagicMock(return_value=mock_tools_query())
+        
+        # Mock _refresh_tool_cache to fail for tool-2
+        async def mock_refresh(tool_id):
+            if tool_id == "tool-2":
+                raise Exception("Simulated refresh failure")
+            return 4
+        
+        cache_service._refresh_tool_cache = AsyncMock(side_effect=mock_refresh)
+        cache_service.update_cache_metadata = AsyncMock()
+        
+        # Execute
+        result = await cache_service.refresh_all_tools()
+        
+        # Verify job completed despite one failure
+        assert result["tools_refreshed"] == 2  # tool-1 and tool-3 succeeded
+        assert result["entries_created"] == 8  # 2 tools * 4 periods
+        assert result["errors"] == 1  # tool-2 failed
+
+    # T030: Unit test for update_cache_metadata() - verify metadata updates after refresh
+    @pytest.mark.asyncio
+    async def test_update_cache_metadata(self, cache_service, mock_containers):
+        """Test cache metadata is updated correctly."""
+        cache_container, sentiment_container, tools_container = mock_containers
+        
+        # Mock count query
+        async def mock_count_query(*args, **kwargs):
+            yield 60  # 15 tools * 4 periods
+        
+        cache_container.query_items = MagicMock(return_value=mock_count_query())
+        cache_container.upsert_item = MagicMock()
+        
+        # Execute
+        await cache_service.update_cache_metadata(
+            duration_ms=5432,
+            tools_refreshed=["tool-1", "tool-2", "tool-3"]
+        )
+        
+        # Verify upsert was called
+        cache_container.upsert_item.assert_called_once()
+        
+        # Verify metadata structure
+        call_args = cache_container.upsert_item.call_args[1]["body"]
+        assert call_args["id"] == "metadata"
+        assert call_args["last_refresh_duration_ms"] == 5432
+        assert call_args["total_entries"] == 60
+        assert len(call_args["tools_refreshed"]) == 3
+
+    # T031: Integration test - verify full refresh cycle (moved to integration tests)
+    # T032: Integration test - concurrent requests during refresh (moved to integration tests)
+
+    # Test _get_active_tool_ids() method
+    @pytest.mark.asyncio
+    async def test_get_active_tool_ids_success(self, cache_service, mock_containers):
+        """Test retrieval of active tool IDs."""
+        cache_container, sentiment_container, tools_container = mock_containers
+        
+        # Mock active tools query
+        async def mock_tools_query(*args, **kwargs):
+            yield {"id": "tool-1"}
+            yield {"id": "tool-2"}
+            yield {"id": "tool-3"}
+        
+        tools_container.query_items = MagicMock(return_value=mock_tools_query())
+        
+        # Execute
+        tool_ids = await cache_service._get_active_tool_ids()
+        
+        # Verify
+        assert len(tool_ids) == 3
+        assert "tool-1" in tool_ids
+        assert "tool-2" in tool_ids
+        assert "tool-3" in tool_ids
+
+    @pytest.mark.asyncio
+    async def test_get_active_tool_ids_empty(self, cache_service, mock_containers):
+        """Test when no active tools exist."""
+        cache_container, sentiment_container, tools_container = mock_containers
+        
+        # Mock empty query result
+        async def mock_tools_query(*args, **kwargs):
+            return
+            yield  # Make it an async generator
+        
+        tools_container.query_items = MagicMock(return_value=mock_tools_query())
+        
+        # Execute
+        tool_ids = await cache_service._get_active_tool_ids()
+        
+        # Verify
+        assert tool_ids == []
+
+    @pytest.mark.asyncio
+    async def test_get_active_tool_ids_error_handling(self, cache_service, mock_containers):
+        """Test error handling in _get_active_tool_ids."""
+        cache_container, sentiment_container, tools_container = mock_containers
+        
+        # Mock query to raise exception
+        tools_container.query_items = MagicMock(side_effect=Exception("Database error"))
+        
+        # Execute
+        tool_ids = await cache_service._get_active_tool_ids()
+        
+        # Verify returns empty list on error
+        assert tool_ids == []

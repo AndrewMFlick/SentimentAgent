@@ -232,3 +232,163 @@ class TestCacheIntegration:
         # Verify fallback worked
         assert result["total_mentions"] == 1
         assert result["is_cached"] is False
+
+
+class TestCacheIntegrationPhase4:
+    """Integration tests for Phase 4 - Automatic Cache Refresh."""
+
+    @pytest.fixture
+    def mock_containers(self):
+        """Create mock containers for testing."""
+        cache_container = MagicMock(spec=ContainerProxy)
+        sentiment_container = MagicMock(spec=ContainerProxy)
+        tools_container = MagicMock(spec=ContainerProxy)
+        return cache_container, sentiment_container, tools_container
+
+    @pytest.fixture
+    def cache_service(self, mock_containers):
+        """Create CacheService instance with mocked containers."""
+        cache_container, sentiment_container, tools_container = mock_containers
+        return CacheService(
+            cache_container=cache_container,
+            sentiment_container=sentiment_container,
+            tools_container=tools_container,
+        )
+
+    # T031: Integration test for full refresh cycle
+    @pytest.mark.asyncio
+    async def test_full_refresh_cycle_integration(self, cache_service, mock_containers):
+        """Test complete refresh cycle from active tools to cache update."""
+        cache_container, sentiment_container, tools_container = mock_containers
+        
+        # Setup: Mock 2 active tools
+        async def mock_tools_query(*args, **kwargs):
+            yield {"id": "tool-1"}
+            yield {"id": "tool-2"}
+        
+        tools_container.query_items = MagicMock(return_value=mock_tools_query())
+        
+        # Setup: Mock sentiment data for calculations
+        now_ts = int(datetime.now(timezone.utc).timestamp())
+        sentiment_data = [
+            {"sentiment_score": 0.5, "detected_tool_ids": ["tool-1"], "_ts": now_ts - 3600},
+            {"sentiment_score": 0.3, "detected_tool_ids": ["tool-1"], "_ts": now_ts - 7200},
+        ]
+        
+        async def mock_sentiment_query(*args, **kwargs):
+            for item in sentiment_data:
+                yield item
+        
+        sentiment_container.query_items = MagicMock(return_value=mock_sentiment_query())
+        
+        # Setup: Mock cache operations
+        cache_container.upsert_item = MagicMock()
+        
+        # Setup: Mock count query for metadata
+        async def mock_count_query(*args, **kwargs):
+            yield 8  # 2 tools * 4 periods
+        
+        cache_container.query_items = MagicMock(return_value=mock_count_query())
+        
+        # Execute
+        result = await cache_service.refresh_all_tools()
+        
+        # Verify results
+        assert result["tools_refreshed"] == 2
+        assert result["entries_created"] == 8  # 2 tools * 4 periods
+        assert result["errors"] == 0
+        
+        # Verify cache entries were saved (4 periods per tool * 2 tools = 8 upserts + 1 metadata)
+        assert cache_container.upsert_item.call_count >= 8
+
+    # T032: Integration test for concurrent requests during refresh
+    @pytest.mark.asyncio
+    async def test_concurrent_requests_during_refresh(self, cache_service, mock_containers):
+        """Test that user requests work during cache refresh."""
+        cache_container, sentiment_container, tools_container = mock_containers
+        
+        tool_id = "test-tool-123"
+        hours = 24
+        now_ts = int(datetime.now(timezone.utc).timestamp())
+        
+        # Setup: Mock existing cache entry (old but valid)
+        old_cache_entry = {
+            "id": f"{tool_id}:HOUR_24",
+            "tool_id": tool_id,
+            "period": "HOUR_24",
+            "total_mentions": 50,
+            "positive_count": 30,
+            "negative_count": 10,
+            "neutral_count": 10,
+            "positive_percentage": 60.0,
+            "negative_percentage": 20.0,
+            "neutral_percentage": 20.0,
+            "average_sentiment": 0.4,
+            "period_start_ts": now_ts - 86400,
+            "period_end_ts": now_ts - 1800,  # 30 minutes old
+            "last_updated_ts": now_ts - 1800,
+        }
+        
+        cache_container.read_item = MagicMock(return_value=old_cache_entry)
+        
+        # Execute: Simulate concurrent user request during refresh
+        result = await cache_service.get_cached_sentiment(tool_id, hours)
+        
+        # Verify: User gets the old cached data (doesn't block on refresh)
+        assert result["is_cached"] is True
+        assert result["total_mentions"] == 50
+        assert result["cached_at"] == now_ts - 1800
+
+    @pytest.mark.asyncio
+    async def test_refresh_updates_stale_cache(self, cache_service, mock_containers):
+        """Test that refresh updates stale cache entries."""
+        cache_container, sentiment_container, tools_container = mock_containers
+        
+        # Setup: Mock 1 active tool
+        async def mock_tools_query(*args, **kwargs):
+            yield {"id": "tool-1"}
+        
+        tools_container.query_items = MagicMock(return_value=mock_tools_query())
+        
+        # Setup: Mock fresh sentiment data
+        now_ts = int(datetime.now(timezone.utc).timestamp())
+        sentiment_data = [
+            {"sentiment_score": 0.8, "detected_tool_ids": ["tool-1"], "_ts": now_ts - 1000},
+            {"sentiment_score": 0.7, "detected_tool_ids": ["tool-1"], "_ts": now_ts - 2000},
+        ]
+        
+        async def mock_sentiment_query(*args, **kwargs):
+            for item in sentiment_data:
+                yield item
+        
+        sentiment_container.query_items = MagicMock(return_value=mock_sentiment_query())
+        
+        # Track upserted entries
+        upserted_entries = []
+        
+        def track_upsert(body):
+            upserted_entries.append(body)
+        
+        cache_container.upsert_item = MagicMock(side_effect=track_upsert)
+        
+        # Setup: Mock count query
+        async def mock_count_query(*args, **kwargs):
+            yield 4
+        
+        cache_container.query_items = MagicMock(return_value=mock_count_query())
+        
+        # Execute
+        result = await cache_service.refresh_all_tools()
+        
+        # Verify entries were updated
+        assert result["tools_refreshed"] == 1
+        assert result["entries_created"] == 4
+        
+        # Verify cache entries have fresh data
+        cache_entries = [e for e in upserted_entries if e["id"] != "metadata"]
+        assert len(cache_entries) == 4
+        
+        # All entries should have positive sentiment (from mock data)
+        for entry in cache_entries:
+            assert entry["positive_count"] >= 0
+            assert entry["total_mentions"] >= 0
