@@ -407,3 +407,284 @@ async def query_with_monitoring(query: str, container):
 
 <!-- MANUAL ADDITIONS END -->
 
+## Sentiment Cache Patterns (Feature 017)
+
+**Pre-Cached Sentiment Analysis**: 10x performance improvement for sentiment queries
+
+### Cache Service Architecture
+
+```python
+# backend/src/services/cache_service.py
+class CacheService:
+    def __init__(
+        self,
+        cache_container: ContainerProxy,
+        sentiment_container: ContainerProxy,
+        tools_container: ContainerProxy
+    ):
+        self.cache_container = cache_container
+        self.sentiment_container = sentiment_container
+        self.tools_container = tools_container
+        self.cache_enabled = settings.enable_sentiment_cache
+        self.cache_ttl_minutes = settings.cache_ttl_minutes
+    
+    async def get_cached_sentiment(
+        self,
+        tool_id: str,
+        hours: int
+    ) -> dict:
+        """Main entry point: lookup cache or calculate on-demand."""
+        # 1. Map hours to standard period (1h, 24h, 7d, 30d)
+        period = self._map_hours_to_period(hours)
+        if not period:
+            # Non-standard period: calculate on-demand (no cache)
+            return await self._calculate_sentiment_aggregate(tool_id, hours)
+        
+        # 2. Try cache lookup
+        cache_entry = await self._lookup_cache(tool_id, period)
+        if cache_entry and self._is_cache_fresh(cache_entry):
+            return cache_entry  # Cache hit
+        
+        # 3. Cache miss: calculate and populate
+        result = await self._calculate_sentiment_aggregate(tool_id, hours)
+        await self._save_to_cache(result, period)
+        return result
+```
+
+### Standard Cache Periods
+
+```python
+# Only these periods are pre-cached:
+CachePeriod.HOUR_1 = 1     # 1 hour
+CachePeriod.HOUR_24 = 24   # 24 hours (most common)
+CachePeriod.DAY_7 = 168    # 7 days
+CachePeriod.DAY_30 = 720   # 30 days
+
+# Non-standard periods (e.g., 48h, 72h) fall back to on-demand calculation
+```
+
+### Cache Data Model
+
+```python
+# backend/src/models/cache.py
+class SentimentCacheEntry(BaseModel):
+    id: str  # "{tool_id}:{period}"
+    tool_id: str  # Partition key
+    period: CachePeriod
+    total_mentions: int
+    positive_count: int
+    negative_count: int
+    neutral_count: int
+    positive_percentage: float
+    negative_percentage: float
+    neutral_percentage: float
+    average_sentiment: float
+    last_updated_ts: int  # Unix timestamp
+    period_start_ts: int
+    period_end_ts: int
+```
+
+### Background Refresh Pattern
+
+```python
+# Scheduled job (APScheduler) refreshes all tools every 15 minutes
+async def refresh_all_tools():
+    tool_ids = await self._get_active_tool_ids()
+    
+    for tool_id in tool_ids:
+        try:
+            # Refresh all 4 periods for this tool
+            await self._refresh_tool_cache(tool_id)
+        except Exception as e:
+            logger.error("Failed to refresh tool", tool_id=tool_id, error=str(e))
+            # Continue processing other tools (error isolation)
+            continue
+    
+    # Update cache metadata
+    await self.update_cache_metadata(...)
+
+# Refresh a single tool (all 4 periods)
+async def _refresh_tool_cache(self, tool_id: str):
+    periods = [
+        (1, CachePeriod.HOUR_1),
+        (24, CachePeriod.HOUR_24),
+        (168, CachePeriod.DAY_7),
+        (720, CachePeriod.DAY_30)
+    ]
+    
+    for hours, period in periods:
+        result = await self._calculate_sentiment_aggregate(tool_id, hours)
+        await self._save_to_cache(result, period)
+```
+
+### Cache Invalidation
+
+```python
+# Invalidate cache after data changes
+async def invalidate_tool_cache(self, tool_id: str):
+    """Delete all cache entries for a tool.
+    
+    Called after:
+    - Reanalysis job completion (new tool associations)
+    - Tool merge (sentiment data migrated)
+    - Manual admin cache clear
+    """
+    periods = [
+        CachePeriod.HOUR_1,
+        CachePeriod.HOUR_24,
+        CachePeriod.DAY_7,
+        CachePeriod.DAY_30
+    ]
+    
+    for period in periods:
+        cache_id = self._calculate_cache_key(tool_id, period)
+        try:
+            await self.cache_container.delete_item(
+                item=cache_id,
+                partition_key=tool_id
+            )
+        except CosmosResourceNotFoundError:
+            pass  # Already deleted
+```
+
+### API Response Headers
+
+```python
+# Add cache metadata to sentiment API responses
+@router.get("/tools/{tool_id}/sentiment")
+async def get_tool_sentiment(...):
+    result = await cache_service.get_cached_sentiment(tool_id, hours)
+    
+    # Add cache headers
+    headers = {
+        "X-Cache-Status": "HIT" if result["is_cached"] else "MISS",
+        "X-Cache-Age": str(result.get("cache_age_minutes", 0))
+    }
+    
+    return JSONResponse(content=result, headers=headers)
+```
+
+### Cache Health Monitoring
+
+```python
+# Public health endpoint
+@router.get("/cache/health")
+async def cache_health():
+    metadata = await cache_service.get_cache_metadata()
+    
+    return {
+        "status": "healthy",  # healthy | degraded | unhealthy
+        "cache_enabled": settings.enable_sentiment_cache,
+        "total_entries": metadata.total_entries,
+        "last_refresh_at": metadata.last_refresh_at,
+        "last_refresh_duration_ms": metadata.last_refresh_duration_ms,
+        "cache_hit_rate_24h": metadata.cache_hit_rate,
+        "oldest_entry_age_minutes": metadata.oldest_entry_age_minutes
+    }
+```
+
+### Performance Best Practices
+
+1. **Always use standard periods** (1h, 24h, 7d, 30d) for cached responses
+2. **Non-standard periods** calculate on-demand (slower but still <2s)
+3. **Cache TTL**: 30 minutes (configurable)
+4. **Refresh interval**: 15 minutes (ensures cache always fresh)
+5. **Error isolation**: Individual tool failures don't stop refresh job
+
+### Security Considerations
+
+- ✅ **No PII**: Cache contains only aggregate counts
+- ✅ **Read-only for users**: Only backend service can write to cache
+- ✅ **Admin invalidation**: Requires authentication token
+- ✅ **Parameterized queries**: No SQL injection risk
+- ✅ **Bounded size**: 4 entries per tool (DoS protection)
+
+### Testing Patterns
+
+```python
+# Unit test: Cache hit scenario
+@pytest.mark.asyncio
+async def test_get_cached_sentiment_cache_hit():
+    # Mock fresh cache entry
+    cache_entry = {
+        "id": "tool-id:HOUR_24",
+        "tool_id": "tool-id",
+        "period": "HOUR_24",
+        "total_mentions": 100,
+        "positive_count": 60,
+        "last_updated_ts": now_ts - 300  # 5 minutes ago (fresh)
+    }
+    cache_container.read_item.return_value = cache_entry
+    
+    # Execute
+    result = await cache_service.get_cached_sentiment("tool-id", 24)
+    
+    # Verify cache hit
+    assert result["is_cached"] is True
+    assert result["total_mentions"] == 100
+
+# Unit test: Cache miss with fallback
+@pytest.mark.asyncio
+async def test_get_cached_sentiment_cache_miss():
+    # Mock cache miss
+    cache_container.read_item.side_effect = CosmosResourceNotFoundError()
+    
+    # Mock sentiment data for calculation
+    async def mock_query():
+        for i in range(50):
+            yield {"sentiment_label": "positive", "sentiment_score": 0.7}
+    sentiment_container.query_items = mock_query
+    
+    # Execute
+    result = await cache_service.get_cached_sentiment("tool-id", 24)
+    
+    # Verify on-demand calculation
+    assert result["is_cached"] is False
+    assert result["total_mentions"] == 50
+```
+
+### Configuration
+
+```python
+# backend/src/config.py
+class Settings(BaseSettings):
+    # Cache feature flag
+    enable_sentiment_cache: bool = True
+    
+    # Refresh job frequency (minutes)
+    cache_refresh_interval_minutes: int = 15
+    
+    # Cache TTL - data older than this is stale
+    cache_ttl_minutes: int = 30
+    
+    # Cosmos DB container
+    cosmos_container_sentiment_cache: str = "sentiment_cache"
+```
+
+### Troubleshooting
+
+**High cache miss rate**:
+- Check if refresh job is running: `curl /api/v1/cache/health`
+- Verify cache container exists in Cosmos DB
+- Check logs for refresh failures
+
+**Stale data**:
+- Invalidate cache: `POST /api/v1/admin/cache/invalidate/all`
+- Verify TTL is not too long (default: 30 minutes)
+- Check if refresh job is scheduled (every 15 minutes)
+
+**Slow queries despite cache**:
+- Verify using standard periods (1, 24, 168, 720)
+- Check cache status in response headers: `X-Cache-Status: HIT`
+- Non-standard periods (e.g., 48h) always calculate on-demand
+
+### References
+
+- **Architecture**: `docs/cache-architecture.md`
+- **Security Review**: `docs/cache-security-review.md`
+- **Specification**: `specs/017-pre-cached-sentiment/spec.md`
+- **Implementation**: `backend/src/services/cache_service.py`
+- **Tests**: `backend/tests/unit/test_cache_service.py`
+
+
+

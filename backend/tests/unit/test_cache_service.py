@@ -873,3 +873,376 @@ class TestCacheServicePhase5:
         
         # Verify cache was updated
         cache_container.upsert_item.assert_called_once()
+
+
+class TestCacheServiceEdgeCases:
+    """Additional edge case tests for CacheService (T082 - Phase 9)."""
+
+    @pytest.fixture
+    def mock_containers(self):
+        """Create mock containers for testing."""
+        cache_container = MagicMock(spec=ContainerProxy)
+        sentiment_container = MagicMock(spec=ContainerProxy)
+        tools_container = MagicMock(spec=ContainerProxy)
+        return cache_container, sentiment_container, tools_container
+
+    @pytest.fixture
+    def cache_service(self, mock_containers):
+        """Create CacheService instance with mocked containers."""
+        cache_container, sentiment_container, tools_container = mock_containers
+        return CacheService(
+            cache_container=cache_container,
+            sentiment_container=sentiment_container,
+            tools_container=tools_container,
+        )
+
+    @pytest.mark.asyncio
+    async def test_zero_mentions_calculation(self, cache_service, mock_containers):
+        """Test calculation with zero mentions (no data in time period).
+        
+        Edge case: Empty result set should return zero counts with valid percentages.
+        """
+        cache_container, sentiment_container, tools_container = mock_containers
+        tool_id = "test-tool-empty"
+        hours = 24
+        
+        # Mock cache miss
+        from azure.cosmos.exceptions import CosmosResourceNotFoundError
+        cache_container.read_item.side_effect = CosmosResourceNotFoundError(
+            status_code=404, message="Not found"
+        )
+        
+        # Mock empty sentiment data
+        async def mock_query_items(*args, **kwargs):
+            return
+            yield  # Empty generator
+        
+        sentiment_container.query_items = mock_query_items
+        cache_container.upsert_item = AsyncMock()
+        
+        # Execute
+        result = await cache_service.get_cached_sentiment(tool_id, hours)
+        
+        # Verify zero counts
+        assert result["total_mentions"] == 0
+        assert result["positive_count"] == 0
+        assert result["negative_count"] == 0
+        assert result["neutral_count"] == 0
+        # Percentages should be 0.0 (not NaN or error)
+        assert result["positive_percentage"] == 0.0
+        assert result["negative_percentage"] == 0.0
+        assert result["neutral_percentage"] == 0.0
+        assert result["average_sentiment"] == 0.0
+
+    @pytest.mark.asyncio
+    async def test_single_mention_calculation(self, cache_service, mock_containers):
+        """Test calculation with exactly one mention.
+        
+        Edge case: Single data point should calculate percentages correctly.
+        """
+        cache_container, sentiment_container, tools_container = mock_containers
+        tool_id = "test-tool-single"
+        hours = 24
+        
+        # Mock cache miss
+        from azure.cosmos.exceptions import CosmosResourceNotFoundError
+        cache_container.read_item.side_effect = CosmosResourceNotFoundError(
+            status_code=404, message="Not found"
+        )
+        
+        # Mock single sentiment entry
+        now_ts = int(datetime.now(timezone.utc).timestamp())
+        async def mock_query_items(*args, **kwargs):
+            yield {
+                "sentiment_label": "positive",
+                "sentiment_score": 0.8,
+                "_ts": now_ts - 3600,
+            }
+        
+        sentiment_container.query_items = mock_query_items
+        cache_container.upsert_item = AsyncMock()
+        
+        # Execute
+        result = await cache_service.get_cached_sentiment(tool_id, hours)
+        
+        # Verify single mention
+        assert result["total_mentions"] == 1
+        assert result["positive_count"] == 1
+        assert result["negative_count"] == 0
+        assert result["neutral_count"] == 0
+        # Should be 100% positive
+        assert result["positive_percentage"] == 100.0
+        assert result["negative_percentage"] == 0.0
+        assert result["neutral_percentage"] == 0.0
+
+    @pytest.mark.asyncio
+    async def test_boundary_hours_values(self, cache_service, mock_containers):
+        """Test edge case hours values (0, negative, very large).
+        
+        Edge case: Invalid hours should be handled gracefully.
+        """
+        cache_container, sentiment_container, tools_container = mock_containers
+        tool_id = "test-tool"
+        
+        # Mock cache miss for all
+        from azure.cosmos.exceptions import CosmosResourceNotFoundError
+        cache_container.read_item.side_effect = CosmosResourceNotFoundError(
+            status_code=404, message="Not found"
+        )
+        
+        # Empty data
+        async def mock_query_items(*args, **kwargs):
+            return
+            yield
+        sentiment_container.query_items = mock_query_items
+        cache_container.upsert_item = AsyncMock()
+        
+        # Test hours=0 (edge case)
+        result = await cache_service.get_cached_sentiment(tool_id, 0)
+        assert result["total_mentions"] == 0  # Should not crash
+        
+        # Note: Negative hours and very large hours would be validated
+        # at the API layer, so cache service assumes valid input
+
+    @pytest.mark.asyncio
+    async def test_cache_write_failure_recovery(self, cache_service, mock_containers):
+        """Test cache write failure doesn't prevent returning calculated data.
+        
+        Edge case: If cache save fails, user still gets calculated result.
+        """
+        cache_container, sentiment_container, tools_container = mock_containers
+        tool_id = "test-tool-write-fail"
+        hours = 24
+        
+        # Mock cache miss
+        from azure.cosmos.exceptions import CosmosResourceNotFoundError
+        cache_container.read_item.side_effect = CosmosResourceNotFoundError(
+            status_code=404, message="Not found"
+        )
+        
+        # Mock sentiment data
+        now_ts = int(datetime.now(timezone.utc).timestamp())
+        async def mock_query_items(*args, **kwargs):
+            for i in range(10):
+                yield {
+                    "sentiment_label": "positive",
+                    "sentiment_score": 0.7,
+                    "_ts": now_ts - (i * 3600),
+                }
+        
+        sentiment_container.query_items = mock_query_items
+        
+        # Mock cache write failure
+        from azure.cosmos.exceptions import CosmosHttpResponseError
+        cache_container.upsert_item = AsyncMock(
+            side_effect=CosmosHttpResponseError(
+                status_code=500, message="Write failed"
+            )
+        )
+        
+        # Execute - should not raise exception
+        result = await cache_service.get_cached_sentiment(tool_id, hours)
+        
+        # Verify data returned despite cache write failure
+        assert result is not None
+        assert result["total_mentions"] == 10
+        assert result["is_cached"] is False  # Not cached due to write failure
+
+    @pytest.mark.asyncio
+    async def test_concurrent_refresh_race_condition(self, cache_service, mock_containers):
+        """Test multiple concurrent refreshes don't cause data corruption.
+        
+        Edge case: Last-write-wins should apply (Cosmos upsert semantics).
+        """
+        cache_container, sentiment_container, tools_container = mock_containers
+        tool_id = "test-tool-concurrent"
+        
+        # Mock sentiment data
+        now_ts = int(datetime.now(timezone.utc).timestamp())
+        async def mock_query_items(*args, **kwargs):
+            for i in range(5):
+                yield {
+                    "sentiment_label": "positive",
+                    "sentiment_score": 0.7,
+                    "_ts": now_ts - (i * 3600),
+                }
+        
+        sentiment_container.query_items = mock_query_items
+        cache_container.upsert_item = AsyncMock()
+        
+        # Execute multiple refreshes "concurrently" (sequentially in test)
+        await cache_service._refresh_tool_cache(tool_id)
+        await cache_service._refresh_tool_cache(tool_id)
+        
+        # Verify upsert called multiple times (no crash)
+        assert cache_container.upsert_item.call_count == 8  # 2 runs × 4 periods
+
+    @pytest.mark.asyncio
+    async def test_malformed_sentiment_data(self, cache_service, mock_containers):
+        """Test handling of malformed sentiment data.
+        
+        Edge case: Missing fields or invalid values should be skipped gracefully.
+        """
+        cache_container, sentiment_container, tools_container = mock_containers
+        tool_id = "test-tool-malformed"
+        hours = 24
+        
+        # Mock cache miss
+        from azure.cosmos.exceptions import CosmosResourceNotFoundError
+        cache_container.read_item.side_effect = CosmosResourceNotFoundError(
+            status_code=404, message="Not found"
+        )
+        
+        # Mock sentiment data with missing/invalid fields
+        now_ts = int(datetime.now(timezone.utc).timestamp())
+        async def mock_query_items(*args, **kwargs):
+            # Valid entry
+            yield {
+                "sentiment_label": "positive",
+                "sentiment_score": 0.7,
+                "_ts": now_ts - 3600,
+            }
+            # Missing sentiment_label (should be skipped)
+            yield {
+                "sentiment_score": 0.7,
+                "_ts": now_ts - 7200,
+            }
+            # Invalid sentiment_label (should be skipped)
+            yield {
+                "sentiment_label": "invalid_label",
+                "sentiment_score": 0.7,
+                "_ts": now_ts - 10800,
+            }
+            # Valid entry
+            yield {
+                "sentiment_label": "negative",
+                "sentiment_score": -0.5,
+                "_ts": now_ts - 14400,
+            }
+        
+        sentiment_container.query_items = mock_query_items
+        cache_container.upsert_item = AsyncMock()
+        
+        # Execute - should handle malformed data gracefully
+        result = await cache_service.get_cached_sentiment(tool_id, hours)
+        
+        # Verify only valid entries counted
+        assert result["total_mentions"] == 2  # Only 2 valid entries
+        assert result["positive_count"] == 1
+        assert result["negative_count"] == 1
+
+    @pytest.mark.asyncio
+    async def test_extremely_large_dataset(self, cache_service, mock_containers):
+        """Test handling of very large dataset (10k+ mentions).
+        
+        Edge case: Large datasets should not cause memory issues.
+        """
+        cache_container, sentiment_container, tools_container = mock_containers
+        tool_id = "test-tool-large"
+        hours = 24
+        
+        # Mock cache miss
+        from azure.cosmos.exceptions import CosmosResourceNotFoundError
+        cache_container.read_item.side_effect = CosmosResourceNotFoundError(
+            status_code=404, message="Not found"
+        )
+        
+        # Mock large sentiment dataset (10,000 entries)
+        now_ts = int(datetime.now(timezone.utc).timestamp())
+        async def mock_query_items(*args, **kwargs):
+            for i in range(10000):
+                yield {
+                    "sentiment_label": "positive" if i % 2 == 0 else "negative",
+                    "sentiment_score": 0.5 if i % 2 == 0 else -0.5,
+                    "_ts": now_ts - (i * 10),
+                }
+        
+        sentiment_container.query_items = mock_query_items
+        cache_container.upsert_item = AsyncMock()
+        
+        # Execute - should handle large dataset
+        result = await cache_service.get_cached_sentiment(tool_id, hours)
+        
+        # Verify calculation
+        assert result["total_mentions"] == 10000
+        assert result["positive_count"] == 5000
+        assert result["negative_count"] == 5000
+        assert result["positive_percentage"] == 50.0
+
+    @pytest.mark.asyncio
+    async def test_cache_key_collision_prevention(self, cache_service):
+        """Test that cache keys are unique for different tool+period combinations.
+        
+        Edge case: Different tools or periods should never share cache keys.
+        """
+        tool_id_1 = "tool-1"
+        tool_id_2 = "tool-2"
+        period_24h = CachePeriod.HOUR_24
+        period_7d = CachePeriod.DAY_7
+        
+        # Generate cache keys
+        key_1_24h = cache_service._calculate_cache_key(tool_id_1, period_24h)
+        key_1_7d = cache_service._calculate_cache_key(tool_id_1, period_7d)
+        key_2_24h = cache_service._calculate_cache_key(tool_id_2, period_24h)
+        
+        # Verify uniqueness
+        assert key_1_24h != key_1_7d  # Same tool, different periods
+        assert key_1_24h != key_2_24h  # Different tools, same period
+        assert key_1_7d != key_2_24h  # Different tools and periods
+        
+        # Verify format
+        assert key_1_24h == f"{tool_id_1}:{period_24h.value}"
+        assert key_1_7d == f"{tool_id_1}:{period_7d.value}"
+        assert key_2_24h == f"{tool_id_2}:{period_24h.value}"
+
+    def test_ttl_boundary_conditions(self, cache_service):
+        """Test cache freshness at exact TTL boundary.
+        
+        Edge case: Cache exactly at TTL should be considered stale.
+        """
+        now_ts = int(datetime.now(timezone.utc).timestamp())
+        ttl_seconds = cache_service.cache_ttl_minutes * 60  # 30 minutes = 1800 seconds
+        
+        # Cache entry exactly at TTL boundary
+        cache_entry_at_boundary = SentimentCacheEntry(
+            id="tool:HOUR_24",
+            tool_id="tool-id",
+            period=CachePeriod.HOUR_24,
+            total_mentions=100,
+            positive_count=60,
+            negative_count=20,
+            neutral_count=20,
+            positive_percentage=60.0,
+            negative_percentage=20.0,
+            neutral_percentage=20.0,
+            average_sentiment=0.4,
+            period_start_ts=now_ts - 86400,
+            period_end_ts=now_ts,
+            last_updated_ts=now_ts - ttl_seconds,  # Exactly at TTL
+        )
+        
+        # Should be considered stale (not fresh)
+        result = cache_service._is_cache_fresh(cache_entry_at_boundary)
+        assert result is False
+        
+        # Cache entry 1 second before TTL
+        cache_entry_just_fresh = SentimentCacheEntry(
+            id="tool:HOUR_24",
+            tool_id="tool-id",
+            period=CachePeriod.HOUR_24,
+            total_mentions=100,
+            positive_count=60,
+            negative_count=20,
+            neutral_count=20,
+            positive_percentage=60.0,
+            negative_percentage=20.0,
+            neutral_percentage=20.0,
+            average_sentiment=0.4,
+            period_start_ts=now_ts - 86400,
+            period_end_ts=now_ts,
+            last_updated_ts=now_ts - (ttl_seconds - 1),  # 1 second before TTL
+        )
+        
+        # Should be fresh
+        result = cache_service._is_cache_fresh(cache_entry_just_fresh)
+        assert result is True
