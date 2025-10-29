@@ -3,22 +3,15 @@
 from typing import Optional
 
 import structlog
-from fastapi import APIRouter, Header, HTTPException, Query, Depends
+from fastapi import APIRouter, Depends, Header, HTTPException, Query
 
-from ..models.tool import (
-    ToolCreateRequest,
-    ToolUpdateRequest,
-    AliasLinkRequest,
-    ToolMergeRequest,
-)
-from ..models.reanalysis import (
-    ReanalysisJobRequest,
-    ReanalysisJobResponse,
-)
+from ..models.reanalysis import ReanalysisJobRequest
+from ..models.tool import (AliasLinkRequest, ToolCreateRequest,
+                           ToolMergeRequest, ToolUpdateRequest)
 from ..services.database import db
+from ..services.reanalysis_service import ReanalysisService
 from ..services.tool_manager import tool_manager
 from ..services.tool_service import ToolService
-from ..services.reanalysis_service import ReanalysisService
 
 logger = structlog.get_logger(__name__)
 
@@ -46,7 +39,7 @@ async def get_tool_service() -> ToolService:
         tools_container=tools_container,
         aliases_container=aliases_container,
         admin_logs_container=admin_logs_container,
-        sentiment_container=sentiment_container
+        sentiment_container=sentiment_container,
     )
 
 
@@ -65,7 +58,7 @@ async def get_reanalysis_service() -> ReanalysisService:
         reanalysis_jobs_container=jobs_container,
         sentiment_container=sentiment_container,
         tools_container=tools_container,
-        aliases_container=aliases_container
+        aliases_container=aliases_container,
     )
 
 
@@ -305,7 +298,7 @@ async def reject_tool(tool_id: str, x_admin_token: Optional[str] = Header(None))
 async def create_tool(
     tool_data: ToolCreateRequest,
     x_admin_token: Optional[str] = Header(None),
-    tool_service: ToolService = Depends(get_tool_service)
+    tool_service: ToolService = Depends(get_tool_service),
 ):
     """
     Create a new AI tool.
@@ -323,11 +316,7 @@ async def create_tool(
         # Verify admin access
         admin_user = verify_admin(x_admin_token)
 
-        logger.info(
-            "Admin creating tool",
-            tool_name=tool_data.name,
-            admin=admin_user
-        )
+        logger.info("Admin creating tool", tool_name=tool_data.name, admin=admin_user)
 
         # Create tool using ToolService
         tool = await tool_service.create_tool(tool_data)
@@ -336,16 +325,14 @@ async def create_tool(
             "Tool created successfully",
             tool_id=tool["id"],
             tool_name=tool["name"],
-            admin=admin_user
+            admin=admin_user,
         )
 
         return {"tool": tool, "message": "Tool created successfully"}
 
     except ValueError as e:
         logger.warning(
-            "Tool creation validation error",
-            error=str(e),
-            tool_name=tool_data.name
+            "Tool creation validation error", error=str(e), tool_name=tool_data.name
         )
         raise HTTPException(status_code=400, detail=str(e))
     except HTTPException:
@@ -355,7 +342,7 @@ async def create_tool(
             "Failed to create tool",
             tool_name=tool_data.name,
             error=str(e),
-            exc_info=True
+            exc_info=True,
         )
         raise HTTPException(status_code=500, detail="Failed to create tool")
 
@@ -363,32 +350,21 @@ async def create_tool(
 @router.get("/tools")
 async def list_tools(
     page: int = Query(default=1, ge=1, description="Page number"),
-    limit: int = Query(
-        default=20, ge=1, le=100, description="Results per page"
-    ),
+    limit: int = Query(default=20, ge=1, le=100, description="Results per page"),
     search: str = Query(default="", description="Search by tool name"),
     status: Optional[str] = Query(
-        default=None,
-        description="Filter by status: active, archived, or all"
+        default=None, description="Filter by status: active, archived, or all"
     ),
     category: Optional[str] = Query(
-        default=None,
-        description="Filter by category (can repeat for multiple)"
+        default=None, description="Filter by category (can repeat for multiple)"
     ),
-    vendor: Optional[str] = Query(
-        default=None,
-        description="Filter by vendor name"
-    ),
+    vendor: Optional[str] = Query(default=None, description="Filter by vendor name"),
     sort_by: str = Query(
-        default="name",
-        description="Sort by field: name, vendor, or updated_at"
+        default="name", description="Sort by field: name, vendor, or updated_at"
     ),
-    sort_order: str = Query(
-        default="asc",
-        description="Sort order: asc or desc"
-    ),
+    sort_order: str = Query(default="asc", description="Sort order: asc or desc"),
     x_admin_token: Optional[str] = Header(None),
-    tool_service: ToolService = Depends(get_tool_service)
+    tool_service: ToolService = Depends(get_tool_service),
 ):
     """
     List all tools with pagination, filtering, search, and sorting.
@@ -427,7 +403,7 @@ async def list_tools(
             vendor=vendor,
             sort_by=sort_by,
             sort_order=sort_order,
-            admin=admin_user
+            admin=admin_user,
         )
 
         # Get tools and total count
@@ -439,14 +415,11 @@ async def list_tools(
             categories=categories,
             vendor=vendor,
             sort_by=sort_by,
-            sort_order=sort_order
+            sort_order=sort_order,
         )
 
         total = await tool_service.count_tools(
-            search=search,
-            status=status,
-            categories=categories,
-            vendor=vendor
+            search=search, status=status, categories=categories, vendor=vendor
         )
 
         # Calculate pagination metadata
@@ -470,7 +443,7 @@ async def list_tools(
             count=len(tools),
             total=total,
             total_pages=total_pages,
-            admin=admin_user
+            admin=admin_user,
         )
 
         return {
@@ -481,17 +454,13 @@ async def list_tools(
             "total_pages": total_pages,
             "has_next": has_next,
             "has_prev": has_prev,
-            "filters_applied": filters_applied
+            "filters_applied": filters_applied,
         }
 
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(
-            "Failed to list tools",
-            error=str(e),
-            exc_info=True
-        )
+        logger.error("Failed to list tools", error=str(e), exc_info=True)
         raise HTTPException(status_code=500, detail="Failed to list tools")
 
 
@@ -499,7 +468,7 @@ async def list_tools(
 async def get_tool_details(
     tool_id: str,
     x_admin_token: Optional[str] = Header(None),
-    tool_service: ToolService = Depends(get_tool_service)
+    tool_service: ToolService = Depends(get_tool_service),
 ):
     """
     Get details of a specific tool.
@@ -531,7 +500,7 @@ async def get_tool_details(
             "Tool details retrieved",
             tool_id=tool_id,
             alias_count=len(aliases),
-            admin=admin_user
+            admin=admin_user,
         )
 
         return {"tool": tool, "aliases": aliases}
@@ -540,10 +509,7 @@ async def get_tool_details(
         raise
     except Exception as e:
         logger.error(
-            "Failed to get tool details",
-            tool_id=tool_id,
-            error=str(e),
-            exc_info=True
+            "Failed to get tool details", tool_id=tool_id, error=str(e), exc_info=True
         )
         raise HTTPException(status_code=500, detail="Failed to retrieve tool details")
 
@@ -554,7 +520,7 @@ async def update_tool(
     updates: ToolUpdateRequest,
     x_admin_token: Optional[str] = Header(None),
     if_match: Optional[str] = Header(None),
-    tool_service: ToolService = Depends(get_tool_service)
+    tool_service: ToolService = Depends(get_tool_service),
 ):
     """
     Update tool details with optimistic concurrency control.
@@ -589,7 +555,7 @@ async def update_tool(
             tool_id=tool_id,
             updates=updates.dict(exclude_unset=True),
             admin=admin_user,
-            has_etag=bool(if_match)
+            has_etag=bool(if_match),
         )
 
         # Update tool with ETag-based concurrency control
@@ -601,20 +567,13 @@ async def update_tool(
             # Note: FastAPI doesn't provide easy access to client IP/UA
             # In production, you'd extract these from Request object
             ip_address=None,
-            user_agent=None
+            user_agent=None,
         )
 
         if not tool:
-            raise HTTPException(
-                status_code=404,
-                detail=f"Tool '{tool_id}' not found"
-            )
+            raise HTTPException(status_code=404, detail=f"Tool '{tool_id}' not found")
 
-        logger.info(
-            "Tool updated successfully",
-            tool_id=tool_id,
-            admin=admin_user
-        )
+        logger.info("Tool updated successfully", tool_id=tool_id, admin=admin_user)
 
         return {"tool": tool, "message": "Tool updated successfully"}
 
@@ -624,21 +583,19 @@ async def update_tool(
             "Tool update validation error",
             tool_id=tool_id,
             error=str(e),
-            admin=admin_user
+            admin=admin_user,
         )
         raise HTTPException(status_code=400, detail=str(e))
     except exceptions.CosmosHttpResponseError as e:
         if e.status_code == 412:
             # Precondition failed - ETag mismatch
             logger.warning(
-                "Concurrent modification detected",
-                tool_id=tool_id,
-                admin=admin_user
+                "Concurrent modification detected", tool_id=tool_id, admin=admin_user
             )
             raise HTTPException(
                 status_code=409,
                 detail="Concurrent modification detected. "
-                "Please refresh and try again."
+                "Please refresh and try again.",
             )
         else:
             logger.error(
@@ -646,20 +603,14 @@ async def update_tool(
                 tool_id=tool_id,
                 status_code=e.status_code,
                 error=str(e),
-                exc_info=True
+                exc_info=True,
             )
-            raise HTTPException(
-                status_code=500,
-                detail="Database error occurred"
-            )
+            raise HTTPException(status_code=500, detail="Database error occurred")
     except HTTPException:
         raise
     except Exception as e:
         logger.error(
-            "Failed to update tool",
-            tool_id=tool_id,
-            error=str(e),
-            exc_info=True
+            "Failed to update tool", tool_id=tool_id, error=str(e), exc_info=True
         )
         raise HTTPException(status_code=500, detail="Failed to update tool")
 
@@ -668,7 +619,7 @@ async def update_tool(
 async def delete_tool(
     tool_id: str,
     x_admin_token: Optional[str] = Header(None),
-    tool_service: ToolService = Depends(get_tool_service)
+    tool_service: ToolService = Depends(get_tool_service),
 ):
     """
     Permanently delete a tool including all associated sentiment data.
@@ -701,9 +652,7 @@ async def delete_tool(
         admin_user = verify_admin(x_admin_token)
 
         logger.info(
-            "Admin permanently deleting tool",
-            tool_id=tool_id,
-            admin=admin_user
+            "Admin permanently deleting tool", tool_id=tool_id, admin=admin_user
         )
 
         # Delete tool with hard delete (Phase 6 requirement)
@@ -712,7 +661,7 @@ async def delete_tool(
             deleted_by=admin_user,
             hard_delete=True,  # Phase 6: always hard delete
             ip_address=None,  # TODO: Extract from Request
-            user_agent=None   # TODO: Extract from Request
+            user_agent=None,  # TODO: Extract from Request
         )
 
         logger.info(
@@ -720,14 +669,14 @@ async def delete_tool(
             tool_id=tool_id,
             tool_name=result["tool_name"],
             sentiment_count=result["sentiment_count"],
-            admin=admin_user
+            admin=admin_user,
         )
 
         return {
             "message": "Tool permanently deleted",
             "tool_id": result["tool_id"],
             "tool_name": result["tool_name"],
-            "sentiment_count": result["sentiment_count"]
+            "sentiment_count": result["sentiment_count"],
         }
 
     except ValueError as e:
@@ -737,15 +686,12 @@ async def delete_tool(
             "Tool deletion validation error",
             tool_id=tool_id,
             error=error_msg,
-            admin=admin_user
+            admin=admin_user,
         )
 
         # T068: Return 409 Conflict if tool is referenced or in active job
         if "referenced by" in error_msg or "in use" in error_msg:
-            raise HTTPException(
-                status_code=409,
-                detail=error_msg
-            )
+            raise HTTPException(status_code=409, detail=error_msg)
 
         # 404 if tool not found
         if "not found" in error_msg:
@@ -758,22 +704,16 @@ async def delete_tool(
         raise
     except Exception as e:
         logger.error(
-            "Failed to delete tool",
-            tool_id=tool_id,
-            error=str(e),
-            exc_info=True
+            "Failed to delete tool", tool_id=tool_id, error=str(e), exc_info=True
         )
-        raise HTTPException(
-            status_code=500,
-            detail="Failed to delete tool"
-        )
+        raise HTTPException(status_code=500, detail="Failed to delete tool")
 
 
 @router.post("/tools/{tool_id}/archive")
 async def archive_tool(
     tool_id: str,
     x_admin_token: Optional[str] = Header(None),
-    tool_service: ToolService = Depends(get_tool_service)
+    tool_service: ToolService = Depends(get_tool_service),
 ):
     """
     Archive a tool (set status to 'archived').
@@ -805,23 +745,17 @@ async def archive_tool(
 
         # Archive tool
         tool = await tool_service.archive_tool(
-            tool_id=tool_id,
-            archived_by=admin_user,
-            ip_address=None,
-            user_agent=None
+            tool_id=tool_id, archived_by=admin_user, ip_address=None, user_agent=None
         )
 
         if not tool:
-            raise HTTPException(
-                status_code=404,
-                detail=f"Tool '{tool_id}' not found"
-            )
+            raise HTTPException(status_code=404, detail=f"Tool '{tool_id}' not found")
 
         logger.info(
             "Tool archived successfully",
             tool_id=tool_id,
             tool_name=tool.get("name"),
-            admin=admin_user
+            admin=admin_user,
         )
 
         return {"tool": tool, "message": "Tool archived successfully"}
@@ -832,17 +766,14 @@ async def archive_tool(
             "Tool archive validation error",
             tool_id=tool_id,
             error=str(e),
-            admin=admin_user
+            admin=admin_user,
         )
         raise HTTPException(status_code=409, detail=str(e))
     except HTTPException:
         raise
     except Exception as e:
         logger.error(
-            "Failed to archive tool",
-            tool_id=tool_id,
-            error=str(e),
-            exc_info=True
+            "Failed to archive tool", tool_id=tool_id, error=str(e), exc_info=True
         )
         raise HTTPException(status_code=500, detail="Failed to archive tool")
 
@@ -851,7 +782,7 @@ async def archive_tool(
 async def unarchive_tool(
     tool_id: str,
     x_admin_token: Optional[str] = Header(None),
-    tool_service: ToolService = Depends(get_tool_service)
+    tool_service: ToolService = Depends(get_tool_service),
 ):
     """
     Unarchive a tool (set status to 'active').
@@ -881,23 +812,17 @@ async def unarchive_tool(
 
         # Unarchive tool
         tool = await tool_service.unarchive_tool(
-            tool_id=tool_id,
-            unarchived_by=admin_user,
-            ip_address=None,
-            user_agent=None
+            tool_id=tool_id, unarchived_by=admin_user, ip_address=None, user_agent=None
         )
 
         if not tool:
-            raise HTTPException(
-                status_code=404,
-                detail=f"Tool '{tool_id}' not found"
-            )
+            raise HTTPException(status_code=404, detail=f"Tool '{tool_id}' not found")
 
         logger.info(
             "Tool unarchived successfully",
             tool_id=tool_id,
             tool_name=tool.get("name"),
-            admin=admin_user
+            admin=admin_user,
         )
 
         return {"tool": tool, "message": "Tool unarchived successfully"}
@@ -906,10 +831,7 @@ async def unarchive_tool(
         raise
     except Exception as e:
         logger.error(
-            "Failed to unarchive tool",
-            tool_id=tool_id,
-            error=str(e),
-            exc_info=True
+            "Failed to unarchive tool", tool_id=tool_id, error=str(e), exc_info=True
         )
         raise HTTPException(status_code=500, detail="Failed to unarchive tool")
 
@@ -919,7 +841,7 @@ async def link_alias(
     tool_id: str,
     link_request: AliasLinkRequest,
     x_admin_token: Optional[str] = Header(None),
-    tool_service: ToolService = Depends(get_tool_service)
+    tool_service: ToolService = Depends(get_tool_service),
 ):
     """
     Link a tool as an alias to another primary tool.
@@ -942,39 +864,30 @@ async def link_alias(
             "Admin linking alias",
             alias_tool_id=tool_id,
             primary_tool_id=link_request.primary_tool_id,
-            admin=admin_user
+            admin=admin_user,
         )
 
         # Create alias
         alias = await tool_service.create_alias(
             alias_tool_id=tool_id,
             primary_tool_id=link_request.primary_tool_id,
-            created_by=admin_user
+            created_by=admin_user,
         )
 
-        logger.info(
-            "Alias linked successfully",
-            alias_id=alias["id"],
-            admin=admin_user
-        )
+        logger.info("Alias linked successfully", alias_id=alias["id"], admin=admin_user)
 
         return {"alias": alias, "message": "Alias linked successfully"}
 
     except ValueError as e:
         logger.warning(
-            "Alias link validation error",
-            error=str(e),
-            alias_tool_id=tool_id
+            "Alias link validation error", error=str(e), alias_tool_id=tool_id
         )
         raise HTTPException(status_code=400, detail=str(e))
     except HTTPException:
         raise
     except Exception as e:
         logger.error(
-            "Failed to link alias",
-            alias_tool_id=tool_id,
-            error=str(e),
-            exc_info=True
+            "Failed to link alias", alias_tool_id=tool_id, error=str(e), exc_info=True
         )
         raise HTTPException(status_code=500, detail="Failed to link alias")
 
@@ -983,7 +896,7 @@ async def link_alias(
 async def unlink_alias(
     alias_tool_id: str,
     x_admin_token: Optional[str] = Header(None),
-    tool_service: ToolService = Depends(get_tool_service)
+    tool_service: ToolService = Depends(get_tool_service),
 ):
     """
     Remove alias relationship for a tool.
@@ -1002,9 +915,7 @@ async def unlink_alias(
         admin_user = verify_admin(x_admin_token)
 
         logger.info(
-            "Admin unlinking alias",
-            alias_tool_id=alias_tool_id,
-            admin=admin_user
+            "Admin unlinking alias", alias_tool_id=alias_tool_id, admin=admin_user
         )
 
         # Find and remove alias
@@ -1015,8 +926,7 @@ async def unlink_alias(
 
         aliases_container = db.database.get_container_client("ToolAliases")
         items = aliases_container.query_items(
-            query=query,
-            parameters=[{"name": "@id", "value": alias_tool_id}]
+            query=query, parameters=[{"name": "@id", "value": alias_tool_id}]
         )
 
         results = []
@@ -1025,8 +935,7 @@ async def unlink_alias(
 
         if not results:
             raise HTTPException(
-                status_code=404,
-                detail=f"No alias found for tool '{alias_tool_id}'"
+                status_code=404, detail=f"No alias found for tool '{alias_tool_id}'"
             )
 
         # Remove the alias
@@ -1037,9 +946,7 @@ async def unlink_alias(
             raise HTTPException(status_code=500, detail="Failed to remove alias")
 
         logger.info(
-            "Alias unlinked successfully",
-            alias_tool_id=alias_tool_id,
-            admin=admin_user
+            "Alias unlinked successfully", alias_tool_id=alias_tool_id, admin=admin_user
         )
 
         return {"message": "Alias unlinked successfully"}
@@ -1051,7 +958,7 @@ async def unlink_alias(
             "Failed to unlink alias",
             alias_tool_id=alias_tool_id,
             error=str(e),
-            exc_info=True
+            exc_info=True,
         )
         raise HTTPException(status_code=500, detail="Failed to unlink alias")
 
@@ -1060,7 +967,7 @@ async def unlink_alias(
 async def merge_tools(
     merge_request: ToolMergeRequest,
     x_admin_token: Optional[str] = Header(None),
-    tool_service: ToolService = Depends(get_tool_service)
+    tool_service: ToolService = Depends(get_tool_service),
 ):
     """
     Merge multiple tools into a single primary tool.
@@ -1099,41 +1006,35 @@ async def merge_tools(
             "Admin initiating tool merge",
             target_tool_id=merge_request.target_tool_id,
             source_tool_count=len(merge_request.source_tool_ids),
-            admin=admin_user
+            admin=admin_user,
         )
 
         # Validate merge request
         if len(merge_request.source_tool_ids) > 10:
             raise HTTPException(
-                status_code=400,
-                detail="Cannot merge more than 10 source tools at once"
+                status_code=400, detail="Cannot merge more than 10 source tools at once"
             )
 
         if len(set(merge_request.source_tool_ids)) != len(
             merge_request.source_tool_ids
         ):
             raise HTTPException(
-                status_code=400,
-                detail="Source tool IDs must be unique"
+                status_code=400, detail="Source tool IDs must be unique"
             )
 
         if merge_request.target_tool_id in merge_request.source_tool_ids:
-            raise HTTPException(
-                status_code=400,
-                detail="Cannot merge tool into itself"
-            )
+            raise HTTPException(status_code=400, detail="Cannot merge tool into itself")
 
         # Validate categories are valid enum values
         try:
             # Convert request categories to strings for the service
             target_categories = [
-                cat.value if hasattr(cat, 'value') else cat
+                cat.value if hasattr(cat, "value") else cat
                 for cat in merge_request.final_categories
             ]
         except Exception as e:
             raise HTTPException(
-                status_code=400,
-                detail=f"Invalid category values: {str(e)}"
+                status_code=400, detail=f"Invalid category values: {str(e)}"
             )
 
         # Perform merge
@@ -1143,14 +1044,14 @@ async def merge_tools(
             target_categories=target_categories,
             target_vendor=merge_request.final_vendor,
             merged_by=admin_user,
-            notes=merge_request.notes
+            notes=merge_request.notes,
         )
 
         sentiment_count = result["merge_record"]["sentiment_count"]
         source_count = len(result["archived_tools"])
         target_name = result["target_tool"].get("name", "tool")
 
-        plural = 's' if source_count != 1 else ''
+        plural = "s" if source_count != 1 else ""
         message = (
             f"Successfully merged {source_count} tool{plural} "
             f"into {target_name}. "
@@ -1159,8 +1060,7 @@ async def merge_tools(
 
         if result.get("warnings"):
             message += (
-                " Merge completed with warnings. "
-                "Please review metadata differences."
+                " Merge completed with warnings. " "Please review metadata differences."
             )
 
         logger.info(
@@ -1168,7 +1068,7 @@ async def merge_tools(
             target_tool_id=merge_request.target_tool_id,
             source_count=source_count,
             sentiment_count=sentiment_count,
-            admin=admin_user
+            admin=admin_user,
         )
 
         return {
@@ -1176,7 +1076,7 @@ async def merge_tools(
             "target_tool": result["target_tool"],
             "archived_tools": result["archived_tools"],
             "warnings": result.get("warnings", []),
-            "message": message
+            "message": message,
         }
 
     except ValueError as e:
@@ -1199,7 +1099,7 @@ async def merge_tools(
             "Tool merge validation error",
             error=error_msg,
             status_code=status_code,
-            admin=admin_user
+            admin=admin_user,
         )
         raise HTTPException(status_code=status_code, detail=error_msg)
 
@@ -1210,14 +1110,14 @@ async def merge_tools(
             "Failed to merge tools",
             target_tool_id=merge_request.target_tool_id,
             error=str(e),
-            exc_info=True
+            exc_info=True,
         )
         raise HTTPException(
             status_code=500,
             detail=(
                 "An error occurred during the merge operation. "
                 "All changes have been rolled back."
-            )
+            ),
         )
 
 
@@ -1225,14 +1125,9 @@ async def merge_tools(
 async def get_merge_history(
     tool_id: str,
     page: int = Query(1, ge=1, description="Page number (1-indexed)"),
-    limit: int = Query(
-        10,
-        ge=1,
-        le=100,
-        description="Records per page (1-100)"
-    ),
+    limit: int = Query(10, ge=1, le=100, description="Records per page (1-100)"),
     x_admin_token: Optional[str] = Header(None),
-    tool_service: ToolService = Depends(get_tool_service)
+    tool_service: ToolService = Depends(get_tool_service),
 ):
     """
     Get merge history for a tool.
@@ -1268,14 +1163,12 @@ async def get_merge_history(
             tool_id=tool_id,
             page=page,
             limit=limit,
-            admin=admin_user
+            admin=admin_user,
         )
 
         # Get merge history
         result = await tool_service.get_merge_history(
-            tool_id=tool_id,
-            page=page,
-            limit=limit
+            tool_id=tool_id, page=page, limit=limit
         )
 
         logger.info(
@@ -1283,7 +1176,7 @@ async def get_merge_history(
             tool_id=tool_id,
             count=len(result["merge_records"]),
             total=result["total"],
-            admin=admin_user
+            admin=admin_user,
         )
 
         return result
@@ -1303,7 +1196,7 @@ async def get_merge_history(
             error=error_msg,
             status_code=status_code,
             tool_id=tool_id,
-            admin=admin_user
+            admin=admin_user,
         )
         raise HTTPException(status_code=status_code, detail=error_msg)
 
@@ -1311,33 +1204,22 @@ async def get_merge_history(
         raise
     except Exception as e:
         logger.error(
-            "Failed to get merge history",
-            tool_id=tool_id,
-            error=str(e),
-            exc_info=True
+            "Failed to get merge history", tool_id=tool_id, error=str(e), exc_info=True
         )
-        raise HTTPException(
-            status_code=500,
-            detail="Failed to retrieve merge history"
-        )
+        raise HTTPException(status_code=500, detail="Failed to retrieve merge history")
 
 
 @router.get("/tools/{tool_id}/audit-log")
 async def get_audit_log(
     tool_id: str,
     page: int = Query(1, ge=1, description="Page number (1-indexed)"),
-    limit: int = Query(
-        20,
-        ge=1,
-        le=100,
-        description="Records per page (1-100)"
-    ),
+    limit: int = Query(20, ge=1, le=100, description="Records per page (1-100)"),
     action_type: Optional[str] = Query(
         None,
-        description="Filter by action type (created, edited, archived, unarchived, deleted, merged)"
+        description="Filter by action type (created, edited, archived, unarchived, deleted, merged)",
     ),
     x_admin_token: Optional[str] = Header(None),
-    tool_service: ToolService = Depends(get_tool_service)
+    tool_service: ToolService = Depends(get_tool_service),
 ):
     """
     Get audit log for a specific tool.
@@ -1375,15 +1257,12 @@ async def get_audit_log(
             page=page,
             limit=limit,
             action_type=action_type,
-            admin=admin_user
+            admin=admin_user,
         )
 
         # Get audit log
         result = await tool_service.get_audit_log(
-            tool_id=tool_id,
-            page=page,
-            limit=limit,
-            action_type=action_type
+            tool_id=tool_id, page=page, limit=limit, action_type=action_type
         )
 
         logger.info(
@@ -1391,7 +1270,7 @@ async def get_audit_log(
             tool_id=tool_id,
             count=len(result["audit_records"]),
             total=result["total"],
-            admin=admin_user
+            admin=admin_user,
         )
 
         return result
@@ -1411,7 +1290,7 @@ async def get_audit_log(
             error=error_msg,
             status_code=status_code,
             tool_id=tool_id,
-            admin=admin_user
+            admin=admin_user,
         )
         raise HTTPException(status_code=status_code, detail=error_msg)
 
@@ -1419,20 +1298,15 @@ async def get_audit_log(
         raise
     except Exception as e:
         logger.error(
-            "Failed to get audit log",
-            tool_id=tool_id,
-            error=str(e),
-            exc_info=True
+            "Failed to get audit log", tool_id=tool_id, error=str(e), exc_info=True
         )
-        raise HTTPException(
-            status_code=500,
-            detail="Failed to retrieve audit log"
-        )
+        raise HTTPException(status_code=500, detail="Failed to retrieve audit log")
 
 
 # ====================================================================
 # REANALYSIS ENDPOINTS
 # ====================================================================
+
 
 @router.post(
     "/reanalysis/jobs",
@@ -1441,15 +1315,15 @@ async def get_audit_log(
     summary="Trigger manual reanalysis job",
     description="""
     Trigger a manual reanalysis job to re-detect tools in historical sentiment data.
-    
+
     **User Story**: US1 - Manual Ad-Hoc Tool Recategorization
-    
+
     **Process**:
     1. Validates no active jobs are running
     2. Counts documents matching filter criteria
     3. Creates job with QUEUED status
     4. Returns job details for polling
-    
+
     **Background Processing**:
     The job is processed asynchronously by the scheduler. Poll using
     GET /admin/reanalysis/jobs/{job_id}/status to check progress.
@@ -1505,9 +1379,7 @@ async def trigger_reanalysis(
             admin=admin_user,
             exc_info=True,
         )
-        raise HTTPException(
-            status_code=500, detail="Failed to trigger reanalysis job"
-        )
+        raise HTTPException(status_code=500, detail="Failed to trigger reanalysis job")
 
 
 @router.get(
@@ -1516,12 +1388,12 @@ async def trigger_reanalysis(
     summary="List reanalysis jobs",
     description="""
     List all reanalysis jobs with optional status filter.
-    
+
     **Query Parameters**:
     - `status`: Filter by job status (queued/running/completed/failed)
     - `limit`: Max results (default 50, max 100)
     - `offset`: Pagination offset
-    
+
     Returns jobs ordered by created_at DESC (most recent first).
     """,
 )
@@ -1558,14 +1430,11 @@ async def list_reanalysis_jobs(
         # query_parts.append("ORDER BY c.created_at DESC")
         query = " ".join(query_parts)
 
-                # Get paginated results
+        # Get paginated results
         # NOTE: OFFSET/LIMIT might not work reliably in emulator
         # Let's get all results and paginate in memory
         logger.info(
-            "Listing reanalysis jobs",
-            query=query,
-            params=params,
-            admin=admin_user
+            "Listing reanalysis jobs", query=query, params=params, admin=admin_user
         )
 
         all_jobs = list(
@@ -1575,7 +1444,7 @@ async def list_reanalysis_jobs(
                 enable_cross_partition_query=True,
             )
         )
-        
+
         # Normalize job data (fix legacy data issues)
         for job in all_jobs:
             if "progress" in job and "total_count" in job["progress"]:
@@ -1585,21 +1454,21 @@ async def list_reanalysis_jobs(
                     job["progress"]["total_count"] = int(tc["count"])
                 elif not isinstance(tc, (int, float)):
                     job["progress"]["total_count"] = 0
-        
+
         logger.info(
             "All jobs from query",
             total_count=len(all_jobs),
-            job_ids=[j.get('id') for j in all_jobs] if all_jobs else [],
-            admin=admin_user
+            job_ids=[j.get("id") for j in all_jobs] if all_jobs else [],
+            admin=admin_user,
         )
-        
+
         # Manual pagination
-        jobs = all_jobs[offset:offset + limit]
+        jobs = all_jobs[offset : offset + limit]
         logger.info(
             "Found jobs from query",
             job_count=len(jobs),
-            job_ids=[j.get('id') for j in jobs] if jobs else [],
-            admin=admin_user
+            job_ids=[j.get("id") for j in jobs] if jobs else [],
+            admin=admin_user,
         )
 
         # Get total count
@@ -1614,19 +1483,20 @@ async def list_reanalysis_jobs(
                 enable_cross_partition_query=True,
             )
         )
-        logger.info(
-            "Count query result",
-            result=total_result,
-            admin=admin_user
-        )
+        logger.info("Count query result", result=total_result, admin=admin_user)
         # Extract count: emulator returns [{'count': N}] instead of [N]
         if total_result and len(total_result) > 0:
             first = total_result[0]
-            total_count = int(first['count']) if isinstance(first, dict) else int(first)
+            total_count = int(first["count"]) if isinstance(first, dict) else int(first)
         else:
             total_count = 0
 
-        return {"jobs": jobs, "total_count": total_count, "limit": limit, "offset": offset}
+        return {
+            "jobs": jobs,
+            "total_count": total_count,
+            "limit": limit,
+            "offset": offset,
+        }
 
     except Exception as e:
         logger.error(
@@ -1635,9 +1505,7 @@ async def list_reanalysis_jobs(
             admin=admin_user,
             exc_info=True,
         )
-        raise HTTPException(
-            status_code=500, detail="Failed to list reanalysis jobs"
-        )
+        raise HTTPException(status_code=500, detail="Failed to list reanalysis jobs")
 
 
 @router.get(
@@ -1646,7 +1514,7 @@ async def list_reanalysis_jobs(
     summary="Get reanalysis job details",
     description="""
     Get full details for a specific reanalysis job.
-    
+
     **Returns**:
     - Job status, progress, statistics
     - Error log entries
@@ -1668,7 +1536,7 @@ async def get_reanalysis_job(
 
     try:
         job = service.jobs.read_item(item=job_id, partition_key=job_id)
-        
+
         # Normalize job data (fix legacy data issues)
         if "progress" in job and "total_count" in job["progress"]:
             tc = job["progress"]["total_count"]
@@ -1690,9 +1558,7 @@ async def get_reanalysis_job(
             admin=admin_user,
             exc_info=True,
         )
-        raise HTTPException(
-            status_code=500, detail="Failed to retrieve job details"
-        )
+        raise HTTPException(status_code=500, detail="Failed to retrieve job details")
 
 
 @router.get(
@@ -1701,12 +1567,12 @@ async def get_reanalysis_job(
     summary="Get reanalysis job status (lightweight)",
     description="""
     Lightweight endpoint for polling job status.
-    
+
     **Returns**:
     - job_id
     - status (queued/running/completed/failed)
     - progress percentage
-    
+
     Use this for UI polling instead of full job details endpoint.
     """,
 )
@@ -1752,38 +1618,50 @@ async def debug_all_jobs(
 ):
     """DEBUG: Get all jobs without ORDER BY"""
     verify_admin(x_admin_token)
-    
+
     # Query without ORDER BY
-    jobs_no_order = list(service.jobs.query_items(
-        query="SELECT * FROM c WHERE 1=1",
-        enable_cross_partition_query=True
-    ))
-    
+    jobs_no_order = list(
+        service.jobs.query_items(
+            query="SELECT * FROM c WHERE 1=1", enable_cross_partition_query=True
+        )
+    )
+
     # Query with ORDER BY
     try:
-        jobs_with_order = list(service.jobs.query_items(
-            query="SELECT * FROM c WHERE 1=1 ORDER BY c.created_at DESC",
-            enable_cross_partition_query=True
-        ))
+        jobs_with_order = list(
+            service.jobs.query_items(
+                query="SELECT * FROM c WHERE 1=1 ORDER BY c.created_at DESC",
+                enable_cross_partition_query=True,
+            )
+        )
     except Exception as e:
         jobs_with_order = f"ERROR: {str(e)}"
-    
+
     # Count active
-    count_result = list(service.jobs.query_items(
-        query="SELECT VALUE COUNT(1) FROM c WHERE c.status IN ('queued', 'running')",
-        enable_cross_partition_query=True
-    ))
-    
+    count_result = list(
+        service.jobs.query_items(
+            query="SELECT VALUE COUNT(1) FROM c WHERE c.status IN ('queued', 'running')",
+            enable_cross_partition_query=True,
+        )
+    )
+
     return {
         "no_order_by": len(jobs_no_order),
-        "with_order_by": len(jobs_with_order) if isinstance(jobs_with_order, list) else jobs_with_order,
+        "with_order_by": (
+            len(jobs_with_order)
+            if isinstance(jobs_with_order, list)
+            else jobs_with_order
+        ),
         "active_count": count_result,
-        "jobs": [{
-            "id": j["id"],
-            "status": j["status"],
-            "created_at": j.get("created_at", "MISSING"),
-            "has_created_at": "created_at" in j
-        } for j in jobs_no_order]
+        "jobs": [
+            {
+                "id": j["id"],
+                "status": j["status"],
+                "created_at": j.get("created_at", "MISSING"),
+                "has_created_at": "created_at" in j,
+            }
+            for j in jobs_no_order
+        ],
     }
 
 
@@ -1821,23 +1699,21 @@ async def cancel_reanalysis_job(
         job = await service.cancel_job(job_id, cancelled_by=admin_user)
 
         logger.info(
-            "Reanalysis job cancelled via API",
-            job_id=job_id,
-            admin_user=admin_user
+            "Reanalysis job cancelled via API", job_id=job_id, admin_user=admin_user
         )
 
         return {
             "job_id": job["id"],
             "status": job["status"],
             "cancelled_by": admin_user,
-            "message": "Reanalysis job cancelled successfully"
+            "message": "Reanalysis job cancelled successfully",
         }
     except ValueError as e:
         logger.warning(
             "Invalid cancellation request",
             job_id=job_id,
             admin_user=admin_user,
-            error=str(e)
+            error=str(e),
         )
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
@@ -1846,7 +1722,6 @@ async def cancel_reanalysis_job(
             job_id=job_id,
             admin_user=admin_user,
             error=str(e),
-            exc_info=True
+            exc_info=True,
         )
         raise HTTPException(status_code=500, detail="Failed to cancel job")
-

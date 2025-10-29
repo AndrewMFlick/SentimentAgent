@@ -6,7 +6,7 @@ from time import time
 from typing import Optional
 
 import structlog
-from fastapi import APIRouter, HTTPException, Query, Request
+from fastapi import APIRouter, HTTPException, Query, Request, Response
 
 from ..services.database import db
 
@@ -93,9 +93,15 @@ async def get_tool_sentiment(
         default=None, description="Start date (YYYY-MM-DD)"
     ),
     end_date: Optional[str] = Query(default=None, description="End date (YYYY-MM-DD)"),
+    response: Response = None,
 ):
     """
     Get sentiment breakdown for a specific tool.
+
+    Feature 017: Pre-Cached Sentiment Analysis
+    Responses include cache status headers:
+    - X-Cache-Status: HIT or MISS
+    - X-Cache-Age: Age in seconds (for HIT)
 
     Args:
         tool_id: Tool identifier
@@ -104,7 +110,7 @@ async def get_tool_sentiment(
         end_date: End date for range query
 
     Returns:
-        Sentiment breakdown with percentages
+        Sentiment breakdown with percentages and cache metadata
     """
     try:
         # Verify tool exists
@@ -112,10 +118,22 @@ async def get_tool_sentiment(
         if not tool:
             raise HTTPException(status_code=404, detail=f"Tool '{tool_id}' not found")
 
-        # Get sentiment data
+        # Get sentiment data (now with cache support)
         sentiment_data = await db.get_tool_sentiment(
             tool_id=tool_id, hours=hours, start_date=start_date, end_date=end_date
         )
+
+        # T023: Add cache headers if cache was used
+        is_cached = sentiment_data.get("is_cached", False)
+        cached_at = sentiment_data.get("cached_at")
+        
+        if response:
+            if is_cached and cached_at:
+                response.headers["X-Cache-Status"] = "HIT"
+                cache_age_seconds = int(datetime.utcnow().timestamp()) - cached_at
+                response.headers["X-Cache-Age"] = str(cache_age_seconds)
+            else:
+                response.headers["X-Cache-Status"] = "MISS"
 
         # Calculate percentages
         total = sentiment_data.get("total_mentions", 0)
@@ -140,7 +158,8 @@ async def get_tool_sentiment(
             start_time = datetime.utcnow() - timedelta(hours=24)
             end_time = datetime.utcnow()
 
-        response = {
+        # T024: Include cache metadata in response
+        response_data = {
             "tool_id": tool_id,
             "tool_name": tool.get("name"),
             "total_mentions": sentiment_data.get("total_mentions", 0),
@@ -155,16 +174,21 @@ async def get_tool_sentiment(
                 "start": start_time.isoformat(),
                 "end": end_time.isoformat(),
             },
+            "cache_metadata": {
+                "is_cached": is_cached,
+                "cached_at": datetime.fromtimestamp(cached_at).isoformat() if cached_at else None,
+            }
         }
 
         logger.info(
             "Retrieved tool sentiment",
             tool_id=tool_id,
-            total_mentions=response["total_mentions"],
+            total_mentions=response_data["total_mentions"],
             time_period_hours=hours,
+            is_cached=is_cached,
         )
 
-        return response
+        return response_data
 
     except HTTPException:
         raise

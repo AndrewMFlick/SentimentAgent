@@ -75,9 +75,7 @@ class JobStatistics(BaseModel):
         description="tool_id -> count of mentions detected",
     )
     errors_count: int = Field(default=0, ge=0)
-    categorized_count: int = Field(
-        default=0, ge=0, description="Docs with tools found"
-    )
+    categorized_count: int = Field(default=0, ge=0, description="Docs with tools found")
     uncategorized_count: int = Field(
         default=0, ge=0, description="Docs with no tools found"
     )
@@ -118,9 +116,7 @@ class ReanalysisJob(BaseModel):
         default=None,
         description="ISO 8601 - when status became completed/failed",
     )
-    created_at: str = Field(
-        default_factory=lambda: datetime.utcnow().isoformat()
-    )
+    created_at: str = Field(default_factory=lambda: datetime.utcnow().isoformat())
 
     @field_validator("start_time")
     @classmethod
@@ -133,9 +129,7 @@ class ReanalysisJob(BaseModel):
             JobStatus.FAILED,
         }:
             if not v:
-                raise ValueError(
-                    f"start_time required when status={status.value}"
-                )
+                raise ValueError(f"start_time required when status={status.value}")
         return v
 
     @field_validator("end_time")
@@ -145,9 +139,7 @@ class ReanalysisJob(BaseModel):
         status = info.data.get("status")
         if status in {JobStatus.COMPLETED, JobStatus.FAILED}:
             if not v:
-                raise ValueError(
-                    f"end_time required when status={status.value}"
-                )
+                raise ValueError(f"end_time required when status={status.value}")
         return v
 
 
@@ -160,9 +152,7 @@ class ReanalysisJobRequest(BaseModel):
     date_range: Optional[Dict[str, Optional[str]]] = Field(
         default=None,
         description="Filter by date: {start: ISO, end: ISO}",
-        examples=[
-            {"start": "2025-01-01T00:00:00Z", "end": "2025-01-31T23:59:59Z"}
-        ],
+        examples=[{"start": "2025-01-01T00:00:00Z", "end": "2025-01-31T23:59:59Z"}],
     )
     tool_ids: Optional[List[str]] = Field(
         default=None,

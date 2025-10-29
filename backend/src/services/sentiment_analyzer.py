@@ -99,7 +99,7 @@ class SentimentAnalyzer:
     def detect_tools_in_content(self, text: str) -> list[str]:
         """
         Detect AI tools mentioned in text.
-        
+
         Public method for use by reanalysis service and other consumers.
 
         Args:
@@ -114,7 +114,7 @@ class SentimentAnalyzer:
         except Exception as e:
             logger.error(f"Tool detection error: {e}", exc_info=True)
             return []
-    
+
     def _detect_tools(self, text: str) -> list[str]:
         """
         Internal wrapper for backwards compatibility.
