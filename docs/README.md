@@ -31,10 +31,29 @@ Key documents remain in the project root for easy access:
 - **QUICKSTART.md** - Quick setup and deployment guide
 - **LICENSE** - Project license
 
+### 🚀 Feature-Specific Documentation
+
+**Sentiment Cache (Feature 017)**:
+- **cache-architecture.md** - Complete cache architecture guide
+  - Data model and request flow
+  - Performance benchmarks (10-50x improvement)
+  - Monitoring and troubleshooting
+  - Scalability up to 10K tools
+- **cache-security-review.md** - Security analysis and approval
+  - OWASP Top 10 compliance
+  - GDPR compliance
+  - Production approval: ✅ APPROVED
+
+**User Stories (Feature 008, 013)**:
+- **US2_IMPLEMENTATION_SUMMARY.md** - Hot Topics implementation
+- **US2_MANUAL_TESTING_GUIDE.md** - Testing procedures
+
 ## Finding Documentation
 
 - **New to the project?** Start with `/README.md` and `/QUICKSTART.md`
 - **Setting up admin features?** See `/guides/ADMIN_PAGE_GUIDE.md`
+- **Understanding sentiment cache?** Read `cache-architecture.md`
+- **Security review needed?** Check `cache-security-review.md`
 - **Running into issues?** Check `/guides/TROUBLESHOOTING.md`
 - **Understanding a specific phase?** Browse `/phases/`
 - **Looking for historical context?** Search `/archive/`

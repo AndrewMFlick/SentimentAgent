@@ -11,6 +11,7 @@ A scalable sentiment analysis application that monitors AI developer tool discus
 - **AI Agent**: Query sentiment data with natural language (e.g., "What's driving negative sentiment for Cursor?")
 - **Azure Cloud Hosting**: Designed for scalability on Azure infrastructure with multiple deployment options
 - **Data Retention**: 90-day historical data for trend analysis
+- **Pre-Cached Sentiment**: 10x performance improvement with sub-second sentiment queries
 
 ## Monitored Subreddits
 
@@ -179,6 +180,60 @@ curl -X POST http://localhost:8000/api/v1/admin/reanalysis/jobs \
 ### System
 - `GET /api/v1/health` - Comprehensive health check with metrics
 - `GET /api/v1/subreddits` - List monitored subreddits
+- `GET /api/v1/cache/health` - Sentiment cache health and performance metrics
+
+### Sentiment Cache
+
+The sentiment cache provides **10x performance improvement** for sentiment queries:
+
+**Performance Comparison**:
+```bash
+# Without cache: 10.57s (loads 9,327 documents)
+time curl "http://localhost:8000/api/v1/tools/{tool_id}/sentiment?hours=24"
+
+# With cache: <1s (loads 1 cached document)
+time curl "http://localhost:8000/api/v1/tools/{tool_id}/sentiment?hours=24"
+# Response includes: "is_cached": true, "cached_at": "2025-10-29T12:00:00Z"
+```
+
+**Cache Health Endpoint**:
+```bash
+curl http://localhost:8000/api/v1/cache/health
+```
+
+Returns:
+```json
+{
+  "status": "healthy",
+  "cache_enabled": true,
+  "total_entries": 60,
+  "last_refresh_at": "2025-10-29T12:00:00Z",
+  "cache_hit_rate_24h": 0.96,
+  "oldest_entry_age_minutes": 12
+}
+```
+
+**Supported Time Periods** (pre-cached):
+- 1 hour (`hours=1`)
+- 24 hours (`hours=24`) - most common
+- 7 days (`hours=168`)
+- 30 days (`hours=720`)
+
+**Cache Invalidation** (Admin only):
+```bash
+# Invalidate specific tool
+curl -X POST http://localhost:8000/api/v1/admin/cache/invalidate \
+  -H "X-Admin-Token: your-token" \
+  -d '{"tool_id": "877eb2d8-..."}'
+
+# Invalidate all cache
+curl -X POST http://localhost:8000/api/v1/admin/cache/invalidate/all \
+  -H "X-Admin-Token: your-token"
+```
+
+**Background Refresh**: Automatic refresh every 15 minutes keeps cache fresh.
+
+For architecture details, see [docs/cache-architecture.md](docs/cache-architecture.md).
 
 ### Health Check Response
 
