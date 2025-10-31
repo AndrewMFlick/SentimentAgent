@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useRef, useEffect } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { api } from '../services/api';
 import { ToolTable } from './ToolTable';
@@ -9,6 +9,7 @@ import { ToolMergeModal } from './ToolMergeModal';
 import { MergeHistoryModal } from './MergeHistoryModal';
 import AuditLogViewer from './AuditLogViewer';
 import { Tool } from '../types';
+import { useKeyboardShortcuts, adminShortcuts } from '../hooks/useKeyboardShortcuts';
 
 interface AdminToolManagementProps {
   adminToken: string;
@@ -43,6 +44,12 @@ export const AdminToolManagement: React.FC<AdminToolManagementProps> = ({
   // Audit log modal state
   const [auditLogTool, setAuditLogTool] = useState<Tool | null>(null);
   
+  // Keyboard shortcuts help modal state
+  const [showShortcutsHelp, setShowShortcutsHelp] = useState(false);
+  
+  // Ref for search input (for keyboard shortcut)
+  const searchInputRef = useRef<HTMLInputElement>(null);
+  
   // Form state
   const [toolName, setToolName] = useState('');
   const [vendor, setVendor] = useState('');
@@ -53,6 +60,56 @@ export const AdminToolManagement: React.FC<AdminToolManagementProps> = ({
   const [message, setMessage] = useState('');
   const [messageType, setMessageType] = useState<'success' | 'error'>('success');
   const [refreshTrigger, setRefreshTrigger] = useState(0);
+
+  // Keyboard shortcuts (Phase 8 Task 113)
+  useKeyboardShortcuts([
+    {
+      ...adminShortcuts.newTool,
+      handler: () => {
+        if (!editingTool && !deletingTool && !mergingTool && !archivingTool && !showShortcutsHelp) {
+          setActiveView('create');
+        }
+      }
+    },
+    {
+      key: 'l',
+      ctrl: true,
+      description: 'Switch to list view',
+      handler: () => {
+        if (!editingTool && !deletingTool && !mergingTool && !archivingTool && !showShortcutsHelp) {
+          setActiveView('list');
+        }
+      }
+    },
+    {
+      ...adminShortcuts.refresh,
+      handler: (e) => {
+        e.preventDefault();
+        queryClient.invalidateQueries({ queryKey: ['admin-tools'] });
+        setRefreshTrigger(prev => prev + 1);
+        setMessage('✓ Tools list refreshed');
+        setMessageType('success');
+        setTimeout(() => setMessage(''), 2000);
+      }
+    },
+    {
+      ...adminShortcuts.help,
+      handler: () => {
+        setShowShortcutsHelp(prev => !prev);
+      }
+    },
+    {
+      ...adminShortcuts.escape,
+      handler: () => {
+        if (showShortcutsHelp) {
+          setShowShortcutsHelp(false);
+        } else if (activeView === 'create') {
+          setActiveView('list');
+        }
+      }
+    }
+  ]);
+
 
   // Create tool mutation
   const createToolMutation = useMutation({
@@ -260,27 +317,40 @@ export const AdminToolManagement: React.FC<AdminToolManagementProps> = ({
 
   return (
     <div className="space-y-6">
-      {/* View Toggle */}
-      <div className="flex gap-4 mb-6">
+      {/* View Toggle with Keyboard Shortcuts Hint */}
+      <div className="flex items-center justify-between mb-6">
+        <div className="flex gap-4">
+          <button
+            onClick={() => setActiveView('list')}
+            className={`px-6 py-3 rounded-lg font-semibold transition-all duration-200 ${
+              activeView === 'list'
+                ? 'bg-blue-600/30 border-2 border-blue-500/50 text-white'
+                : 'bg-dark-elevated/50 border-2 border-transparent text-gray-400 hover:bg-dark-elevated hover:text-gray-200'
+            }`}
+          >
+            📋 View All Tools
+          </button>
+          <button
+            onClick={() => setActiveView('create')}
+            className={`px-6 py-3 rounded-lg font-semibold transition-all duration-200 ${
+              activeView === 'create'
+                ? 'bg-blue-600/30 border-2 border-blue-500/50 text-white'
+                : 'bg-dark-elevated/50 border-2 border-transparent text-gray-400 hover:bg-dark-elevated hover:text-gray-200'
+            }`}
+          >
+            ➕ Add New Tool
+          </button>
+        </div>
+        
+        {/* Keyboard Shortcuts Help Button */}
         <button
-          onClick={() => setActiveView('list')}
-          className={`px-6 py-3 rounded-lg font-semibold transition-all duration-200 ${
-            activeView === 'list'
-              ? 'bg-blue-600/30 border-2 border-blue-500/50 text-white'
-              : 'bg-dark-elevated/50 border-2 border-transparent text-gray-400 hover:bg-dark-elevated hover:text-gray-200'
-          }`}
+          onClick={() => setShowShortcutsHelp(true)}
+          className="px-4 py-2 bg-white/5 hover:bg-white/10 border border-white/10 rounded-lg text-white/60 hover:text-white transition-colors flex items-center gap-2"
+          title="Show keyboard shortcuts (Press ? for help)"
         >
-          📋 View All Tools
-        </button>
-        <button
-          onClick={() => setActiveView('create')}
-          className={`px-6 py-3 rounded-lg font-semibold transition-all duration-200 ${
-            activeView === 'create'
-              ? 'bg-blue-600/30 border-2 border-blue-500/50 text-white'
-              : 'bg-dark-elevated/50 border-2 border-transparent text-gray-400 hover:bg-dark-elevated hover:text-gray-200'
-          }`}
-        >
-          ➕ Add New Tool
+          <span className="text-lg">⌨️</span>
+          <span className="text-sm">Shortcuts</span>
+          <kbd className="px-2 py-0.5 bg-white/10 rounded text-xs">?</kbd>
         </button>
       </div>
 
@@ -508,6 +578,121 @@ export const AdminToolManagement: React.FC<AdminToolManagementProps> = ({
         onClose={() => setAuditLogTool(null)}
         adminToken={adminToken}
       />
+
+      {/* Keyboard Shortcuts Help Modal (Phase 8 Task 113) */}
+      {showShortcutsHelp && (
+        <>
+          {/* Backdrop */}
+          <div
+            className="fixed inset-0 bg-black/60 backdrop-blur-sm z-40"
+            onClick={() => setShowShortcutsHelp(false)}
+          />
+
+          {/* Modal */}
+          <div className="fixed inset-0 flex items-center justify-center z-50 p-4">
+            <div className="glass-card w-full max-w-2xl max-h-[90vh] overflow-y-auto">
+              {/* Header */}
+              <div className="flex items-center justify-between p-6 border-b border-white/10">
+                <div>
+                  <h2 className="text-2xl font-bold text-white">⌨️ Keyboard Shortcuts</h2>
+                  <p className="text-sm text-white/60 mt-1">Quick navigation for admin tool management</p>
+                </div>
+                <button
+                  onClick={() => setShowShortcutsHelp(false)}
+                  className="text-white/60 hover:text-white transition-colors"
+                  aria-label="Close shortcuts help"
+                >
+                  <svg
+                    className="w-6 h-6"
+                    fill="none"
+                    viewBox="0 0 24 24"
+                    stroke="currentColor"
+                  >
+                    <path
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      strokeWidth={2}
+                      d="M6 18L18 6M6 6l12 12"
+                    />
+                  </svg>
+                </button>
+              </div>
+
+              {/* Content */}
+              <div className="p-6 space-y-6">
+                {/* General Actions */}
+                <div>
+                  <h3 className="text-lg font-semibold text-white mb-3">General Actions</h3>
+                  <div className="space-y-2">
+                    <ShortcutRow 
+                      keys={['?']} 
+                      description="Show/hide this help dialog" 
+                    />
+                    <ShortcutRow 
+                      keys={['Esc']} 
+                      description="Close modal or return to list view" 
+                    />
+                    <ShortcutRow 
+                      keys={['Ctrl', 'R']} 
+                      description="Refresh tools list" 
+                    />
+                  </div>
+                </div>
+
+                {/* Navigation */}
+                <div>
+                  <h3 className="text-lg font-semibold text-white mb-3">Navigation</h3>
+                  <div className="space-y-2">
+                    <ShortcutRow 
+                      keys={['Ctrl', 'N']} 
+                      description="Open create new tool form" 
+                    />
+                    <ShortcutRow 
+                      keys={['Ctrl', 'L']} 
+                      description="Switch to list view" 
+                    />
+                  </div>
+                </div>
+
+                {/* Tips */}
+                <div className="mt-6 p-4 bg-blue-900/10 border border-blue-700/20 rounded-lg">
+                  <p className="text-sm text-blue-300">
+                    💡 <strong>Pro Tip:</strong> Use <kbd className="px-2 py-1 bg-white/10 rounded text-xs">Ctrl</kbd> (Windows/Linux) 
+                    or <kbd className="px-2 py-1 bg-white/10 rounded text-xs">⌘ Cmd</kbd> (Mac) for shortcuts
+                  </p>
+                </div>
+              </div>
+
+              {/* Footer */}
+              <div className="p-6 border-t border-white/10 flex justify-end">
+                <button
+                  onClick={() => setShowShortcutsHelp(false)}
+                  className="px-6 py-2 bg-white/10 hover:bg-white/20 border border-white/20 rounded-lg text-white transition-colors"
+                >
+                  Close
+                </button>
+              </div>
+            </div>
+          </div>
+        </>
+      )}
     </div>
   );
 };
+
+// Helper component for displaying shortcut rows
+const ShortcutRow: React.FC<{ keys: string[]; description: string }> = ({ keys, description }) => (
+  <div className="flex items-center justify-between p-3 bg-white/5 rounded-lg hover:bg-white/10 transition-colors">
+    <span className="text-white/80">{description}</span>
+    <div className="flex gap-1">
+      {keys.map((key, index) => (
+        <span key={index} className="flex items-center gap-1">
+          <kbd className="px-3 py-1.5 bg-white/10 border border-white/20 rounded text-sm font-mono text-white">
+            {key}
+          </kbd>
+          {index < keys.length - 1 && <span className="text-white/40">+</span>}
+        </span>
+      ))}
+    </div>
+  </div>
+);

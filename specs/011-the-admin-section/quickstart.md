@@ -408,32 +408,438 @@ async def _log_admin_action(
 
 ## Deployment Checklist
 
+### Pre-Deployment Validation
+
+- [ ] Run all unit tests: `cd backend && pytest tests/ -v`
+- [ ] Run integration tests: `pytest tests/integration/ -v`
+- [ ] Check linting: `ruff check backend/src/`
+- [ ] Review security scan results (CodeQL)
+- [ ] Verify environment variables are set correctly
+- [ ] Backup existing database containers
+
+### Database Migration
+
 - [ ] Run database migration script to update existing Tool schema
+  ```bash
+  cd backend/scripts
+  python migrate_tool_schema.py --dry-run  # Preview changes
+  python migrate_tool_schema.py            # Execute migration
+  ```
 - [ ] Create ToolMergeRecords container
-- [ ] Create AdminActionLogs container  
+  ```bash
+  python create_admin_containers.py --container=ToolMergeRecords
+  ```
+- [ ] Create AdminActionLogs container
+  ```bash
+  python create_admin_containers.py --container=AdminActionLogs
+  ```
+- [ ] Verify composite indexes are created (production only, emulator has limitations)
+- [ ] Run data validation queries to ensure schema compatibility
+
+### Backend Deployment
+
 - [ ] Deploy backend with new API endpoints
+  ```bash
+  # Build and test locally first
+  cd backend
+  ./start.sh
+  curl http://localhost:8000/health
+  ```
+- [ ] Verify all 18 admin API endpoints are accessible:
+  - GET/POST /admin/tools (list, create)
+  - GET/PUT/DELETE /admin/tools/{tool_id} (get, update, delete)
+  - POST /admin/tools/{tool_id}/archive
+  - POST /admin/tools/{tool_id}/unarchive
+  - PUT /admin/tools/{tool_id}/alias
+  - DELETE /admin/tools/{alias_tool_id}/alias
+  - POST /admin/tools/merge
+  - GET /admin/tools/{tool_id}/merge-history
+  - GET /admin/tools/{tool_id}/audit-log
+  - POST /admin/reanalysis/trigger
+  - GET /admin/reanalysis/jobs (list, get, status, cancel)
+- [ ] Test admin authentication with valid/invalid tokens
+- [ ] Verify error handling returns proper status codes (400, 401, 404, 409, 500)
+- [ ] Check structured logging is working (view logs for admin actions)
+
+### Frontend Deployment
+
 - [ ] Deploy frontend with updated components
-- [ ] Test admin authentication still works
+  ```bash
+  cd frontend
+  npm run build
+  npm run preview  # Test production build
+  ```
+- [ ] Verify all admin components render correctly:
+  - AdminToolManagement (list view, create form)
+  - ToolTable (with filters, search, pagination)
+  - ToolEditModal (multi-category selection)
+  - ToolMergeModal (merge workflow)
+  - AuditLogViewer (history tracking)
+  - ErrorBoundary (error handling)
+  - ToolTableSkeleton (loading states)
+- [ ] Test responsive design on mobile/tablet/desktop
+- [ ] Verify glass morphism styling is consistent
+- [ ] Check keyboard shortcuts work (Esc to close modals, etc.)
+- [ ] Test accessibility (WCAG 2.1 AA compliance)
+
+### Post-Deployment Validation
+
 - [ ] Verify existing tools display correctly with new schema
-- [ ] Test full merge workflow in production
+  - Single category migrated to categories array
+  - Status field shows "active" for existing tools
+  - created_by/updated_by populated with "system"
+- [ ] Test full CRUD workflow:
+  - Create new tool with multiple categories
+  - Edit tool (change name, vendor, categories)
+  - Archive tool, verify it's hidden from active list
+  - Unarchive tool, verify it returns to active list
+  - Delete tool (if no sentiment data)
+- [ ] Test merge workflow in production:
+  - Select 2-3 tools to merge
+  - Verify sentiment data consolidation
+  - Check merge record created
+  - Validate audit log entries
+- [ ] Test optimistic concurrency (edit same tool from 2 browser tabs)
+- [ ] Verify cache invalidation after mutations
 - [ ] Monitor audit logs for completeness
+- [ ] Check performance metrics (queries <3s)
+
+### Monitoring & Alerting
+
+- [ ] Set up alerts for slow queries (>3s threshold)
+- [ ] Monitor admin action frequency and patterns
+- [ ] Track error rates on admin endpoints
+- [ ] Review audit logs daily for suspicious activity
+- [ ] Monitor database RU consumption for cost optimization
+
+### Rollback Plan
+
+If issues are detected:
+
+1. **Database**: Keep backup containers, restore if needed
+2. **Backend**: Revert to previous deployment, keep old endpoints active
+3. **Frontend**: Rollback to previous version via version control
+4. **Data**: Use AdminActionLog to identify and revert recent changes
 
 ## Troubleshooting
 
-### Issue: Migration fails with category validation error
+### Database Issues
+
+#### Issue: Migration fails with category validation error
+
+**Symptoms**: 
+- Error: "Must have 1-5 categories" during migration
+- Tools with empty or >5 categories fail validation
 
 **Cause**: Existing tools have invalid category values  
-**Solution**: Update migration script to map old categories to new enum values
 
-### Issue: Merge operation times out
+**Solution**: 
+```python
+# Update migration script to map old categories to new enum values
+for tool in existing_tools:
+    # Map old single category to array
+    old_category = tool.get('category', 'code-completion')
+    tool['categories'] = [map_old_to_new_category(old_category)]
+    
+    # Ensure categories is valid
+    if not tool['categories'] or len(tool['categories']) > 5:
+        tool['categories'] = ['code-completion']  # Default
+```
 
-**Cause**: Too many sentiment records to migrate  
-**Solution**: Implement batching in sentiment migration, process 1000 records at a time
+**Prevention**: Run dry-run migration first to identify problematic records
 
-### Issue: Frontend shows stale tool data after merge
+#### Issue: Container creation fails in emulator
 
-**Cause**: Cache not invalidated  
-**Solution**: Ensure `queryClient.invalidateQueries(['tools'])` is called after merge
+**Symptoms**:
+- Error: "replace_container is not supported" in CosmosDB emulator
+- Composite indexes not created
+
+**Cause**: CosmosDB emulator has limited feature support
+
+**Solution**:
+- Composite indexes are optional for development
+- They will be created automatically in production Azure Cosmos DB
+- For emulator, use basic queries without composite indexes
+
+**Prevention**: Test with production Azure Cosmos DB before final deployment
+
+#### Issue: Database connection timeout during migration
+
+**Symptoms**:
+- Migration script hangs or times out
+- Partial data migrated
+
+**Cause**: Too many tools to migrate in single batch
+
+**Solution**:
+```python
+# Process in batches of 100 tools
+batch_size = 100
+for i in range(0, len(tools), batch_size):
+    batch = tools[i:i+batch_size]
+    await asyncio.gather(*[migrate_tool(tool) for tool in batch])
+    logger.info(f"Migrated {i+len(batch)}/{len(tools)} tools")
+```
+
+### API Issues
+
+#### Issue: 401 Unauthorized on all admin endpoints
+
+**Symptoms**:
+- All admin API calls return 401
+- Valid admin token rejected
+
+**Cause**: Admin token not set or incorrect
+
+**Solution**:
+```bash
+# Check environment variable
+echo $ADMIN_SECRET_TOKEN
+
+# Set in backend/.env
+ADMIN_SECRET_TOKEN=your-secure-token-here
+
+# Restart backend
+./start.sh
+```
+
+**Prevention**: Validate admin token on startup
+
+#### Issue: 409 Conflict on concurrent edits
+
+**Symptoms**:
+- Error: "Tool was modified by another administrator"
+- Edit operation fails with 409 status
+
+**Cause**: Another admin edited the tool simultaneously (optimistic concurrency)
+
+**Solution**:
+- This is expected behavior for concurrent edits
+- Frontend should refresh tool data and prompt user to retry
+- User can review latest changes and reapply their edits
+
+**Prevention**: Design for this scenario - it's a feature, not a bug
+
+#### Issue: Merge operation times out
+
+**Symptoms**:
+- POST /admin/tools/merge hangs or returns 504
+- Sentiment data migration incomplete
+
+**Cause**: Too many sentiment records to migrate (>10,000)
+
+**Solution**: 
+```python
+# In tool_service.py, implement batching
+async def _migrate_sentiment_data(self, source_id, target_id):
+    batch_size = 1000
+    total_migrated = 0
+    
+    while True:
+        # Query batch
+        query = f"SELECT * FROM c WHERE c.tool_id = '{source_id}' OFFSET {total_migrated} LIMIT {batch_size}"
+        records = list(self.sentiment_container.query_items(query))
+        
+        if not records:
+            break
+            
+        # Update and replace
+        for record in records:
+            record['tool_id'] = target_id
+            record['original_tool_id'] = source_id
+            await self.sentiment_container.upsert_item(record)
+        
+        total_migrated += len(records)
+        logger.info(f"Migrated {total_migrated} sentiment records")
+    
+    return total_migrated
+```
+
+**Prevention**: Add progress tracking and consider background job for large merges
+
+### Frontend Issues
+
+#### Issue: Frontend shows stale tool data after merge
+
+**Symptoms**:
+- Merged tool still shows as separate tools
+- Source tools not marked as archived
+
+**Cause**: React Query cache not invalidated  
+
+**Solution**: 
+```tsx
+// Ensure cache invalidation after merge
+const mutation = useMutation({
+  mutationFn: api.mergeTool,
+  onSuccess: () => {
+    // Invalidate all related queries
+    queryClient.invalidateQueries(['tools']);
+    queryClient.invalidateQueries(['merge-history']);
+    queryClient.invalidateQueries(['audit-log']);
+    
+    toast.success('Tools merged successfully');
+  }
+});
+```
+
+**Prevention**: Always invalidate cache after mutations
+
+#### Issue: Categories not displaying as array
+
+**Symptoms**:
+- Only one category shown instead of multiple
+- Categories appear as string instead of array
+
+**Cause**: Frontend type mismatch or backend not returning array
+
+**Solution**:
+```tsx
+// Ensure categories is always treated as array
+{tool.categories?.map(category => (
+  <Badge key={category} variant="secondary">
+    {category}
+  </Badge>
+)) || <Badge variant="secondary">No categories</Badge>}
+```
+
+**Prevention**: Add TypeScript strict null checks
+
+#### Issue: Modal doesn't close on Esc key
+
+**Symptoms**:
+- Esc key has no effect
+- Modal can only be closed via button
+
+**Cause**: Keyboard event listener not attached or removed incorrectly
+
+**Solution**:
+```tsx
+// Ensure proper cleanup
+useEffect(() => {
+  const handleEsc = (e: KeyboardEvent) => {
+    if (e.key === 'Escape' && !isSubmitting) {
+      onClose();
+    }
+  };
+
+  if (isOpen) {
+    document.addEventListener('keydown', handleEsc);
+  }
+
+  return () => {
+    document.removeEventListener('keydown', handleEsc);
+  };
+}, [isOpen, isSubmitting, onClose]);
+```
+
+**Prevention**: Test keyboard shortcuts in all modals
+
+### Performance Issues
+
+#### Issue: Slow query warnings in logs
+
+**Symptoms**:
+- Log entries: "Slow query detected" (>3s)
+- Tool list takes >5s to load
+
+**Cause**: Missing composite indexes or inefficient query
+
+**Solution**:
+1. **Add composite indexes** (production only):
+   ```python
+   composite_indexes = [
+       {"path": ["/status", "/name"]},
+       {"path": ["/status", "/vendor"]},
+       {"path": ["/status", "/updated_at"]}
+   ]
+   ```
+
+2. **Optimize query**:
+   ```python
+   # Instead of filtering in Python
+   query = "SELECT * FROM c WHERE c.partitionKey = 'TOOL'"
+   tools = [t for t in tools if t.status == 'active']
+   
+   # Use CosmosDB query
+   query = "SELECT * FROM c WHERE c.partitionKey = 'TOOL' AND c.status = 'active'"
+   ```
+
+3. **Add pagination**:
+   ```python
+   # Limit results
+   query += f" OFFSET {(page-1)*limit} LIMIT {limit}"
+   ```
+
+**Prevention**: Monitor query performance and add indexes proactively
+
+#### Issue: High RU consumption on audit log queries
+
+**Symptoms**:
+- Cosmos DB RU charges spike during admin operations
+- Audit log queries consume >100 RUs
+
+**Cause**: Partition key strategy or inefficient queries
+
+**Solution**:
+```python
+# Use partition key in queries
+partition_key = datetime.now().strftime("%Y%m")  # Current month
+query = f"SELECT * FROM c WHERE c.partitionKey = '{partition_key}' AND c.tool_id = '{tool_id}'"
+
+# Instead of cross-partition query
+query = f"SELECT * FROM c WHERE c.tool_id = '{tool_id}'"  # Scans all partitions
+```
+
+**Prevention**: Design partition keys for common query patterns
+
+### Security Issues
+
+#### Issue: Sensitive data in audit logs
+
+**Symptoms**:
+- API keys or tokens in before/after state
+- User PII in logs
+
+**Cause**: No sanitization of logged data
+
+**Solution**:
+```python
+# Sanitize before logging
+def sanitize_state(state: dict) -> dict:
+    """Remove sensitive fields from state."""
+    sensitive_fields = ['api_key', 'token', 'password', 'secret']
+    return {k: v for k, v in state.items() if k not in sensitive_fields}
+
+# In _log_admin_action
+before_state = sanitize_state(before) if before else None
+after_state = sanitize_state(after) if after else None
+```
+
+**Prevention**: Never log sensitive data, use field redaction
+
+### Common Error Messages
+
+| Error Code | Message | Cause | Solution |
+|------------|---------|-------|----------|
+| 400 | "Must have 1-5 categories" | Invalid categories count | Ensure 1-5 categories selected |
+| 400 | "Tool name already exists" | Duplicate tool name | Choose unique name |
+| 400 | "Circular alias detected" | Tool aliases itself | Check alias chain |
+| 401 | "Unauthorized" | Missing/invalid admin token | Set ADMIN_SECRET_TOKEN |
+| 404 | "Tool not found" | Invalid tool_id | Verify tool exists |
+| 409 | "Tool was modified" | Concurrent edit (ETag mismatch) | Refresh and retry |
+| 409 | "Cannot archive tool with references" | Other tools reference this tool | Remove references first |
+| 500 | "Failed to merge tools" | Database error during merge | Check logs, retry |
+
+### Getting Help
+
+If you encounter issues not covered here:
+
+1. **Check logs**: `tail -f backend/logs/app.log`
+2. **Review audit log**: Use AuditLogViewer to see recent admin actions
+3. **Verify environment**: `cat backend/.env` and compare with `.env.example`
+4. **Test with curl**: Isolate frontend vs backend issues
+5. **Contact support**: Include error message, timestamp, and reproduction steps
 
 ## Next Steps
 
