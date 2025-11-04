@@ -4,7 +4,7 @@ from datetime import datetime, timezone
 from enum import Enum
 from typing import List
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 
 class CachePeriod(str, Enum):
@@ -53,32 +53,41 @@ class SentimentCacheEntry(BaseModel):
     last_updated_ts: int = Field(..., description="Unix timestamp")
     is_stale: bool = Field(default=False, description="Computed: exceeds TTL")
 
-    @field_validator("total_mentions")
-    @classmethod
-    def validate_total_mentions(cls, v, info):
+    @model_validator(mode='after')
+    def validate_counts_and_percentages(self):
         """Validate that total_mentions equals sum of sentiment counts."""
-        if info.data:
-            positive = info.data.get("positive_count", 0)
-            negative = info.data.get("negative_count", 0)
-            neutral = info.data.get("neutral_count", 0)
+        positive = self.positive_count
+        negative = self.negative_count
+        neutral = self.neutral_count
+        total = self.total_mentions
 
-            if v != positive + negative + neutral:
-                raise ValueError(
-                    f"total_mentions ({v}) must equal sum of counts "
-                    f"({positive} + {negative} + {neutral} = "
-                    f"{positive + negative + neutral})"
-                )
-        return v
+        if total != positive + negative + neutral:
+            raise ValueError(
+                f"total_mentions ({total}) must equal sum of counts "
+                f"({positive} + {negative} + {neutral} = "
+                f"{positive + negative + neutral})"
+            )
+        
+        return self
 
     @field_validator("neutral_percentage")
     @classmethod
     def validate_percentages_sum(cls, v, info):
-        """Validate that percentages sum to 100 (within tolerance)."""
+        """Validate that percentages sum to 100 (within tolerance).
+        
+        Special case: Allow all zeros when there's no data (total_mentions = 0).
+        """
         if info.data:
             positive_pct = info.data.get("positive_percentage", 0.0)
             negative_pct = info.data.get("negative_percentage", 0.0)
+            total_mentions = info.data.get("total_mentions", 0)
             total = positive_pct + negative_pct + v
 
+            # Allow all zeros when there's no data
+            if total_mentions == 0 and total == 0.0:
+                return v
+            
+            # Otherwise require sum to be 100
             if abs(total - 100.0) > 0.1:
                 raise ValueError(
                     f"Percentages must sum to 100.0 (got {total:.2f})"

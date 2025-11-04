@@ -184,16 +184,17 @@ class CacheService:
         cutoff_ts = int(cutoff.timestamp())
         now_ts = int(now.timestamp())
         
-        # Query sentiment scores for this tool in time window
+        # Query sentiment scores in time window
+        # NOTE: CosmosDB emulator doesn't support ARRAY_CONTAINS, so we query
+        # all docs in time window and filter in Python
         query = """
-            SELECT c.sentiment_score, c.detected_tool_ids, c._ts
+            SELECT c.sentiment_score, c.detected_tool_ids, c._ts,
+                   c.sentiment, c.compound_score
             FROM c
-            WHERE ARRAY_CONTAINS(c.detected_tool_ids, @tool_id)
-            AND c._ts >= @cutoff_ts
+            WHERE c._ts >= @cutoff_ts
         """
         
         parameters = [
-            {"name": "@tool_id", "value": tool_id},
             {"name": "@cutoff_ts", "value": cutoff_ts}
         ]
         
@@ -210,17 +211,44 @@ class CacheService:
                 enable_cross_partition_query=True
             )
             
-            async for item in items:
-                score = item.get("sentiment_score", 0.0)
+            # Filter and aggregate in Python
+            item_count = 0
+            matched_sentiments = []
+            first_matched = None
+            for item in items:
+                item_count += 1
+                # Filter for this tool
+                detected_tools = item.get("detected_tool_ids", [])
+                if not detected_tools or tool_id not in detected_tools:
+                    continue
+                
+                # Debug: Log first matched item
+                if first_matched is None:
+                    first_matched = dict(item)
+                    logger.info(
+                        f"First matched item keys: {list(item.keys())}"
+                    )
+                    
+                score = item.get("sentiment_score")
+                if score is None:
+                    score = item.get("compound_score", 0.0)
                 scores.append(score)
                 
-                # Categorize sentiment (same logic as existing system)
-                if score > 0.1:
+                # Categorize sentiment based on sentiment field
+                sentiment = item.get("sentiment", "neutral")
+                matched_sentiments.append(sentiment)  # Debug
+                if sentiment == "positive":
                     positive_count += 1
-                elif score < -0.1:
+                elif sentiment == "negative":
                     negative_count += 1
                 else:
                     neutral_count += 1
+            
+            logger.info(
+                f"Processed {item_count} items, {len(scores)} matched "
+                f"tool {tool_id}. Sentiment: pos={positive_count}, "
+                f"neg={negative_count}, neut={neutral_count}"
+            )
                     
         except Exception as e:
             logger.error(
@@ -500,7 +528,7 @@ class CacheService:
             )
             
             tool_ids = []
-            async for item in items:
+            for item in items:
                 tool_ids.append(item["id"])
             
             logger.debug(
@@ -551,6 +579,15 @@ class CacheService:
                 # Create cache entry
                 now_ts = int(datetime.now(timezone.utc).timestamp())
                 cache_key = self._calculate_cache_key(tool_id, period)
+                
+                # Debug: Log what we're about to save
+                logger.info(
+                    f"Creating cache entry with: "
+                    f"total={sentiment_data['total_mentions']}, "
+                    f"pos={sentiment_data['positive_count']}, "
+                    f"neg={sentiment_data['negative_count']}, "
+                    f"neut={sentiment_data['neutral_count']}"
+                )
                 
                 cache_entry = SentimentCacheEntry(
                     id=cache_key,

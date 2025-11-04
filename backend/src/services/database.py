@@ -49,7 +49,7 @@ import logging
 import os
 import time
 import warnings
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from functools import wraps
 from typing import Any, Callable, Dict, List, Optional
 
@@ -403,7 +403,7 @@ class DatabaseService:
     ) -> List[RedditPost]:
         """Get recent posts."""
         try:
-            cutoff = datetime.utcnow() - timedelta(hours=hours)
+            cutoff = datetime.now(timezone.utc) - timedelta(hours=hours)
 
             # Use _ts system field with Unix timestamp for CosmosDB PostgreSQL mode
             # compatibility
@@ -629,7 +629,7 @@ class DatabaseService:
         Performance: Completes in <2 seconds for 1-week windows via parallel execution
         """
         try:
-            cutoff = datetime.utcnow() - timedelta(hours=hours)
+            cutoff = datetime.now(timezone.utc) - timedelta(hours=hours)
             cutoff_ts = self._datetime_to_timestamp(cutoff)
 
             # Build base parameters
@@ -730,7 +730,9 @@ class DatabaseService:
     def cleanup_old_data(self):
         """Remove data older than retention period."""
         try:
-            cutoff = datetime.utcnow() - timedelta(days=settings.data_retention_days)
+            cutoff = datetime.now(timezone.utc) - timedelta(
+                days=settings.data_retention_days
+            )
 
             # Clean posts - use _ts system field with Unix timestamp
             query = "SELECT c.id, c.subreddit FROM c WHERE c._ts < @cutoff"
@@ -774,7 +776,7 @@ class DatabaseService:
             posts_count = len(posts)
 
             # Count recent comments using _ts system field with Unix timestamp
-            cutoff = datetime.utcnow() - timedelta(hours=hours)
+            cutoff = datetime.now(timezone.utc) - timedelta(hours=hours)
             query = "SELECT VALUE COUNT(1) FROM c WHERE c._ts >= @cutoff"
             parameters = [
                 {"name": "@cutoff", "value": self._datetime_to_timestamp(cutoff)}
@@ -899,9 +901,8 @@ class DatabaseService:
                     from .cache_service import cache_service
                     if cache_service and cache_service.cache_enabled:
                         logger.info(
-                            "Attempting cache lookup for tool sentiment",
-                            tool_id=tool_id,
-                            hours=hours
+                            f"Attempting cache lookup for tool sentiment: "
+                            f"tool_id={tool_id}, hours={hours}"
                         )
                         cached_result = await cache_service.get_cached_sentiment(
                             tool_id=tool_id,
@@ -921,9 +922,8 @@ class DatabaseService:
                 except Exception as e:
                     # Cache error - log and fallback to direct query
                     logger.warning(
-                        "Cache lookup failed, falling back to direct query",
-                        tool_id=tool_id,
-                        error=str(e)
+                        f"Cache lookup failed for tool {tool_id}, "
+                        f"falling back to direct query: {e}"
                     )
             
             # Fallback to direct query (original implementation)
@@ -932,7 +932,7 @@ class DatabaseService:
                 # Cap at 7 days to keep queries fast
                 # Default to 1 hour if not specified for better performance
                 hours = min(hours, 168)  # 168 hours = 7 days
-                cutoff = datetime.utcnow() - timedelta(hours=hours)
+                cutoff = datetime.now(timezone.utc) - timedelta(hours=hours)
                 cutoff_ts = self._datetime_to_timestamp(cutoff)
                 time_filter = f"c._ts >= {cutoff_ts}"
             elif start_date or end_date:
@@ -963,7 +963,7 @@ class DatabaseService:
             else:
                 # Default: last 1 hour for fast queries
                 # (24 hours would query 9K+ docs, taking 10+ seconds)
-                cutoff = datetime.utcnow() - timedelta(hours=1)
+                cutoff = datetime.now(timezone.utc) - timedelta(hours=1)
                 cutoff_ts = self._datetime_to_timestamp(cutoff)
                 time_filter = f"c._ts >= {cutoff_ts}"
 
@@ -977,13 +977,14 @@ class DatabaseService:
                 f"Executing tool sentiment query for tool {tool_id}, " f"hours={hours}"
             )
 
-            start_time = datetime.utcnow()
+            start_time = datetime.now(timezone.utc)
             results = list(
                 self.sentiment_container.query_items(
                     query=query, enable_cross_partition_query=True
                 )
             )
-            query_duration = (datetime.utcnow() - start_time).total_seconds()
+            query_duration = (datetime.now(timezone.utc) - start_time).total_seconds()
+
 
             logger.info(f"Query returned {len(results)} docs in {query_duration:.2f}s")
 
