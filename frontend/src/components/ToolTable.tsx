@@ -3,13 +3,15 @@
  * 
  * Glass-themed table for managing AI tools with search, filter, pagination
  * Updated for Phase 3: Multi-category support, enhanced filters, React Query caching
+ * Updated for Phase 8: CSV export functionality (Task 114)
  */
 import { useState, useEffect } from 'react';
-import { useQuery } from '@tanstack/react-query';
-import { Tool, ToolStatus } from '../types';
+import { useQuery } from '@tantml:parameter>
+<parameter name="Tool, ToolStatus } from '../types';
 import { api } from '../services/api';
 import Pagination from './Pagination';
 import { ToolTableSkeleton } from './ToolTableSkeleton';
+import { exportFilteredTools } from '../utils/csvExport';
 
 interface ToolTableProps {
   adminToken: string;
@@ -185,14 +187,45 @@ export const ToolTable = ({
         </div>
       )}
 
-      {/* Results Summary */}
+      {/* Results Summary and Export Button (Phase 8 Task 114) */}
       <div className="flex justify-between items-center text-sm text-gray-400">
         <span>
           Showing {tools.length > 0 ? (currentPage - 1) * limit + 1 : 0} - {Math.min(currentPage * limit, totalTools)} of {totalTools} tools
         </span>
-        <span className="text-xs">
-          Page {currentPage} of {totalPages || 1}
-        </span>
+        <div className="flex items-center gap-4">
+          <span className="text-xs">
+            Page {currentPage} of {totalPages || 1}
+          </span>
+          {/* CSV Export Button */}
+          <button
+            onClick={() => {
+              try {
+                exportFilteredTools(tools, {
+                  filters: {
+                    status: statusFilter !== 'all' ? statusFilter : undefined,
+                    categories: categoryFilter.length > 0 ? categoryFilter : undefined,
+                    vendor: vendorFilter || undefined,
+                    search: debouncedSearch || undefined
+                  }
+                });
+              } catch (error) {
+                console.error('Failed to export CSV:', error);
+                alert('Failed to export tools. Please try again.');
+              }
+            }}
+            disabled={tools.length === 0}
+            className="px-4 py-2 bg-emerald-600/20 hover:bg-emerald-600/30 border border-emerald-500/30 hover:border-emerald-500/50 rounded-lg text-emerald-300 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2 transition-colors"
+            title="Export current view to CSV"
+          >
+            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+            </svg>
+            <span className="text-sm font-medium">Export CSV</span>
+            <span className="text-xs bg-emerald-500/20 px-2 py-0.5 rounded">
+              {tools.length}
+            </span>
+          </button>
+        </div>
       </div>
 
       {/* Table */}
